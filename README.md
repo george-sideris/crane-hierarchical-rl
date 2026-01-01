@@ -4,9 +4,17 @@ A simulation environment for learning forestry crane manipulation using hierarch
 
 ## Demo
 
+### Heuristic Baseline (Multi-Environment)
+
 ![Heuristic Baseline](media/heuristic_demo.gif)
 
 *Heuristic baseline policy selecting the highest visible log from the pile. Achieves ~8-12 logs per grasp.*
+
+### High-Fidelity Physics (Single Environment with CCD)
+
+![High-Quality Physics Demo](media/crane_ccd_demo.gif)
+
+*Single environment running on CPU with Continuous Collision Detection (CCD) enabled, showing clean pile deposition with accurate contact resolution.*
 
 ## Training Results
 
