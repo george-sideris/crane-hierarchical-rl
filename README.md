@@ -222,7 +222,3 @@ crane_testbed/
 - Python 3.10+
 - Isaac Lab 2.2.1+
 - All dependencies provided by Isaac Lab (PyTorch, DifferentialIK, etc.)
-
-## License
-
-Apache-2.0
