@@ -213,8 +213,7 @@ crane_testbed/
 
 - Python 3.10+
 - Isaac Lab 2.2.1+
-- PyTorch (provided by Isaac Lab)
-- ikpy 3.0+ (for inverse kinematics)
+- All dependencies provided by Isaac Lab (PyTorch, DifferentialIK, etc.)
 
 ## License
 
