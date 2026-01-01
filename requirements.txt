@@ -1,13 +1,4 @@
 # Crane Testbed Requirements
 #
-# Core dependencies are provided by Isaac Lab installation.
-# These are additional dependencies specific to this extension.
-
-# Inverse kinematics for crane control
-ikpy>=3.0.0
-
-# Note: The following are provided by Isaac Lab:
-# - torch
-# - numpy
-# - gymnasium
-# - isaaclab (and all its dependencies)
+# All dependencies are provided by Isaac Lab installation.
+# No additional packages required.
