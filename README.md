@@ -1,125 +1,221 @@
-# Crane Log Grasping Environment
+# Hierarchical RL for Crane Log Grasping
 
-Isaac Lab environment for hierarchical reinforcement learning applied to crane log manipulation.
+A simulation environment for learning forestry crane manipulation using hierarchical reinforcement learning in NVIDIA Isaac Lab.
+
+## Demo
+
+![Heuristic Baseline](media/heuristic_demo.gif)
+
+*Heuristic baseline policy selecting the highest visible log from the pile. Achieves ~8-12 logs per grasp.*
+
+## Training Results
+
+![Training Progress](media/training_results.png)
+
+*RL training curves showing learning progress*
 
 ## Overview
 
-This project implements a simulated forestry crane environment for learning grasp target selection. The crane must clear logs from a rack pile by executing pick-place cycles. The key research question is whether RL can learn better target selection than a simple heuristic baseline.
+This project implements an autonomous log grasping system where a reinforcement learning policy selects grasp targets and a finite state machine controller executes pick-place cycles. The environment simulates a forestry crane clearing logs from a pile and stacking them on a trailer.
 
 **Architecture:**
-- **High-level policy**: Selects grasp target (x, y, z, yaw)
-- **Low-level heuristic**: Executes pick-place cycle via finite state machine
-- **Reward**: Number of logs grasped × orientation alignment (bonus for alignment > 0.7)
+- High-level RL policy: Selects grasp targets (x, y, z, yaw)
+- Low-level FSM controller: Executes 10-phase pick-place cycles using inverse kinematics
+- Reward function: Multiplicative (logs grasped × alignment) with bonus for high alignment
 
-## Status
+**Key Features:**
+- True hierarchical RL: One policy step executes one complete grasp cycle (~900 physics steps)
+- Multi-environment support: Tested with up to 64 parallel simulations
+- Dual-stack deposition system with spatial constraints
+- Heuristic baseline for comparison
 
-- **Heuristic baseline**: Working. Achieves ~10 logs/grasp with good pile management.
-- **RL training**: Ongoing research. Training is unstable, likely due to sparse rewards and large action space (continuous 4D target selection).
+## Environment Specification
 
-This repository represents the current state of the work and is intended as a research portfolio piece.
+**Observation Space** (132 dimensions):
+- 32 logs × 4 features: position (x, y, z) and yaw orientation in crane base frame
+- Strategic state: logs remaining, cycle count, previous grasp quality
+
+**Action Space** (4 dimensions):
+- Target position (x, y, z) in crane base frame
+- Target yaw orientation
+- Actions normalized to [-1, 1] and mapped to workspace bounds
+
+**Episode Termination:**
+- Success: All logs removed from rack
+- Timeout: 50 grasp cycles completed
+
+**Reward:**
+```python
+if logs_grasped == 0:
+    reward = -1.0
+else:
+    base = logs_grasped × alignment
+    bonus = logs_grasped × (alignment - 0.7) × 5.0 if alignment > 0.7 else 0
+    reward = base + bonus
+```
 
 ## Installation
 
-This project requires Isaac Lab with Docker. Follow these steps:
+### Prerequisites
+- Docker with NVIDIA GPU support
+- Isaac Lab v2.2.1 or later
 
-### 1. Clone Isaac Lab
+### Setup
 
+1. Clone Isaac Lab:
 ```bash
 git clone https://github.com/isaac-sim/IsaacLab.git
 cd IsaacLab
 ```
 
-### 2. Set up the crane_testbed extension
-
-Copy this `crane_testbed` directory into the Isaac Lab root:
-
+2. Copy crane_testbed into Isaac Lab root:
 ```bash
 cp -r /path/to/crane_testbed ./
 ```
 
-### 3. Configure Docker to mount crane_testbed
-
-Edit `docker/docker-compose.yaml` and add the crane_testbed mount under the `volumes:` section (around line 69):
-
+3. Configure Docker mount by editing `docker/docker-compose.yaml`:
 ```yaml
-# Mount crane_testbed for persistence across container restarts
-- type: bind
-  source: ../crane_testbed
-  target: /workspace/crane_testbed
+volumes:
+  - type: bind
+    source: ../crane_testbed
+    target: /workspace/crane_testbed
 ```
 
-### 4. Build and run the Docker container
-
+4. Start Docker container:
 ```bash
 cd docker
-./container.sh start  # Builds base image and starts container
-./container.sh enter  # Enter the container
+./container.sh start
+./container.sh enter
 ```
 
-Inside the container:
-
+5. Set PYTHONPATH inside container:
 ```bash
-# Install the crane_testbed extension
-cd /workspace/crane_testbed
-python -m pip install -e .
+export PYTHONPATH=/workspace/crane_testbed/source/crane_testbed:$PYTHONPATH
 ```
 
-### 5. Run the heuristic baseline
+## Usage
 
+### Heuristic Baseline
+
+Run the greedy heuristic policy:
 ```bash
 cd /workspace/isaaclab
-python /workspace/crane_testbed/scripts/envs/crane_rl_env.py --num_envs 1
+./isaaclab.sh -p /workspace/crane_testbed/scripts/envs/crane_rl_env.py --num_envs 1
 ```
 
-You should see the crane automatically selecting and grasping logs from the pile.
+### RL Training
 
-## Environment Details
+Train using PPO with RSL-RL:
+```bash
+cd /workspace/isaaclab
+export PYTHONPATH=/workspace/crane_testbed/source/crane_testbed:$PYTHONPATH
 
-- **Observation space**: 132-dim (32 logs × 4 features + 4 strategic state features)
-  - Per-log: position (x, y, z), yaw orientation
-  - Strategic: deposited log count, cycles remaining, previous grasp quality
-- **Action space**: 4-dim continuous (target x, y, z, yaw in base frame)
-- **Episode length**: 50 grasp cycles or until rack is empty
-- **Parallel simulation**: Tested with 64 parallel environments
+./isaaclab.sh -p /workspace/crane_testbed/scripts/rsl_rl/train.py \
+    --task Isaac-Crane-Direct-v0 \
+    --num_envs 4
+```
 
-## File Structure
+Monitor with TensorBoard:
+```bash
+tensorboard --logdir /workspace/logs/rsl_rl/crane_hierarchical
+```
+
+### Policy Evaluation
+
+Evaluate a trained checkpoint:
+```bash
+./isaaclab.sh -p /workspace/crane_testbed/scripts/rsl_rl/play.py \
+    --task Isaac-Crane-Direct-v0 \
+    --num_envs 1 \
+    --checkpoint /workspace/logs/rsl_rl/crane_hierarchical/model_1000.pt
+```
+
+## Configuration
+
+### PPO Hyperparameters
+Located in `source/crane_testbed/crane_testbed/agents/rsl_rl_cfg.py`:
+```python
+num_steps_per_env = 4          # Cycles collected before policy update
+max_iterations = 5000           # Total training iterations
+learning_rate = 3e-4
+actor_hidden_dims = [256, 128, 64]
+critic_hidden_dims = [256, 128, 64]
+```
+
+### Environment Configuration
+Located in `source/crane_testbed/crane_testbed/tasks.py`:
+```python
+use_hierarchical_rl = True     # Enable hierarchical mode
+episode_length_s = 600.0        # Max episode duration
+```
+
+## Implementation Details
+
+### Hierarchical Step Architecture
+
+The environment overrides `step()` to execute a complete grasp cycle per call:
+
+1. Policy selects target (x, y, z, yaw)
+2. Internal physics loop runs FSM until logs are lifted (CARRY_HOME phase)
+3. Grasp outcome evaluated (number of logs, alignment quality)
+4. Physics loop continues until crane returns to HOVER_UP phase
+5. Return (observation, reward, done, truncated, info)
+
+This reduces episode length from ~27,000 physics steps to 30-50 policy steps.
+
+### FSM Controller Phases
+
+1. HOVER_UP: Position above pile, wait for policy target
+2. ALIGN_YAW: Rotate gripper to target orientation
+3. DESCEND: Lower to grasp height
+4. CLOSE: Close gripper fingers
+5. LIFT_HIGH: Lift logs clear of pile
+6. CARRY_HOME: Transport to drop zone
+7. ALIGN_HOME_YAW: Orient for stacking
+8. LOWER_TO_DROP: Place on stack
+9. OPEN: Release gripper
+10. SETTLE: Wait for physics stabilization
+
+### Action Space Bounds
+
+Per-environment bounds computed based on rack position:
+- X: Rack center ± 1.5m (allows end grasps)
+- Y: Rack width (5 rows × 1m) + 1m margin
+- Z: Rack base to stack top + 0.35m
+- Yaw: [-π, π] with 180° flip optimization
+
+## Project Structure
 
 ```
 crane_testbed/
 ├── assets/
-│   ├── urdf/                     # Crane URDF model
-│   └── scenes/                   # USD scene assets
+│   ├── urdf/fpiforwarder-upperpassive.urdf
+│   └── scenes/
 ├── scripts/
 │   ├── envs/
-│   │   └── crane_rl_env.py       # Main environment implementation
-│   └── rsl_rl/                   # Training/evaluation scripts
+│   │   └── crane_rl_env.py           # Main environment (3500+ lines)
+│   └── rsl_rl/
+│       ├── train.py                  # Training script
+│       ├── play.py                   # Evaluation script
+│       └── cli_args.py
 ├── source/
-│   └── crane_testbed/            # Package setup
+│   └── crane_testbed/
+│       ├── setup.py
+│       └── crane_testbed/
+│           ├── tasks.py              # Gym environment registration
+│           └── agents/
+│               └── rsl_rl_cfg.py     # PPO configuration
 ├── README.md
 └── requirements.txt
 ```
 
-## Training
+## Technical Requirements
 
-Training uses RSL-RL (PPO):
+- Python 3.10+
+- Isaac Lab 2.2.1+
+- PyTorch (provided by Isaac Lab)
+- ikpy 3.0+ (for inverse kinematics)
 
-```bash
-# Launch training with 64 parallel environments
-python /workspace/crane_testbed/scripts/envs/crane_rl_env.py --num_envs 64 --use_target_selection_policy
-```
+## License
 
-**Current training challenges:**
-- Sparse rewards (only at grasp completion)
-- Large continuous action space
-- Difficult credit assignment (action → outcome delayed by ~15 seconds of physics)
-
-## Future Work
-
-- Asymmetric actor-critic with privileged information (log contact forces, pile stability metrics)
-- Reward shaping for intermediate phases
-- Curriculum learning (start with simpler pile configurations)
-- Point cloud observations for better generalization
-
-## Contact
-
-This work is part of a Master's thesis on hierarchical RL for forestry automation.
+Apache-2.0

@@ -3,9 +3,4 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Crane testbed extension for Isaac Lab."""
-
-from . import tasks
-from .tasks import *
-
-__all__ = ["tasks"]
+"""Agent configurations for crane tasks."""

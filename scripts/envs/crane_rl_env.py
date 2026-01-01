@@ -289,10 +289,9 @@ parser.add_argument("--log_roll",  type=float, default=0.0)
 parser.add_argument("--log_pitch", type=float, default=0.0)
 parser.add_argument("--log_yaw",   type=float, default=90.0)
 
-# Control
-parser.add_argument("--control_mode", choices=["ee_goal", "rl", "heuristic"], default="ee_goal")
-parser.add_argument("--rl_xyz_scale", type=float, default=0.02)
-parser.add_argument("--rl_yaw_scale", type=float, default=0.05)
+# Note: This standalone script runs the heuristic baseline only.
+# For RL training, use: python scripts/rsl_rl/train.py
+# For RL inference, use: python scripts/rsl_rl/play.py --checkpoint <path>
 
 # Heuristic & trailer
 parser.add_argument("--heu_grip_open", type=float, default=0.0)
@@ -731,12 +730,14 @@ class CraneDirectEnvCfg(DirectRLEnvCfg):
 
     # how many logs to encode in the observation
     max_logs_obs: int = 32
-    # enable the "choose target at PH_HOVER_UP" policy
-    use_target_selection_policy: bool = True
 
     # Settling time (seconds) to let logs settle before training/task starts
     # This prevents target selection before logs have stopped moving
     settle_time: float = 2.0
+
+    # Hierarchical RL mode: one step() = one complete pick-place cycle
+    # When False: standard RL mode (one step = one physics timestep)
+    use_hierarchical_rl: bool = False
 
     # Gripper closing speed control (prevent penetration when yaw misaligned)
     gripper_close_step: float = 0.10        # Radians per step - moderate speed
@@ -850,8 +851,6 @@ class CraneDirectEnv(DirectRLEnv):
 
     def __init__(self, cfg: CraneDirectEnvCfg, render_mode: str | None = None, **kwargs):
         # ---- everything that _setup_scene might read must be set BEFORE super().__init__ ----
-        self._mode = getattr(cfg, "control_mode", args_cli.control_mode)
-
         # Debug render: enabled by default
         self._viz_enabled = True
         self._viz = None
@@ -1094,20 +1093,28 @@ class CraneDirectEnv(DirectRLEnv):
     # ---------------- Hierarchical RL Step Override ----------------
     def step(self, action: torch.Tensor):
         """
-        Hierarchical step: ONE call = ONE complete pick-place cycle.
+        Step the environment.
 
-        The policy selects a target, then we run physics internally
-        until the grasp cycle completes, then return (obs, reward, done).
+        Hierarchical mode (use_hierarchical_rl=True):
+            ONE step() call = ONE complete pick-place cycle
+            - Policy selects target at HOVER_UP
+            - Heuristic FSM runs internally until cycle completes
+            - Returns (obs, reward, done) for the completed grasp
+
+        Standard mode (use_hierarchical_rl=False):
+            Standard RL step - one physics timestep per call
         """
-        if not getattr(self.cfg, "use_target_selection_policy", False):
-            # Fall back to original step for non-hierarchical mode
+        if not getattr(self.cfg, "use_hierarchical_rl", False):
+            # Standard mode: normal step
             return super().step(action)
 
-        # Suppress debug prints during internal physics loop to avoid terminal spam
-        self._in_hierarchical_loop = True
-
+        # Hierarchical mode: one step = one complete cycle
         # 1. Process action (target selection) at HOVER_UP
         action = action.to(self.device)
+
+        # Suppress debug prints during internal loop to avoid terminal spam (set BEFORE _pre_physics_step)
+        self._in_hierarchical_loop = True
+
         self._pre_physics_step(action)
 
         # 2. Run physics loop until grasp cycle completes (LIFT_HIGH → CARRY_HOME transition)
@@ -1115,17 +1122,17 @@ class CraneDirectEnv(DirectRLEnv):
         cycle_done = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
 
         for step_count in range(max_steps):
-            # Step physics simulation (with rendering if video mode enabled)
+            # Step physics simulation
             should_render = (self.sim.has_gui() or self.sim.has_rtx_sensors()) and (step_count % 2 == 0)
             self.sim.step(render=should_render)
 
             # Update buffers
             self.scene.update(self.physics_dt)
 
-            # Apply heuristic actions
+            # Apply heuristic actions (IK controller)
             self._apply_action()
 
-            # Update heuristic state machine (handles all envs internally)
+            # Update heuristic state machine
             self._heuristic_step()
 
             # Check if any env reached CARRY_HOME (grasp cycle complete)
@@ -1136,34 +1143,14 @@ class CraneDirectEnv(DirectRLEnv):
             for i in range(self.num_envs):
                 if just_reached_carry[i]:
                     logs_grasped, alignment = self._check_grasped_logs(i)
-
-                    # Compute reward: linear base + bonus for good alignment
-                    # Linear gives learning signal even with poor alignment
-                    # Bonus heavily rewards good alignment (which prevents pile disruption)
-                    base_reward = float(logs_grasped) * alignment
-
-                    # Big bonus for high alignment (>0.7)
-                    if alignment > 0.7:
-                        alignment_bonus = float(logs_grasped) * (alignment - 0.7) * 5.0
-                        total_reward = base_reward + alignment_bonus
-                    else:
-                        total_reward = base_reward
-
-                    self._grasp_reward_buf[i] = total_reward
+                    reward = self._compute_grasp_reward(logs_grasped, alignment)
+                    self._grasp_reward_buf[i] = reward
                     self._prev_logs_grasped[i] = float(logs_grasped)
                     self._prev_grasp_alignment[i] = alignment
 
-                    # Track for TensorBoard (separate components for analysis)
-                    throughput_reward = float(logs_grasped)
-                    alignment_reward = alignment  # Store raw alignment score
-                    self._last_throughput_reward[i] = throughput_reward
-                    self._last_alignment_reward[i] = alignment_reward
-                    self._episode_throughput_sum[i] += throughput_reward
-                    self._episode_alignment_sum[i] += alignment_reward
-
                     # Print grasp outcome with cycle counter for progress tracking
                     cycle_num = self._cycle_count[i].item() + 1  # +1 because we increment after this
-                    print(f"[env{i}] CYCLE {cycle_num}/50 | GRASP: {logs_grasped} logs, alignment={alignment:.2f}, reward={total_reward:.2f}")
+                    print(f"[env{i}] CYCLE {cycle_num}/50 | GRASP: {logs_grasped} logs, alignment={alignment:.2f}, reward={reward:.2f}")
 
             # Exit when all envs have completed their grasp cycle
             if cycle_done.all():
@@ -1176,18 +1163,20 @@ class CraneDirectEnv(DirectRLEnv):
             self.sim.step(render=should_render)
             self.scene.update(self.physics_dt)
             self._apply_action()
-
-            # Update heuristic state machine (handles all envs internally)
             self._heuristic_step()
 
             if (self._phase == self.PH_HOVER_UP).all():
                 break
 
+        # Re-enable debug prints
+        self._in_hierarchical_loop = False
+
         # 4. Compute observations, rewards, dones
         self.obs_buf = self._get_observations()
         self.reward_buf = self._grasp_reward_buf.clone()
 
-        # NOTE: Cycle count is incremented in _heuristic_step() when transitioning back to HOVER_UP
+        # Increment cycle count
+        self._cycle_count += 1
 
         # Check termination: rack empty (success) OR 50 cycles (timeout)
         terminated = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
@@ -1195,93 +1184,19 @@ class CraneDirectEnv(DirectRLEnv):
             logs_remaining = self._count_logs_in_rack(i)
             if logs_remaining == 0:  # Rack empty = success
                 terminated[i] = True
-                print(f"[env{i}] EPISODE COMPLETE: Rack empty after {self._cycle_count[i]} cycles")
             elif self._cycle_count[i] >= 50:  # Timeout
                 terminated[i] = True
-                # Only print timeout for env 0 to avoid flooding terminal
-                if i == 0:
-                    print(f"[env{i}] EPISODE TIMEOUT: 50 cycles reached, {logs_remaining} logs remaining")
 
         truncated = torch.zeros_like(terminated)
 
-        # Update episode length buffer BEFORE resetting (so RSL-RL sees correct lengths)
-        self.episode_length_buf += 1
-
-        # Populate extras["episode"] for TensorBoard BEFORE resetting
-        # RSL-RL expects this to be present when done=True
+        # Reset terminated envs
         reset_ids = terminated.nonzero(as_tuple=False).squeeze(-1)
         if len(reset_ids) > 0:
-            # Compute episode statistics for environments that are terminating
-            resetting_env_ids = reset_ids.cpu().tolist()
-
-            logs_deposited_per_env = torch.tensor(
-                [len(self._deposited_logs[i]) for i in resetting_env_ids],
-                device=self.device,
-                dtype=torch.float32
-            )
-            cycles_per_env = torch.tensor(
-                [self._cycle_count[i].item() for i in resetting_env_ids],
-                device=self.device,
-                dtype=torch.float32
-            )
-            throughput_per_env = torch.tensor(
-                [self._episode_throughput_sum[i].item() for i in resetting_env_ids],
-                device=self.device,
-                dtype=torch.float32
-            )
-            alignment_per_env = torch.tensor(
-                [self._episode_alignment_sum[i].item() for i in resetting_env_ids],
-                device=self.device,
-                dtype=torch.float32
-            )
-
-            # Compute averages
-            avg_logs_deposited = logs_deposited_per_env.mean().item()
-            avg_cycles = cycles_per_env.mean().item()
-            avg_throughput_per_cycle = (throughput_per_env / cycles_per_env.clamp(min=1)).mean().item()
-            avg_alignment_per_cycle = (alignment_per_env / cycles_per_env.clamp(min=1)).mean().item()
-
-            # Last cycle rewards
-            last_throughput = torch.tensor(
-                [self._last_throughput_reward[i] for i in resetting_env_ids],
-                device=self.device,
-                dtype=torch.float32
-            )
-            last_alignment = torch.tensor(
-                [self._last_alignment_reward[i] for i in resetting_env_ids],
-                device=self.device,
-                dtype=torch.float32
-            )
-
-            # Populate extras for TensorBoard
-            self.extras["episode"] = {
-                # Episode-level metrics
-                "logs_deposited": avg_logs_deposited,
-                "cycles_completed": avg_cycles,
-                "avg_logs_per_cycle": (logs_deposited_per_env.sum() / cycles_per_env.sum().clamp(min=1)).item(),
-
-                # Reward components (for analysis)
-                "reward/avg_throughput": avg_throughput_per_cycle,
-                "reward/avg_alignment": avg_alignment_per_cycle,
-                "reward/avg_multiplicative": avg_throughput_per_cycle * avg_alignment_per_cycle,
-
-                # Last cycle rewards (instantaneous)
-                "reward/last_throughput": last_throughput.mean().item(),
-                "reward/last_alignment": last_alignment.mean().item(),
-            }
-
-            # Now reset the terminated environments (this will reset their episode_length_buf to 0)
             self._reset_idx(reset_ids)
-        else:
-            # No environments terminating, clear extras["episode"] if it exists
-            if "episode" in self.extras:
-                del self.extras["episode"]
-
-        # Re-enable debug prints for next step
-        self._in_hierarchical_loop = False
 
         # 5. Return only at decision points
         return self.obs_buf, self.reward_buf, terminated, truncated, self.extras
+
 
     # ---------------- Scene setup ----------------
     def _setup_scene(self):
@@ -1336,7 +1251,7 @@ class CraneDirectEnv(DirectRLEnv):
 
         # done
         self._bootstrap_done = True
-        print(f"[INFO]: Env ready. control_mode = {self._mode}")
+        print(f"[INFO]: Env ready. Running heuristic baseline.")
     
     def _calc_optimal_yaw_feedback(self, env_i: int) -> float:
         """Return target yaw (radians, in (-pi,pi]) for the grapple yaw joint, base-frame."""
@@ -1663,9 +1578,12 @@ class CraneDirectEnv(DirectRLEnv):
             base_pos_w  = root_pose_w[env_i, 0:3].unsqueeze(0)  # [1,3]
             base_quat_w = root_pose_w[env_i, 3:7].unsqueeze(0)  # [1,4]
 
-            # Rack anchor point in WORLD (at rack base height)
+            # Get environment origin offset for this env
+            env_origin = self.scene.env_origins[env_i]
+
+            # Rack anchor point in WORLD (at rack base height) - offset by env origin
             rack_anchor_w = torch.tensor(
-                [[cfg.rack_x, rack_center_y_w, cfg.base_z]],
+                [[env_origin[0] + cfg.rack_x, env_origin[1] + rack_center_y_w, env_origin[2] + cfg.base_z]],
                 device=self.device,
                 dtype=torch.float32,
             )
@@ -1702,9 +1620,11 @@ class CraneDirectEnv(DirectRLEnv):
             self._action_bounds_max[env_i] = max_bounds
             self._action_bounds_valid[env_i] = True
 
-            print(
-                f"[env{env_i}] ACTION-BOUNDS (rack-based): "
-                f"x=[{min_bounds[0]:.2f},{max_bounds[0]:.2f}], "
+            # Only print bounds in debug mode (not during RL training)
+            if not self._in_hierarchical_loop and args_cli.debug_every_steps > 0:
+                print(
+                    f"[env{env_i}] ACTION-BOUNDS (rack-based): "
+                    f"x=[{min_bounds[0]:.2f},{max_bounds[0]:.2f}], "
                 f"y=[{min_bounds[1]:.2f},{max_bounds[1]:.2f}], "
                 f"z=[{min_bounds[2]:.2f},{max_bounds[2]:.2f}]"
             )
@@ -1908,29 +1828,29 @@ class CraneDirectEnv(DirectRLEnv):
             if (self.common_step_counter % self._dbg_every) == 0:
                 self._probe_logs(tag=f"STEP@{int(self.common_step_counter)}")
 
-        if self._mode == "rl":
-            a = actions.to(self.device).clamp(-1.0, 1.0)
-            dx, dy, dz, dyaw = a.unbind(-1)
-            self._ee_goal[:, 0] += args_cli.rl_xyz_scale * dx
-            self._ee_goal[:, 1] += args_cli.rl_xyz_scale * dy
-            self._ee_goal[:, 2] += args_cli.rl_xyz_scale * dz
-            dq = yaw_to_quat_wxyz(args_cli.rl_yaw_scale * dyaw)
-            gq = quat_multiply_wxyz(self._ee_goal[:, 3:7], dq)
-            self._ee_goal[:, 3:7] = gq / (
-                torch.linalg.vector_norm(gq, dim=-1, keepdim=True) + 1e-9
-            )
+        # In hierarchical mode, the step() override runs the FSM internally
+        # So we skip calling _heuristic_step() here to avoid running it twice
+        if self._in_hierarchical_loop:
+            return
 
-        # Run heuristic if in heuristic mode OR using target selection policy
-        elif self._mode == "heuristic" or getattr(self.cfg, "use_target_selection_policy", False):
+        # Both heuristic and rl modes run the heuristic FSM
+        # (rl mode just changes who selects the target at HOVER_UP)
+        # But don't start FSM until logs have settled
+        if not self._logs_settled:
+            return
+
+        if self._log_origins_world.numel() == 0:
+            self._rebuild_log_origins_world()
             if self._log_origins_world.numel() == 0:
-                self._rebuild_log_origins_world()
-                if self._log_origins_world.numel() == 0:
-                    return
-            self._heuristic_step()
-        # else: "ee_goal" → hold
+                return
+        self._heuristic_step()
 
     def _apply_action(self) -> None:
         """Compute and apply joint velocity commands using differential IK or SimpleIK controller."""
+        # Don't apply any actions until logs have settled
+        if not self._logs_settled:
+            return
+
         jac_all = self.crane.root_physx_view.get_jacobians()
         jacobian = jac_all[:, self._ee_jacobi_idx, :, self._ctrl_joint_idx]
 
@@ -1941,8 +1861,8 @@ class CraneDirectEnv(DirectRLEnv):
             ee_pose_w[:, 0:3],  ee_pose_w[:, 3:7]
         )
 
-        if self._mode == "heuristic" or getattr(self.cfg, "use_target_selection_policy", False):
-            self._ee_goal[:, 3:7] = ee_quat_b
+        # Always set orientation (both modes use heuristic FSM)
+        self._ee_goal[:, 3:7] = ee_quat_b
 
         joint_pos_ctrl = self.crane.data.joint_pos[:, self._ctrl_joint_idx]
         # Only command IK after heuristic has set meaningful targets
@@ -2018,7 +1938,8 @@ class CraneDirectEnv(DirectRLEnv):
 
         # Apply direct yaw control for both ALIGN_YAW and ALIGN_HOME_YAW phases (after IK to avoid override)
         # This runs in both heuristic mode and target selection policy mode
-        if self._mode == "heuristic" or getattr(self.cfg, "use_target_selection_policy", False):
+        # Both modes run heuristic FSM
+        if True:
             align_mask = (self._phase == self.PH_ALIGN_YAW) | (self._phase == self.PH_ALIGN_HOME_YAW)
             if align_mask.any():
                 yaw_joint_id = self._find_yaw_joint_id()
@@ -2043,7 +1964,8 @@ class CraneDirectEnv(DirectRLEnv):
         For hierarchical RL, this is called by step() after cycle completes.
         For non-hierarchical mode, falls back to original behavior.
         """
-        if getattr(self.cfg, "use_target_selection_policy", False):
+        # Hierarchical RL mode: build target selection observation
+        if getattr(self.cfg, "use_hierarchical_rl", False):
             # Build fresh observation for policy decision
             return {"policy": self._build_target_selection_obs()}
 
@@ -2060,7 +1982,8 @@ class CraneDirectEnv(DirectRLEnv):
         For hierarchical RL, rewards are computed in step() and stored in _grasp_reward_buf.
         For non-hierarchical mode, falls back to original behavior.
         """
-        if getattr(self.cfg, "use_target_selection_policy", False):
+        # Hierarchical RL mode: rewards computed in step() override
+        if getattr(self.cfg, "use_hierarchical_rl", False):
             # Rewards already computed in step() override
             return self._grasp_reward_buf
 
@@ -2080,7 +2003,8 @@ class CraneDirectEnv(DirectRLEnv):
             time_out: Boolean tensor indicating which environments timed out
         """
         # When using heuristic mode OR target selection policy, use custom termination
-        if self._mode == "heuristic" or getattr(self.cfg, "use_target_selection_policy", False):
+        # Both modes run heuristic FSM
+        if True:
             terminated = torch.zeros_like(self.episode_length_buf, dtype=torch.bool, device=self.device)
 
             # Terminate episode if:
@@ -2103,7 +2027,8 @@ class CraneDirectEnv(DirectRLEnv):
         """Return extra metrics for logging (used by RSL-RL)."""
         extras = {}
 
-        if getattr(self.cfg, "use_target_selection_policy", False):
+        # Hierarchical RL mode: compute episode statistics
+        if getattr(self.cfg, "use_hierarchical_rl", False):
             # Compute episode statistics
             logs_deposited_per_env = torch.tensor(
                 [len(self._deposited_logs[i]) for i in range(self.num_envs)],
@@ -2478,10 +2403,6 @@ class CraneDirectEnv(DirectRLEnv):
 
         print(f"[INFO] Settling logs for {settle_time:.2f}s before training starts...")
 
-        # Save current mode and temporarily switch to passive mode
-        prev_mode = self._mode
-        self._mode = "ee_goal"
-
         # Open grippers during settling
         for i in range(self.num_envs):
             self._set_gripper(i, 1.0)
@@ -2490,9 +2411,14 @@ class CraneDirectEnv(DirectRLEnv):
         dt = self.cfg.sim.dt * self.cfg.decimation
         settle_steps = int(settle_time / dt)
 
+        # Freeze crane during settling by setting zero joint velocities
+        zero_joint_vel = torch.zeros_like(self.crane.data.joint_vel)
+
         # Run settling loop with zero actions
-        zero_actions = torch.zeros(self.num_envs, self.cfg.action_space, device=self.device)
         for step in range(settle_steps):
+            # Set crane joint velocities to zero (freeze crane in place)
+            self.crane.write_joint_velocity_to_sim(zero_joint_vel)
+
             # Step simulation without policy intervention
             self.sim.step()
             self.scene.update(self.cfg.sim.dt)
@@ -2504,8 +2430,6 @@ class CraneDirectEnv(DirectRLEnv):
                 except Exception:
                     pass
 
-        # Restore original mode
-        self._mode = prev_mode
         self._logs_settled = True
 
         # Update scene one more time after settling
@@ -2519,7 +2443,8 @@ class CraneDirectEnv(DirectRLEnv):
         print(f"[INFO] Logs settled after {settle_steps} steps")
 
         # Compute action space bounds from settled log positions
-        if getattr(self.cfg, "use_target_selection_policy", False):
+        # Only needed for hierarchical RL mode
+        if getattr(self.cfg, "use_hierarchical_rl", False):
             print("[INFO] Computing action space bounds from log positions...")
             self._compute_action_space_bounds()
     
@@ -2720,9 +2645,13 @@ class CraneDirectEnv(DirectRLEnv):
 
         The heuristic is used both as a baseline and as the executor in hierarchical RL mode.
         """
-        # Skip debug prints during hierarchical internal loop to avoid terminal spam
-        do_dbg = (self.common_step_counter % self._dbg_every == 0) and not self._in_hierarchical_loop
-        max_envs = min(self._dbg_envs_max, self.num_envs)
+        # Force disable ALL debug prints during hierarchical internal loop to avoid terminal spam
+        if self._in_hierarchical_loop:
+            do_dbg = False
+            max_envs = 0  # No debug envs
+        else:
+            do_dbg = (self.common_step_counter % self._dbg_every == 0)
+            max_envs = min(self._dbg_envs_max, self.num_envs)
 
 
         for i in range(self.num_envs):
@@ -2731,7 +2660,8 @@ class CraneDirectEnv(DirectRLEnv):
 
                         # Freeze target (either heuristic highest-log or policy-chosen) at start of pick cycle
             if phase == self.PH_HOVER_UP and not self._target_frozen[i]:
-                use_policy = bool(getattr(self.cfg, "use_target_selection_policy", False))
+                # Use policy in hierarchical RL mode, otherwise use heuristic
+                use_policy = getattr(self.cfg, "use_hierarchical_rl", False)
 
                 if use_policy:
                     # Read last action (store it in _pre_physics_step)
@@ -2760,8 +2690,8 @@ class CraneDirectEnv(DirectRLEnv):
 
                     yaw_desired = torch.tanh(a[3]) * 3.14159  # yaw range: [-pi, pi] radians
 
-                    # Debug: show bounded action space
-                    if do_dbg and i < max_envs:
+                    # Debug: show bounded action space (only in standalone mode, not during hierarchical training)
+                    if not self._in_hierarchical_loop and do_dbg and i < max_envs:
                         print(f"[env{i}] ACTION-BOUNDS: x=[{min_bounds[0]:.2f}, {max_bounds[0]:.2f}], "
                               f"y=[{min_bounds[1]:.2f}, {max_bounds[1]:.2f}], "
                               f"z=[{min_bounds[2]:.2f}, {max_bounds[2]:.2f}]")
@@ -2804,8 +2734,8 @@ class CraneDirectEnv(DirectRLEnv):
                     # Set yaw target for ALIGN_YAW phase
                     self._yaw_targets[i] = yaw_target
 
-                    # Debug: Print policy's target selection
-                    if args_cli.debug_every_steps > 0 and i < args_cli.debug_envs_max:
+                    # Debug: Print policy's target selection (use do_dbg to respect hierarchical loop suppression)
+                    if do_dbg and i < max_envs:
                         yaw_str = f"yaw={yaw_target:.3f}rad ({yaw_target*57.3:.1f}°)"
                         if yaw_optimized:
                             yaw_str += f" [180° flipped for shorter path]"
@@ -2968,7 +2898,7 @@ class CraneDirectEnv(DirectRLEnv):
 
                 # Compute yaw target from feedback (only for heuristic mode)
                 # Policy mode already set yaw target during target selection
-                use_policy = bool(getattr(self.cfg, "use_target_selection_policy", False))
+                use_policy = getattr(self.cfg, "use_hierarchical_rl", False)
                 if not use_policy:
                     self._yaw_targets[i] = self._calc_optimal_yaw_feedback(i)
 
@@ -3269,8 +3199,9 @@ class CraneDirectEnv(DirectRLEnv):
                 if self._timer[i] > 15:
                     self._timer[i] = 0
 
-                    # Increment cycle count (hierarchical mode calculates reward at CARRY_HOME)
-                    self._cycle_count[i] += 1
+                    # Increment cycle count (only in standalone mode, hierarchical mode handles this in step())
+                    if not self._in_hierarchical_loop:
+                        self._cycle_count[i] += 1
 
                     # Clear frozen target for next pick cycle
                     self._target_log_pos_b[i].zero_()
@@ -3508,6 +3439,33 @@ class CraneDirectEnv(DirectRLEnv):
         deposited = len(self._deposited_logs[env_i])
         return total_logs - deposited
 
+    def _compute_grasp_reward(self, logs_grasped: int, alignment: float) -> float:
+        """Compute reward for grasp outcome.
+
+        Args:
+            logs_grasped: Number of logs successfully grasped
+            alignment: Average orientation alignment (0-1)
+
+        Returns:
+            Reward value: logs_grasped × alignment + bonus
+        """
+        if logs_grasped == 0:
+            return -1.0  # Penalty for failed grasp
+
+        # Base reward: multiplicative (logs × alignment)
+        # Linear gives learning signal even with poor alignment
+        base_reward = float(logs_grasped) * alignment
+
+        # Big bonus for high alignment (>0.7)
+        # Bonus heavily rewards good alignment (which prevents pile disruption)
+        if alignment > 0.7:
+            alignment_bonus = float(logs_grasped) * (alignment - 0.7) * 5.0
+            total_reward = base_reward + alignment_bonus
+        else:
+            total_reward = base_reward
+
+        return total_reward
+
     @staticmethod
     def _quat_rotate_vec_wxyz(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
         """Rotate vector by quaternion (w,x,y,z format).
@@ -3554,7 +3512,7 @@ class CraneDirectEnv(DirectRLEnv):
             self._viz["log"].visualize(log_pos_w)
 
             # Action space bounding box visualization (DISABLED)
-            # if getattr(self.cfg, "use_target_selection_policy", False):
+            # if False  # Standalone script runs heuristic only:
             #     bbox_centers_b = (self._action_bounds_min + self._action_bounds_max) / 2.0
             #     bbox_sizes_b = self._action_bounds_max - self._action_bounds_min
             #     bbox_centers_w = base_pos_w + self._quat_rotate_vec_wxyz(base_quat_w, bbox_centers_b)
@@ -3577,7 +3535,6 @@ def compute_rewards(rew_alive: float, rew_pos_l2: float, rew_vel_l1: float, q: t
 # ===== Main (smoke test / heuristic run) =====
 def main():
     cfg = CraneDirectEnvCfg()
-    cfg.use_target_selection_policy = args_cli.use_target_selection_policy
     cfg.scene.num_envs = args_cli.num_envs
     cfg.sim.device = args_cli.device
     cfg.crane_cfg = cfg.crane_cfg.replace(
@@ -3600,6 +3557,9 @@ def main():
     cfg.sim.physx.friction_correlation_distance = 0.00625  # From default 0.025
     cfg.seed = 0 if args_cli.seed is None else max(0, int(args_cli.seed))
 
+    # Set settling time from CLI args
+    cfg.settle_time = args_cli.settle_time
+
     # Set gripper closing speed parameters from CLI args
     cfg.gripper_close_step = args_cli.gripper_close_step
     cfg.gripper_close_delay_s = args_cli.gripper_close_delay
@@ -3609,40 +3569,18 @@ def main():
     env = CraneDirectEnv(cfg)
     print("[INFO]: Completed setting up the environment...")
 
-    if args_cli.settle_time > 0.0:
-        print(f"[INFO] Settling logs for {args_cli.settle_time:.2f}s...")
-        prev_mode = env._mode
-        env._mode = "ee_goal"
-        # Set all environments to open gripper during settling
-        for i in range(env.num_envs):
-            env._set_gripper(i, 1.0)
-
-        settle_steps = int(args_cli.settle_time / cfg.sim.dt)
-        zero = torch.zeros(env.num_envs, cfg.action_space, device=env.device)
-        for _ in range(settle_steps):
-            env.step(zero)
-
-        ee_pose_w = env.crane.data.body_pose_w[:, env._ee_body_id]
-        root_pose_w = env.crane.data.root_pose_w
-        ee_pos_b, ee_quat_b = subtract_frame_transforms(
-            root_pose_w[:, 0:3], root_pose_w[:, 3:7], ee_pose_w[:, 0:3], ee_pose_w[:, 3:7]
-        )
-        env._ee_goal[:, 0:3] = ee_pos_b
-        env._ee_goal[:, 3:7] = ee_quat_b
-        env._mode = prev_mode
-        print("[INFO] Settling done. Beginning task.")
+    # Trigger initial reset which will run settling
+    # This calls _reset_idx() which spawns logs and runs _settle_logs()
+    env.reset()
+    print("[INFO]: Initial reset complete. Ready to start task.")
 
     count = 0
     while simulation_app.is_running():
         with torch.inference_mode():
-            if args_cli.control_mode == "rl":
-                actions = torch.randn(env.num_envs, cfg.action_space, device=env.device)
-            else:
-                actions = torch.zeros(env.num_envs, cfg.action_space, device=env.device)
+            # Heuristic FSM handles everything - zero actions
+            actions = torch.zeros(env.num_envs, cfg.action_space, device=env.device)
 
             obs, rew, terminated, truncated, info = env.step(actions)
-            if count % 60 == 0 and args_cli.control_mode == "rl":
-                print(f"[step {count}] rew[0]={rew[0].item(): .3f} | mode={args_cli.control_mode}")
             count += 1
 
     env.close()
