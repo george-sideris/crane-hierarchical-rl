@@ -208,7 +208,7 @@ class CraneDirectEnvCfg_Full_v0(CraneDirectEnvCfgFull):
     reward_formula: str = "multiplicative"
     normalize_reward: bool = False
     use_stability_reward: bool = True
-    failure_penalty: float = -1.0
+    failure_penalty: float = -3.0
 
 
 # v1: multiplicative, normalized
@@ -224,7 +224,7 @@ class CraneDirectEnvCfg_Full_v1(CraneDirectEnvCfgFull):
     reward_formula: str = "multiplicative"
     normalize_reward: bool = True
     use_stability_reward: bool = True
-    failure_penalty: float = -1.0
+    failure_penalty: float = -3.0
 
 
 # v2: additive, raw
@@ -274,7 +274,7 @@ class CraneDirectEnvCfg_Full_DR_v0(CraneDirectEnvCfgFull):
     reward_formula: str = "multiplicative"
     normalize_reward: bool = False
     use_stability_reward: bool = True
-    failure_penalty: float = -1.0
+    failure_penalty: float = -3.0
 
 
 # v1: multiplicative, normalized
@@ -290,7 +290,7 @@ class CraneDirectEnvCfg_Full_DR_v1(CraneDirectEnvCfgFull):
     reward_formula: str = "multiplicative"
     normalize_reward: bool = True
     use_stability_reward: bool = True
-    failure_penalty: float = -1.0
+    failure_penalty: float = -3.0
 
 
 # v2: additive, raw
@@ -324,57 +324,6 @@ class CraneDirectEnvCfg_Full_DR_v3(CraneDirectEnvCfgFull):
     use_stability_reward: bool = True
     failure_penalty: float = -0.5
 
-
-# =============================================================================
-# Progress-gated reward variants (encourage endgame pile clearing)
-# v0: progress_gate (fraction-of-pile throughput) with soft alignment/stability gates
-# =============================================================================
-
-@configclass
-class CraneDirectEnvCfg_Full_PG_v0(CraneDirectEnvCfgFull):
-    """PG v0: Progress-gated reward (fraction of pile removed) + soft quality gates."""
-    use_hierarchical_rl: bool = True
-    episode_length_s = 600.0
-    action_space = 4
-    max_logs_obs: int = 32
-    observation_space = 128
-    enable_domain_randomization: bool = False
-
-    # New reward mode implemented in crane_rl_env_full (_compute_grasp_reward)
-    reward_formula: str = "progress_gate"
-
-    # Gates + scaling (see env code; these are read via getattr so optional)
-    reward_progress_scale: float = 100.0      # scales g/N0 to the ~[0,100] episode range
-    reward_gate_eps_align: float = 0.10       # prevents early collapse to 0 reward
-    reward_gate_eps_stab: float = 0.10
-    reward_clear_bonus: float = 20.0          # bonus when the pile is fully cleared
-    empty_target_penalty: float = -0.5        # extra penalty for aiming at empty space
-
-    # Keep stability as a gate (recommended if you care about stable grasps)
-    use_stability_reward: bool = True
-    # Failure penalty (0-log grasp)
-    failure_penalty: float = -0.5
-
-
-@configclass
-class CraneDirectEnvCfg_Full_DR_PG_v0(CraneDirectEnvCfgFull):
-    """DR PG v0: Progress-gated reward under domain randomization."""
-    use_hierarchical_rl: bool = True
-    episode_length_s = 600.0
-    action_space = 4
-    max_logs_obs: int = 32
-    observation_space = 128
-    enable_domain_randomization: bool = True
-
-    reward_formula: str = "progress_gate"
-    reward_progress_scale: float = 100.0
-    reward_gate_eps_align: float = 0.10
-    reward_gate_eps_stab: float = 0.10
-    reward_clear_bonus: float = 20.0
-    empty_target_penalty: float = -0.5
-
-    use_stability_reward: bool = True
-    failure_penalty: float = -0.5
 
 # =============================================================================
 # Gym Task Registrations
@@ -423,17 +372,6 @@ gym.register(
     },
 )
 
-
-gym.register(
-    id="Isaac-Crane-Full-PG-v0",  # Progress-gated reward (no DR)
-    entry_point="crane_rl_env_full:CraneDirectEnvFull",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": CraneDirectEnvCfg_Full_PG_v0,
-        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Full",
-    },
-)
-
 # --- With Domain Randomization ---
 gym.register(
     id="Isaac-Crane-Full-DR-MR-v0",  # DR + Multiplicative Raw
@@ -475,17 +413,6 @@ gym.register(
     },
 )
 
-
-
-gym.register(
-    id="Isaac-Crane-Full-DR-PG-v0",  # DR + Progress-gated reward
-    entry_point="crane_rl_env_full:CraneDirectEnvFull",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": CraneDirectEnvCfg_Full_DR_PG_v0,
-        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Full",
-    },
-)
 
 ##
 # Depth observation environment: CNN-based visual RL

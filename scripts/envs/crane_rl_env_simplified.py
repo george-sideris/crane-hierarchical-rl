@@ -328,7 +328,7 @@ parser.add_argument("--enhanced_determinism", action="store_true")
 
 # Visualization
 parser.add_argument("--viz_markers", action="store_true", help="Enable debug VisualizationMarkers.")
-parser.add_argument("--show_action_bounds", action="store_true", help="Show action space bounding box visualization.")
+parser.add_argument("--show_action_bounds", action="store_true", help="Show translucent box for action/rack bounds.")
 
 parser.add_argument("--debug_logs", action="store_true",
                     help="Print periodic live log pose probes.")
@@ -645,6 +645,84 @@ def plan_grid_yz_pattern_c(center_y_local: float, rows: int, layers: int, spacin
     
     return positions
 
+def plan_grid_yz_random(center_y_local: float, rows: int, layers: int, spacing_y: float, spacing_z: float,
+                       base_z: float, cap: int, row_y_jitter: float, layer_y_offset: float, seed: Optional[int]):
+    """Generate truly random log pile patterns that will settle into different profiles.
+
+    Randomizes:
+    - Grid dimensions (row count, layer count)
+    - Spacing between logs (horizontal and vertical)
+    - Center position shifts
+    - Layer offsets for irregular stacking
+    - Per-log jitter for organic pile shapes
+    """
+    import random
+    if seed is not None:
+        random.seed(seed)
+
+    # Randomize grid dimensions (keep total ~200 logs)
+    # More rows = wider pile, more layers = taller pile
+    pattern_rows = random.randint(15, 25)  # More conservative range
+    pattern_layers = random.randint(10, 20)  # More conservative range
+
+    # Randomize spacing (affects density and pile shape)
+    # Base spacing: y=0.16m, z=0.12m
+    random_spacing_y = spacing_y * random.uniform(0.9, 1.15)  # 14-18cm horizontal
+    random_spacing_z = spacing_z * random.uniform(0.9, 1.15)  # 11-14cm vertical
+
+    # Randomize center shift (left/right bias) - keep within rack bounds
+    center_shift = random.uniform(-0.6, 0.6)  # ±60cm shift (conservative)
+    shifted_center = center_y_local + center_shift
+
+    # Randomize layer offsets for irregular stacking
+    layer_offs = []
+    for L in range(pattern_layers):
+        # Each layer can have different offset pattern
+        if random.random() < 0.5:
+            # Alternating offset
+            offset = (layer_y_offset if (L % 2 == 1) else 0.0)
+        else:
+            # Random offset per layer (smaller range)
+            offset = random.uniform(-0.05, 0.05)  # ±5cm instead of ±10cm
+        layer_offs.append(offset)
+
+    # Center the offsets
+    if pattern_layers > 0:
+        mean_off = sum(layer_offs) / pattern_layers
+        layer_offs = [o - mean_off for o in layer_offs]
+
+    positions, placed = [], 0
+    y0 = shifted_center - 0.5 * (pattern_rows - 1) * random_spacing_y
+
+    # Randomize base height variation (small to keep logs stable)
+    base_z_variation = random.uniform(-0.02, 0.02)  # ±2cm base height
+
+    # Keep generating layers until we have enough logs
+    L = 0
+    max_layers = 100  # Safety limit to prevent infinite loop
+
+    while placed < cap and L < max_layers:
+        zc = base_z + base_z_variation + L * random_spacing_z
+
+        # Get layer offset (cycle through if we exceed original pattern_layers)
+        layer_offset = layer_offs[L % len(layer_offs)] if layer_offs else 0.0
+
+        for i in range(pattern_rows):
+            if placed >= cap: break
+
+            yc = y0 + i * random_spacing_y + layer_offset
+
+            # Add moderate jitter for organic pile shapes (stay within rack bounds)
+            yc += (random.random()*2 - 1) * 0.04  # ±4cm y jitter (reduced from 8cm)
+            zc_jittered = zc + (random.random()*2 - 1) * 0.02  # ±2cm z jitter (reduced from 4cm)
+
+            positions.append((yc, zc_jittered))
+            placed += 1
+
+        L += 1
+
+    return positions
+
 # ===== Crane config =====
 CRANE_CFG = ArticulationCfg(
     prim_path="/World/envs/env_.*/Crane",
@@ -710,13 +788,13 @@ CRANE_CFG = ArticulationCfg(
 @configclass
 class CraneSceneCfg(InteractiveSceneCfg):
     """Scene configuration with crane articulation and static rack."""
-    
+
     # Crane articulation
     crane = CRANE_CFG.replace(prim_path="{ENV_REGEX_NS}/Crane")
-    
+
     # Rack as static asset (logs will be spawned manually for now to avoid timing issues)
     rack = AssetBaseCfg(
-        prim_path="{ENV_REGEX_NS}/Rack", 
+        prim_path="{ENV_REGEX_NS}/Rack",
         spawn=sim_utils.UsdFileCfg(usd_path=args_cli.rack_usd),
         init_state=AssetBaseCfg.InitialStateCfg(pos=(args_cli.rack_x, args_cli.rack_y, 0.0))
     )
@@ -726,11 +804,14 @@ class CraneSceneCfg(InteractiveSceneCfg):
 class CraneDirectEnvCfg(DirectRLEnvCfg):
     decimation = 2
     episode_length_s = 600.0
-    # Action space: (x, y, z, yaw) for target log position and grapple orientation
-    action_space = 4
 
-    # how many logs to encode in the observation
-    max_logs_obs: int = 32
+    # Simplified action space: [y, z] - X fixed to rack center, yaw auto-computed
+    # y: target position (left/right along rack)
+    # z: target height
+    action_space = 2
+
+    # Top-N logs observation: (y, z) for top 32 logs sorted by height
+    max_logs_obs: int = 32  # Number of logs to include in observation
 
     # Settling time (seconds) to let logs settle before training/task starts
     # This prevents target selection before logs have stopped moving
@@ -746,10 +827,9 @@ class CraneDirectEnvCfg(DirectRLEnvCfg):
     gripper_max_velocity: float = 10.0      # Max velocity rad/s - moderate speed
     gripper_kp: float = 8.0                 # Proportional gain - lower force to prevent penetration
 
-    # Observation is [for each log: (x_b, y_b, z_b, yaw)], padded to max_logs_obs,
-    # plus strategic state: (logs_remaining, cycle_count, prev_logs_grasped, prev_alignment).
-    # NOTE: EE pose is NOT included - it's constant at HOVER_UP (the only decision point)
-    observation_space = (max_logs_obs * 4) + 4  # 32*4 + 4 = 132
+    # Top 32 logs observation: (y, z) per log = 64 values, normalized to [-1, 1]
+    # Logs sorted by height (highest first), empty slots filled with -1
+    observation_space = (max_logs_obs * 2)  # 32*2 = 64
 
     state_space = 0
     action_scale = 1.0
@@ -787,15 +867,20 @@ class CraneDirectEnvCfg(DirectRLEnvCfg):
     rew_pos_l2 = -0.25
     rew_vel_l1 = -0.01
 
+    # Domain randomization (set in task configs - tasks.py)
+    enable_domain_randomization: bool = False  # Default: no randomization
+
 
 # ===== Env =====
-class CraneDirectEnv(DirectRLEnv):
+class CraneDirectEnvSimplified(DirectRLEnv):
     """
-    Hierarchical RL environment for crane log grasping.
+    Simplified hierarchical RL environment for crane log grasping.
 
-    The policy selects grasp targets (position + orientation) and a heuristic
-    finite state machine executes the pick-place cycle. Designed for parallel
-    simulation with Isaac Lab.
+    Key simplifications:
+    - 3D action space: [y, z, yaw] - X is fixed to rack center
+    - Y-binned observation: 10 bins × 3 features (max_height, count, avg_yaw)
+
+    The policy selects grasp targets and a heuristic FSM executes the pick-place cycle.
 
     - Task-space control via differential IK
     - Vectorized log spawning (Default 200 logs per environment), domain randomization through different spawn patterns on reset
@@ -852,8 +937,8 @@ class CraneDirectEnv(DirectRLEnv):
 
     def __init__(self, cfg: CraneDirectEnvCfg, render_mode: str | None = None, **kwargs):
         # ---- everything that _setup_scene might read must be set BEFORE super().__init__ ----
-        # Debug render: enabled by default
-        self._viz_enabled = True
+        # Debug render: controlled by --viz_markers flag
+        self._viz_enabled = args_cli.viz_markers if hasattr(args_cli, 'viz_markers') else False
         self._viz = None
         self._viz_proto_idx = {}
 
@@ -955,7 +1040,11 @@ class CraneDirectEnv(DirectRLEnv):
         self._timer = torch.zeros(self.num_envs, dtype=torch.int64, device=self.device)
         self._yaw_targets = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
         self._dwell = torch.zeros(self.num_envs, dtype=torch.int64, device=self.device)
-        
+
+        # Hold timer for keeping logs lifted before evaluation (for visual feedback)
+        self._lift_hold_timer = torch.zeros(self.num_envs, dtype=torch.int64, device=self.device)
+        self.LIFT_HOLD_DURATION = 60  # ~1 second at 60Hz to hold logs before despawn
+
         # Gripper closing validation state
         self._gripper_stability_timer = torch.zeros(self.num_envs, dtype=torch.int64, device=self.device)
         self._gripper_timeout_timer = torch.zeros(self.num_envs, dtype=torch.int64, device=self.device)
@@ -1076,9 +1165,10 @@ class CraneDirectEnv(DirectRLEnv):
         self._prev_logs_grasped = torch.zeros(self.num_envs, device=self.device, dtype=torch.float32)
         self._prev_grasp_alignment = torch.zeros(self.num_envs, device=self.device, dtype=torch.float32)
 
-        # Lift hold mechanism: pause after lifting to let logs stabilize before evaluation
-        self._lift_hold_timer = torch.zeros(self.num_envs, dtype=torch.int64, device=self.device)
-        self.LIFT_HOLD_DURATION = 60  # ~1 second at 60Hz to hold logs before evaluation
+        # Track logs knocked out of bounds (for penalty)
+        self._logs_knocked_off = torch.zeros(self.num_envs, device=self.device, dtype=torch.int32)
+        self._logs_out_of_bounds_penalty = 0.0  # No penalty - let policy explore freely
+        self._initial_settling_complete = False  # Track if initial settling has finished
 
         # Cache drop goals to avoid repeated calculations and debug prints
         self._cached_drop_goals = torch.zeros(self.num_envs, 3, device=self.device, dtype=torch.float32)
@@ -1100,20 +1190,14 @@ class CraneDirectEnv(DirectRLEnv):
         """
         Step the environment.
 
-        Hierarchical mode (use_hierarchical_rl=True):
-            ONE step() call = ONE complete pick-place cycle
+        NO-DEPOSITION MODE: Always uses hierarchical stepping.
+        ONE step() call = ONE complete pick-place cycle (no deposition)
             - Policy selects target at HOVER_UP
-            - Heuristic FSM runs internally until cycle completes
+            - Heuristic FSM runs internally until LIFT_HIGH completes
+            - Grasp is evaluated, logs despawned, crane returns to HOVER_UP
             - Returns (obs, reward, done) for the completed grasp
-
-        Standard mode (use_hierarchical_rl=False):
-            Standard RL step - one physics timestep per call
         """
-        if not getattr(self.cfg, "use_hierarchical_rl", False):
-            # Standard mode: normal step
-            return super().step(action)
-
-        # Hierarchical mode: one step = one complete cycle
+        # No-deposition version always uses hierarchical mode
         # 1. Process action (target selection) at HOVER_UP
         action = action.to(self.device)
 
@@ -1122,13 +1206,16 @@ class CraneDirectEnv(DirectRLEnv):
 
         self._pre_physics_step(action)
 
-        # 2. Run physics loop until grasp cycle completes (LIFT_HIGH → CARRY_HOME transition)
-        max_steps = 2000  # Safety limit (~33 seconds at 60Hz)
-        cycle_done = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        # 2. Run physics loop until all envs complete their grasp attempt
+        # Each phase has PHASE_TIMEOUT, so cycles naturally complete or timeout
+        # _cycle_complete_this_step prevents envs from starting new cycles within this step()
+        MAX_STEPS = 1500  # Safety limit only - should never hit this
 
-        for step_count in range(max_steps):
+        self._cycle_complete_this_step = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+
+        for step_count in range(MAX_STEPS):
             # Step physics simulation
-            should_render = (self.sim.has_gui() or self.sim.has_rtx_sensors()) and (step_count % 2 == 0)
+            should_render = (self.sim.has_gui() or self.sim.has_rtx_sensors()) and (step_count % 4 == 0)
             self.sim.step(render=should_render)
 
             # Update buffers
@@ -1137,41 +1224,21 @@ class CraneDirectEnv(DirectRLEnv):
             # Apply heuristic actions (IK controller)
             self._apply_action()
 
-            # Update heuristic state machine
+            # Update heuristic state machine (handles grasp evaluation and transition to HOVER_UP)
             self._heuristic_step()
 
-            # Check if any env reached CARRY_HOME (grasp cycle complete)
-            just_reached_carry = (self._phase == self.PH_CARRY_HOME) & ~cycle_done
-            cycle_done |= just_reached_carry
+            # Exit as soon as all envs have completed their grasp
+            if self._cycle_complete_this_step.all():
+                break
 
-            # Compute grasp reward for envs that just completed
+        # Safety: if we somehow hit max steps, give timeout penalty to incomplete envs
+        if step_count >= MAX_STEPS - 1:
             for i in range(self.num_envs):
-                if just_reached_carry[i]:
-                    logs_grasped, alignment = self._check_grasped_logs(i)
-                    reward = self._compute_grasp_reward(logs_grasped, alignment)
-                    self._grasp_reward_buf[i] = reward
-                    self._prev_logs_grasped[i] = float(logs_grasped)
-                    self._prev_grasp_alignment[i] = alignment
-
-                    # Print grasp outcome with cycle counter for progress tracking
-                    cycle_num = self._cycle_count[i].item() + 1  # +1 because we increment after this
-                    print(f"[env{i}] CYCLE {cycle_num}/50 | GRASP: {logs_grasped} logs, alignment={alignment:.2f}, reward={reward:.2f}")
-
-            # Exit when all envs have completed their grasp cycle
-            if cycle_done.all():
-                break
-
-        # 3. Continue heuristic until back at HOVER_UP (ready for next decision)
-        # This runs CARRY_HOME → SETTLE phases internally
-        for step_count in range(max_steps):
-            should_render = (self.sim.has_gui() or self.sim.has_rtx_sensors()) and (step_count % 2 == 0)
-            self.sim.step(render=should_render)
-            self.scene.update(self.physics_dt)
-            self._apply_action()
-            self._heuristic_step()
-
-            if (self._phase == self.PH_HOVER_UP).all():
-                break
+                if not self._cycle_complete_this_step[i]:
+                    print(f"[env{i}] SAFETY TIMEOUT: phase={self.PHASE_NAMES[int(self._phase[i])]}, penalty=-2.0")
+                    self._grasp_reward_buf[i] = -2.0
+                    self._prev_logs_grasped[i] = 0.0
+                    self._prev_grasp_alignment[i] = 0.0
 
         # Re-enable debug prints
         self._in_hierarchical_loop = False
@@ -1183,13 +1250,13 @@ class CraneDirectEnv(DirectRLEnv):
         # Increment cycle count
         self._cycle_count += 1
 
-        # Check termination: rack empty (success) OR 50 cycles (timeout)
+        # Check termination: rack empty (success) OR 30 cycles (timeout)
         terminated = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         for i in range(self.num_envs):
             logs_remaining = self._count_logs_in_rack(i)
             if logs_remaining == 0:  # Rack empty = success
                 terminated[i] = True
-            elif self._cycle_count[i] >= 50:  # Timeout
+            elif self._cycle_count[i] >= 30:  # Timeout (reduced from 50 for no-deposition mode)
                 terminated[i] = True
 
         truncated = torch.zeros_like(terminated)
@@ -1198,6 +1265,16 @@ class CraneDirectEnv(DirectRLEnv):
         reset_ids = terminated.nonzero(as_tuple=False).squeeze(-1)
         if len(reset_ids) > 0:
             self._reset_idx(reset_ids)
+
+        # Periodic garbage collection to prevent memory leaks during long training runs
+        # Clear unused GPU memory every 100 steps to avoid CUDA OOM errors
+        if not hasattr(self, '_gc_counter'):
+            self._gc_counter = 0
+        self._gc_counter += 1
+        if self._gc_counter % 100 == 0:
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
 
         # 5. Return only at decision points
         return self.obs_buf, self.reward_buf, terminated, truncated, self.extras
@@ -1316,10 +1393,10 @@ class CraneDirectEnv(DirectRLEnv):
         if q_log_w is None:
             try:
                 pos_w, quat_w = self._get_logs_root_pose_w()
-                if pos_w is not None and quat_w is not None and self._per_env_target > 0:
-                    per_env = int(self._per_env_target)
-                    s = env_i * per_env
-                    e = min(s + per_env, self._logs_obj.num_instances)
+                if pos_w is not None and quat_w is not None and hasattr(self, '_per_env_log_counts'):
+                    per_env = int(self._per_env_log_counts[env_i])
+                    s = env_i * 200  # Each env has 200 slots
+                    e = s + per_env  # Only active logs
                     if e > s:
                         k = int(torch.argmax(pos_w[s:e, 2]).item())
                         q = quat_w[s + k]
@@ -1402,11 +1479,101 @@ class CraneDirectEnv(DirectRLEnv):
         rotation_diff = wrap(target_z_rotation - current_bg_z_rotation)
 
         # -- apply to yaw joint with 180° flip option
-        JOINT_LIMIT = 3.1241
-        flip_diff = (rotation_diff + math.pi) if abs(rotation_diff + math.pi) <= abs(rotation_diff - math.pi) else (rotation_diff - math.pi)
-        target_yaw1 = max(-JOINT_LIMIT, min(JOINT_LIMIT, current_yaw_joint + rotation_diff))
-        target_yaw2 = max(-JOINT_LIMIT, min(JOINT_LIMIT, current_yaw_joint + flip_diff))
-        optimal_yaw = target_yaw1 if abs(target_yaw1 - current_yaw_joint) <= abs(target_yaw2 - current_yaw_joint) else target_yaw2
+        target_yaw1 = current_yaw_joint + rotation_diff
+        target_yaw2 = current_yaw_joint + rotation_diff + math.pi
+
+        # Choose minimal rotation
+        yaw1 = wrap(target_yaw1)
+        yaw2 = wrap(target_yaw2)
+
+        diff1 = abs(wrap(yaw1 - current_yaw_joint))
+        diff2 = abs(wrap(yaw2 - current_yaw_joint))
+
+        optimal_yaw = yaw1 if diff1 <= diff2 else yaw2
+
+        return optimal_yaw
+
+    def _calc_optimal_yaw_for_rack_perpendicular(self, env_i: int) -> float:
+        """Calculate optimal yaw to orient grapple perpendicular to rack.
+
+        The rack has identity orientation in world frame (yaw=0).
+        To be perpendicular to the rack (which extends along Y), we need
+        to orient the grapple along X, which is yaw=π/2 in world frame.
+
+        This transforms the target orientation to base frame and applies
+        the same yaw joint calculation with 180° flip option.
+        """
+        import math
+
+        def wrap(a: float) -> float:
+            return (a + math.pi) % (2.0 * math.pi) - math.pi
+
+        def quat_conj_wxyz(q):  # (w,x,y,z)
+            return (q[0], -q[1], -q[2], -q[3])
+
+        def quat_mul_wxyz(a, b):
+            aw, ax, ay, az = a; bw, bx, by, bz = b
+            return (
+                aw*bw - ax*bx - ay*by - az*bz,
+                aw*bx + ax*bw + ay*bz - az*by,
+                aw*by - ax*bz + ay*bw + az*bx,
+                aw*bz + ax*by - ay*bx + az*bw,
+            )
+
+        def yaw_from_quat_wxyz(qw: float, qx: float, qy: float, qz: float) -> float:
+            # yaw about Z (ZYX)
+            return math.atan2(2.0*(qw*qz + qx*qy), 1.0 - 2.0*(qy*qy + qz*qz))
+
+        # -- current yaw joint value
+        yaw_joint_ids, _ = self.crane.find_joints(["lowerpassive_to_basegrapple"])
+        if len(yaw_joint_ids) == 0:
+            return 0.0
+        yaw_joint_id = int(yaw_joint_ids[0])
+        current_yaw_joint = float(self.crane.data.joint_pos[env_i, yaw_joint_id].item())
+
+        # -- base orientation (world->base as conjugate)
+        base_quat_w = self.crane.data.root_pose_w[env_i, 3:7]
+        q_base_w = (float(base_quat_w[0]), float(base_quat_w[1]),
+                    float(base_quat_w[2]), float(base_quat_w[3]))
+        q_base_inv = quat_conj_wxyz(q_base_w)
+
+        # Read actual basegrapple orientation
+        bg_pose_w = self.crane.data.body_pose_w[env_i, self._basegrapple_body_id]
+        bg_quat_w = bg_pose_w[3:7]  # [w, x, y, z]
+
+        # Transform basegrapple to base frame
+        q_bg_b = quat_mul_wxyz(q_base_inv, (float(bg_quat_w[0]), float(bg_quat_w[1]),
+                                           float(bg_quat_w[2]), float(bg_quat_w[3])))
+        current_bg_z_rotation = yaw_from_quat_wxyz(*q_bg_b)
+
+        # -- Rack orientation in world frame: identity quaternion (yaw=0)
+        # To be PERPENDICULAR to rack (which extends along Y), we need yaw=π/2 in world
+        rack_yaw_world = math.pi / 2.0  # 90 degrees - perpendicular to Y axis
+
+        # Create quaternion for this target orientation in world frame
+        # quat for pure Z rotation: (cos(θ/2), 0, 0, sin(θ/2))
+        half_angle = rack_yaw_world / 2.0
+        q_rack_perpendicular_w = (math.cos(half_angle), 0.0, 0.0, math.sin(half_angle))
+
+        # Transform to base frame
+        q_target_b = quat_mul_wxyz(q_base_inv, q_rack_perpendicular_w)
+        target_yaw_b = yaw_from_quat_wxyz(*q_target_b)
+
+        # -- calculate rotation difference between target and basegrapple Z-rotations
+        rotation_diff = wrap(target_yaw_b - current_bg_z_rotation)
+
+        # -- apply to yaw joint with 180° flip option
+        target_yaw1 = current_yaw_joint + rotation_diff
+        target_yaw2 = current_yaw_joint + rotation_diff + math.pi
+
+        # Choose minimal rotation
+        yaw1 = wrap(target_yaw1)
+        yaw2 = wrap(target_yaw2)
+
+        diff1 = abs(wrap(yaw1 - current_yaw_joint))
+        diff2 = abs(wrap(yaw2 - current_yaw_joint))
+
+        optimal_yaw = yaw1 if diff1 <= diff2 else yaw2
 
         return optimal_yaw
 
@@ -1422,121 +1589,97 @@ class CraneDirectEnv(DirectRLEnv):
     
     def _build_target_selection_obs(self):
         """
-        Observation for the 'select-target-at-HOVER_UP' policy.
-        - For each existing log in the env: (x_b, y_b, z_b, yaw) in crane base frame.
-        - Only includes non-deposited, non-failed logs (available for grasping).
-        - Sorted by height (Z) descending, so highest logs come first.
-        - Padded with zeros up to cfg.max_logs_obs logs.
-        - Append current basegrapple (BG) pose in base: (x_b, y_b, z_b, yaw).
-        Returns [num_envs, cfg.observation_space].
+        Top 32 logs observation for simplified target selection.
+
+        Returns (y, z) for top 32 logs sorted by height (highest first).
+        Removed logs are excluded. Empty slots filled with sentinel (-1, -1).
+        All values normalized to [-1, 1] based on action bounds.
+
+        Returns [num_envs, 64] tensor (32 logs × 2 values each).
         """
         device = self.device
         N = self.num_envs
-        K = self.cfg.max_logs_obs
+        max_logs = self.cfg.max_logs_obs  # 32
 
-        # Logs world poses -> base frame
-        log_pos_w, log_quat_w = self._get_logs_root_pose_w()  # Get log positions and quaternions
-        root_w     = self.crane.data.root_pose_w  # [N, 7]
-        root_pos_w = root_w[:, 0:3]
-        root_quat_w= root_w[:, 3:7]
+        # Output: [N, max_logs * 2] - each log has (y, z)
+        obs_dim = max_logs * 2
+        # Initialize with sentinel values (-1 = no log)
+        all_obs = torch.full((N, obs_dim), -1.0, device=device, dtype=torch.float32)
 
-        # Handle case where no logs are available
+        # Get log positions
+        log_pos_w, log_quat_w = self._get_logs_root_pose_w()
         if log_pos_w is None or log_quat_w is None:
-            # Return zero observation if no logs available
-            obs_dim = int(self.cfg.observation_space)
-            return torch.zeros((N, obs_dim), device=device, dtype=torch.float32)
+            return all_obs
 
-        # Prepare observation tensor
-        obs_dim = int(self.cfg.observation_space)
-        all_obs = torch.zeros((N, obs_dim), device=device, dtype=torch.float32)
+        root_w = self.crane.data.root_pose_w
+        root_pos_w = root_w[:, 0:3]
+        root_quat_w = root_w[:, 3:7]
 
-        # Process each environment separately since logs are stored globally
         for env_i in range(N):
-            # Get logs for this environment
-            per_env = int(self._per_env_target) if hasattr(self, '_per_env_target') else K
-            start = env_i * per_env
-            end = min(start + per_env, log_pos_w.shape[0])
+            # Ensure action bounds are computed
+            if not self._action_bounds_valid[env_i]:
+                self._compute_action_space_bounds()
 
-            if end <= start:
-                # No logs for this environment, observation remains zeros
-                continue
+            min_b = self._action_bounds_min[env_i]
+            max_b = self._action_bounds_max[env_i]
+            y_min, y_max = min_b[1].item(), max_b[1].item()
+            z_min, z_max = min_b[2].item(), max_b[2].item()
 
-            # Filter out deposited logs (policy will learn to avoid problematic logs via reward)
+            # Get available logs for this environment
+            per_env = int(self._per_env_log_counts[env_i]) if hasattr(self, '_per_env_log_counts') else 200
+            start = env_i * 200
+            end = start + per_env
+
+            # Collect available (non-deposited) logs
             available_indices = []
-            for log_idx in range(end - start):
+            for log_idx in range(per_env):
                 global_log_idx = start + log_idx
                 if global_log_idx not in self._deposited_logs[env_i]:
                     available_indices.append(log_idx)
 
             if len(available_indices) == 0:
-                # No available logs for this environment, observation remains zeros
                 continue
 
-            # Get only available logs
+            # Get log positions
             available_indices_tensor = torch.tensor(available_indices, device=device, dtype=torch.long)
-            env_log_pos_w = log_pos_w[start:end][available_indices_tensor]  # [num_available, 3]
-            env_log_quat_w = log_quat_w[start:end][available_indices_tensor]  # [num_available, 4]
+            env_log_pos_w = log_pos_w[start:end][available_indices_tensor]
+            env_log_quat_w = log_quat_w[start:end][available_indices_tensor]
+            num_logs = len(available_indices)
 
-            # Sort by height (Z) descending so highest logs come first in observation
-            # This ensures the policy always sees the top K highest logs
-            z_values = env_log_pos_w[:, 2]
-            sorted_indices = torch.argsort(z_values, descending=True)
-            env_log_pos_w = env_log_pos_w[sorted_indices]
-            env_log_quat_w = env_log_quat_w[sorted_indices]
+            # Transform to base frame
+            root_pos_w_i = root_pos_w[env_i:env_i+1].expand(num_logs, -1)
+            root_quat_w_i = root_quat_w[env_i:env_i+1].expand(num_logs, -1)
+            log_pos_b, _ = subtract_frame_transforms(
+                root_pos_w_i, root_quat_w_i, env_log_pos_w, env_log_quat_w
+            )
 
-            num_logs_env = env_log_pos_w.shape[0]
+            # Sort by height (z) descending - highest logs first
+            log_z = log_pos_b[:, 2]
+            sorted_indices = torch.argsort(log_z, descending=True)
 
-            # Limit to K logs (now we're taking the K highest logs)
-            if num_logs_env > K:
-                env_log_pos_w = env_log_pos_w[:K]
-                env_log_quat_w = env_log_quat_w[:K]
-                num_logs_env = K
+            # Take top max_logs
+            num_to_use = min(num_logs, max_logs)
+            top_indices = sorted_indices[:num_to_use]
 
-            # Transform logs into base frame for this environment
-            root_pos_w_i = root_pos_w[env_i:env_i+1]  # [1, 3]
-            root_quat_w_i = root_quat_w[env_i:env_i+1]  # [1, 4]
+            # Get (y, z) for top logs and normalize to [-1, 1]
+            for i, idx in enumerate(top_indices):
+                y = log_pos_b[idx, 1].item()
+                z = log_pos_b[idx, 2].item()
 
-            # Expand root to match number of logs
-            root_pos_w_expanded = root_pos_w_i.expand(num_logs_env, -1)  # [num_logs_env, 3]
-            root_quat_w_expanded = root_quat_w_i.expand(num_logs_env, -1)  # [num_logs_env, 4]
+                # Normalize to [-1, 1]
+                y_norm = 2.0 * (y - y_min) / (y_max - y_min + 1e-6) - 1.0
+                z_norm = 2.0 * (z - z_min) / (z_max - z_min + 1e-6) - 1.0
 
-            log_pos_b, log_quat_b = subtract_frame_transforms(
-                root_pos_w_expanded,
-                root_quat_w_expanded,
-                env_log_pos_w,
-                env_log_quat_w,
-            )  # [num_logs_env, 3], [num_logs_env, 4]
+                # Clamp to [-1, 1]
+                y_norm = max(min(y_norm, 1.0), -1.0)
+                z_norm = max(min(z_norm, 1.0), -1.0)
 
-            # yaw from quaternion
-            yaw = torch.atan2(
-                2.0*(log_quat_b[:,0]*log_quat_b[:,3] + log_quat_b[:,1]*log_quat_b[:,2]),
-                1.0 - 2.0*(log_quat_b[:,2]*log_quat_b[:,2] + log_quat_b[:,3]*log_quat_b[:,3])
-            )  # [num_logs_env]
-
-            log_feats = torch.cat([log_pos_b, yaw.unsqueeze(-1)], dim=-1)  # [num_logs_env, 4]
-
-            # Fill in the observation for this environment
-            # First K*4 elements are log features (padded with zeros if needed)
-            # Logs are sorted by height, so first log in observation is the highest
-            all_obs[env_i, :num_logs_env*4] = log_feats.reshape(-1)
-
-        # Add strategic state information for temporal awareness and feedback
-        # NOTE: EE pose is NOT included - it's constant at HOVER_UP (decision point)
-        strategic_state = torch.zeros((N, 4), device=device, dtype=torch.float32)
-        for env_i in range(N):
-            logs_remaining = self._count_logs_in_rack(env_i)
-            cycle_count_normalized = self._cycle_count[env_i].float() / 50.0  # Normalize by max cycles
-
-            strategic_state[env_i, 0] = float(logs_remaining)
-            strategic_state[env_i, 1] = cycle_count_normalized
-            strategic_state[env_i, 2] = self._prev_logs_grasped[env_i]
-            strategic_state[env_i, 3] = self._prev_grasp_alignment[env_i]
-
-        # Place strategic state at the end of observation (after log features)
-        all_obs[:, K*4:K*4+4] = strategic_state
+                # Store in observation: [y, z] per log
+                obs_idx = i * 2
+                all_obs[env_i, obs_idx] = y_norm
+                all_obs[env_i, obs_idx + 1] = z_norm
 
         return all_obs
-
 
     def _compute_action_space_bounds(self) -> None:
         """Compute per-env action-space bounds (in crane base frame) aligned to the rack layout."""
@@ -1564,7 +1707,7 @@ class CraneDirectEnv(DirectRLEnv):
         margin_x_front = 1.5   # was 0.50
 
         # Y overhang (keep some slack so you can hit edge logs / shifted patterns)
-        margin_y = 1.00        # was 1.00 (feel free to keep 1.00 if you liked it)
+        margin_y = 1.15        # Increased from 1.00 to prevent edge logs from being despawned
 
         # Much shorter in Z: just enough above the stack for grasp points (hover is handled elsewhere)
         margin_z_top = 0.35    # was 1.50
@@ -1632,14 +1775,14 @@ class CraneDirectEnv(DirectRLEnv):
         """Apply command scaling for controlled movement phases."""
         # Define step sizes for different phases
         if phase in [self.PH_DESCEND, self.PH_LOWER_TO_DROP]:
-            step_size = 0.5  # 30% step toward target (controlled descent)
+            step_size = 0.15  # Slow descent to avoid disturbing pile
         elif phase == self.PH_LIFT_HIGH:
-            step_size = 0.3  # 70% step toward target (controlled lift)
+            step_size = 0.3  # Controlled lift
         elif phase == self.PH_CARRY_HOME:
-            step_size = 0.5  # 70% step toward target (controlled lift)
+            step_size = 0.5  # Faster carry
         else:
             step_size = 1.0  # Full speed for positioning phases
-        
+
         # Interpolate toward target
         return current_pos + (target_pos - current_pos) * step_size
 
@@ -1753,31 +1896,77 @@ class CraneDirectEnv(DirectRLEnv):
 
     # ---------------------------------------------
 
-    def _rebuild_log_origins_world(self):
-        all_world = []
-        per_env_cap = int(self.cfg.rows * self.cfg.layers)
-        per_env_target = int(min(per_env_cap, self.cfg.num_logs))
-        self._per_env_target = per_env_target
+    def _rebuild_log_origins_world(self, randomize_patterns=False, env_ids=None):
+        """Build log spawn positions.
 
-        # Select grid pattern functions
-        pattern_functions = [plan_grid_yz, plan_grid_yz_pattern_b, plan_grid_yz_pattern_c]
-        pattern_names = ["Original (30×10)", "Tower-Left (10×30)", "Tower-Right (10×30)"]
-        
-        for env_id in range(self.scene.num_envs):
+        Args:
+            randomize_patterns: If True, randomly select pattern for each env (domain randomization)
+            env_ids: If specified, only rebuild patterns for these environments. If None, rebuild all.
+        """
+        per_env_cap = int(self.cfg.rows * self.cfg.layers)
+        default_per_env_target = int(min(per_env_cap, self.cfg.num_logs))
+
+        # Initialize per-env target tracking if needed
+        if not hasattr(self, '_per_env_log_counts'):
+            self._per_env_log_counts = torch.zeros(self.scene.num_envs, dtype=torch.int32, device=self.device)
+
+        # Determine which environments to rebuild
+        if env_ids is None:
+            # First reset: build all environments
+            envs_to_rebuild = range(self.scene.num_envs)
+            rebuild_all = True
+        else:
+            # Subsequent resets: only rebuild specified environments
+            # Convert tensor to list if necessary
+            if isinstance(env_ids, torch.Tensor):
+                envs_to_rebuild = env_ids.cpu().tolist()
+            elif hasattr(env_ids, '__iter__'):
+                envs_to_rebuild = list(env_ids)
+            else:
+                envs_to_rebuild = [env_ids]
+            rebuild_all = False
+
+        # If rebuilding all, create new tensor; otherwise update existing
+        if rebuild_all:
+            all_world = []
+
+        for env_id in envs_to_rebuild:
             env_o = self.scene.env_origins[env_id]
             rack_world_x = env_o[0] + self.cfg.rack_x
-            
-            # Select pattern for this environment
-            if args_cli.mixed_log_patterns:
-                # Distribute patterns across environments: env 0,3,6... = Pattern A, env 1,4,7... = Pattern B, env 2,5,8... = Pattern C
+
+            # Randomize log count for domain randomization (20-200 logs)
+            if randomize_patterns:
+                import random
+                per_env_target = random.randint(20, 200)
+                self._per_env_log_counts[env_id] = per_env_target
+            else:
+                per_env_target = default_per_env_target
+                self._per_env_log_counts[env_id] = per_env_target
+
+            # Select pattern function
+            if randomize_patterns:
+                # DOMAIN RANDOMIZATION: Truly random patterns
+                pattern_func = plan_grid_yz_random
+            elif args_cli.mixed_log_patterns:
+                # Fixed patterns distributed across environments
+                pattern_functions = [plan_grid_yz, plan_grid_yz_pattern_b, plan_grid_yz_pattern_c]
+                pattern_names = ["Original (30×10)", "Tower-Left (10×30)", "Tower-Right (10×30)"]
                 pattern_idx = env_id % 3
                 pattern_func = pattern_functions[pattern_idx]
-                pattern_name = pattern_names[pattern_idx]
-                print(f"Environment {env_id}: Using {pattern_name} log grid pattern")
+                if not hasattr(self, '_patterns_printed'):
+                    print(f"Environment {env_id}: Using {pattern_names[pattern_idx]} log grid pattern")
             else:
-                # Use original pattern for all environments
+                # Default: original pattern for all environments
                 pattern_func = plan_grid_yz
-            
+
+            # Generate seed for this environment
+            if randomize_patterns:
+                import time
+                # Time-based seed ensures different pattern on every reset
+                pattern_seed = int(time.time() * 1000000) + env_id
+            else:
+                pattern_seed = self.cfg.seed + env_id if self.cfg.seed is not None else None
+
             # Generate grid positions for this environment
             yz_local_env = pattern_func(
                 center_y_local=(self.cfg.center_y_world - self.cfg.rack_y),
@@ -1787,26 +1976,55 @@ class CraneDirectEnv(DirectRLEnv):
                 spacing_z=self.cfg.spacing_z,
                 base_z=self.cfg.base_z,
                 cap=per_env_target,
-                row_y_jitter=self.cfg.row_y_jitter,
+                row_y_jitter=self.cfg.row_y_jitter,  # Random function handles its own jitter
                 layer_y_offset=self.cfg.layer_y_offset,
-                seed=self.cfg.seed + env_id if self.cfg.seed is not None else None,  # Different seed per env for variety
+                seed=pattern_seed,
             )
-            
-            
-            # Add logs for this environment
-            for (y_local, z) in yz_local_env[:per_env_target]:
-                all_world.append(
-                    [
-                        rack_world_x,
-                        env_o[1] + self.cfg.rack_y + y_local,
-                        env_o[2] + z,
-                    ]
-                )
 
-        if len(all_world) > 0:
-            self._log_origins_world = torch.tensor(all_world, device=self.device, dtype=torch.float32)
-        else:
-            self._log_origins_world = torch.empty((0, 3), device=self.device, dtype=torch.float32)
+
+            # Add logs for this environment
+            # Always allocate 200 slots per env, but only populate per_env_target
+            max_slots_per_env = 200
+
+            if rebuild_all:
+                # First reset: append to list (always 200 slots per env)
+                for i in range(max_slots_per_env):
+                    if i < per_env_target:
+                        # Active log: use actual position
+                        y_local, z = yz_local_env[i]
+                        all_world.append([
+                            rack_world_x,
+                            env_o[1] + self.cfg.rack_y + y_local,
+                            env_o[2] + z,
+                        ])
+                    else:
+                        # Inactive log: spawn far away (despawned)
+                        all_world.append([-1000.0, -1000.0, -1000.0])
+            else:
+                # Subsequent reset: update tensor slice for this environment
+                start_idx = env_id * max_slots_per_env
+                end_idx = start_idx + max_slots_per_env
+
+                for i in range(max_slots_per_env):
+                    if start_idx + i < self._log_origins_world.shape[0]:
+                        if i < per_env_target:
+                            # Active log: use actual position
+                            y_local, z = yz_local_env[i]
+                            self._log_origins_world[start_idx + i, 0] = rack_world_x
+                            self._log_origins_world[start_idx + i, 1] = env_o[1] + self.cfg.rack_y + y_local
+                            self._log_origins_world[start_idx + i, 2] = env_o[2] + z
+                        else:
+                            # Inactive log: move far away
+                            self._log_origins_world[start_idx + i, 0] = -1000.0
+                            self._log_origins_world[start_idx + i, 1] = -1000.0
+                            self._log_origins_world[start_idx + i, 2] = -1000.0
+
+        # Create tensor on first reset
+        if rebuild_all:
+            if len(all_world) > 0:
+                self._log_origins_world = torch.tensor(all_world, device=self.device, dtype=torch.float32)
+            else:
+                self._log_origins_world = torch.empty((0, 3), device=self.device, dtype=torch.float32)
 
     # ---------------- control / stepping ----------------
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
@@ -1934,7 +2152,6 @@ class CraneDirectEnv(DirectRLEnv):
             
         # else: keep current joint positions (no IK commands until heuristic is ready)
 
-        # Apply direct yaw control for both ALIGN_YAW and ALIGN_HOME_YAW phases (after IK to avoid override)
         # Apply direct yaw control for ALIGN_YAW and ALIGN_HOME_YAW phases
         if True:
             align_mask = (self._phase == self.PH_ALIGN_YAW) | (self._phase == self.PH_ALIGN_HOME_YAW)
@@ -2078,8 +2295,17 @@ class CraneDirectEnv(DirectRLEnv):
             env_ids = self.crane._ALL_INDICES
         super()._reset_idx(env_ids)
 
-        if self._log_origins_world.numel() == 0:
-            self._rebuild_log_origins_world()
+        # Domain randomization: rebuild log origins for resetting environments with random patterns
+        if self.cfg.enable_domain_randomization:
+            if self._log_origins_world.numel() == 0:
+                # First reset: build all environments
+                self._rebuild_log_origins_world(randomize_patterns=True, env_ids=None)
+            else:
+                # Subsequent resets: only rebuild the environments that are resetting
+                self._rebuild_log_origins_world(randomize_patterns=True, env_ids=env_ids)
+        elif self._log_origins_world.numel() == 0:
+            # First reset only: build with fixed patterns
+            self._rebuild_log_origins_world(randomize_patterns=False, env_ids=None)
 
         # Run settling on first reset to let logs fall and stabilize
         # This prevents target selection before logs have stopped moving
@@ -2143,6 +2369,7 @@ class CraneDirectEnv(DirectRLEnv):
                 self._grasp_reward_buf[i] = 0.0
                 self._prev_logs_grasped[i] = 0.0
                 self._prev_grasp_alignment[i] = 0.0
+                self._logs_knocked_off[i] = 0  # Reset out-of-bounds counter
 
         # Initialize EE goal to home position over trailer to avoid commanding basemast (0,0,0)
         for i in range(self.num_envs):
@@ -2165,6 +2392,7 @@ class CraneDirectEnv(DirectRLEnv):
         self._timer[:] = 0
         self._dwell[:] = 0
         self._lift_hold_timer[:] = 0
+        self._phase_timer[:] = 0
         self._yaw_targets[:] = 0.0
         self._target_log_pos_b.zero_()
         self._target_log_quat_w.zero_()
@@ -2438,11 +2666,23 @@ class CraneDirectEnv(DirectRLEnv):
             except Exception:
                 pass
 
+        # Clean up logs that fell out of bounds during settling (no penalty)
+        print("[INFO] Cleaning up logs that fell out of bounds during settling...")
+        total_cleaned = 0
+        for i in range(self.num_envs):
+            cleaned = self._check_logs_out_of_bounds(i, apply_penalty=False)
+            if cleaned > 0:
+                total_cleaned += cleaned
+        if total_cleaned > 0:
+            print(f"[INFO] Removed {total_cleaned} logs that fell out during initial settling")
+
+        self._initial_settling_complete = True
+
         print(f"[INFO] Logs settled after {settle_steps} steps")
 
         # Compute action space bounds from settled log positions
-        # Needed for hierarchical RL mode and for visualization
-        if getattr(self.cfg, "use_hierarchical_rl", False) or self._viz_enabled:
+        # Only needed for hierarchical RL mode
+        if getattr(self.cfg, "use_hierarchical_rl", False):
             print("[INFO] Computing action space bounds from log positions...")
             self._compute_action_space_bounds()
     
@@ -2557,8 +2797,8 @@ class CraneDirectEnv(DirectRLEnv):
         use_live = self._use_live_log_poses and logs is not None
 
         selected_log_id = -1  # -1 indicates fallback target (no specific log)
-        
-        if not use_live or logs.num_instances == 0 or self._per_env_target <= 0:
+
+        if not use_live or logs.num_instances == 0 or not hasattr(self, '_per_env_log_counts'):
             # fallback: center of rack top
             env_o = self.scene.env_origins[env_i]
             pos_w = torch.tensor(
@@ -2581,9 +2821,9 @@ class CraneDirectEnv(DirectRLEnv):
                 )[None, :]
                 quat_w = torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=self.device, dtype=torch.float32)
             else:
-                per_env = int(self._per_env_target)
-                start = env_i * per_env
-                end = min(start + per_env, logs.num_instances)
+                per_env = int(self._per_env_log_counts[env_i])
+                start = env_i * 200  # Each env has 200 slots
+                end = start + per_env  # Only active logs
                 if end <= start:
                     env_o = self.scene.env_origins[env_i]
                     pos_w = torch.tensor(
@@ -2656,17 +2896,21 @@ class CraneDirectEnv(DirectRLEnv):
             phase = int(self._phase[i].item())
             name = self.PHASE_NAMES[phase]
 
-                        # Freeze target (either heuristic highest-log or policy-chosen) at start of pick cycle
-            if phase == self.PH_HOVER_UP and not self._target_frozen[i]:
+            # Freeze target from policy action at start of pick cycle
+            # Skip if this env already completed its grasp cycle this step() - wait for step() to return
+            cycle_done = getattr(self, '_cycle_complete_this_step', None)
+            if cycle_done is not None and cycle_done[i]:
+                # Already evaluated this hierarchical step, don't start a new cycle
+                continue  # Skip ALL processing for this env
+            elif phase == self.PH_HOVER_UP and not self._target_frozen[i]:
                 # Use policy in hierarchical RL mode, otherwise use heuristic
                 use_policy = getattr(self.cfg, "use_hierarchical_rl", False)
 
                 if use_policy:
-                    # Read last action (store it in _pre_physics_step)
+                    # SIMPLIFIED ACTION SPACE: [y, z] - X fixed to rack center, yaw auto-computed
+                    # Read last action (stored in _pre_physics_step)
                     a = self._last_actions[i] if hasattr(self, "_last_actions") else torch.zeros(self.cfg.action_space, device=self.device)
 
-                    # Policy outputs target position + yaw in base frame
-                    # Action space: [x_b, y_b, z_b, yaw]
                     # Compute bounds if not already done
                     if not self._action_bounds_valid[i]:
                         self._compute_action_space_bounds()
@@ -2675,136 +2919,40 @@ class CraneDirectEnv(DirectRLEnv):
                     min_bounds = self._action_bounds_min[i]
                     max_bounds = self._action_bounds_max[i]
 
-                    # Scale actions from [-1, 1] to bounded workspace
-                    # Using tanh to keep actions in reasonable range
-                    x_norm = torch.tanh(a[0])  # [-1, 1]
-                    y_norm = torch.tanh(a[1])  # [-1, 1]
-                    z_norm = torch.tanh(a[2])  # [-1, 1]
+                    # X fixed to rack center
+                    x_b = (min_bounds[0] + max_bounds[0]) / 2.0
 
-                    # Map to bounds: x = min + (norm + 1) / 2 * (max - min)
-                    x_b = min_bounds[0] + (x_norm + 1.0) / 2.0 * (max_bounds[0] - min_bounds[0])
+                    # Scale actions from [-1, 1] to bounded workspace
+                    y_norm = torch.tanh(a[0])  # [-1, 1] -> Y position
+                    z_norm = torch.tanh(a[1])  # [-1, 1] -> Z position
+
+                    # Map to bounds: val = min + (norm + 1) / 2 * (max - min)
                     y_b = min_bounds[1] + (y_norm + 1.0) / 2.0 * (max_bounds[1] - min_bounds[1])
                     z_b = min_bounds[2] + (z_norm + 1.0) / 2.0 * (max_bounds[2] - min_bounds[2])
 
-                    yaw_desired = torch.tanh(a[3]) * 3.14159  # yaw range: [-pi, pi] radians
-
-                    # Debug: show bounded action space (only in standalone mode, not during hierarchical training)
-                    if not self._in_hierarchical_loop and do_dbg and i < max_envs:
-                        print(f"[env{i}] ACTION-BOUNDS: x=[{min_bounds[0]:.2f}, {max_bounds[0]:.2f}], "
-                              f"y=[{min_bounds[1]:.2f}, {max_bounds[1]:.2f}], "
-                              f"z=[{min_bounds[2]:.2f}, {max_bounds[2]:.2f}]")
-                        print(f"[env{i}] POLICY-TARGET: x={x_b:.2f}, y={y_b:.2f}, z={z_b:.2f}, "
-                              f"yaw={yaw_desired:.2f}rad ({torch.rad2deg(yaw_desired):.1f}°)")
+                    # Debug: show policy action and target at decision points
+                    if i == 0:  # Only env0 to avoid spam
+                        total_logs = int(self._per_env_log_counts[i]) if hasattr(self, '_per_env_log_counts') else 200
+                        deposited = len(self._deposited_logs[i]) if hasattr(self, '_deposited_logs') else 0
+                        log_info = f" [remaining={total_logs - deposited}]"
+                        print(f"[env{i}] ACTION: [y={a[0]:.2f}, z={a[1]:.2f}] -> "
+                              f"TARGET: x={x_b:.2f}, y={y_b:.2f}, z={z_b:.2f}{log_info}")
 
                     # Cache target position for downstream phases
+                    # Yaw is computed in ALIGN_YAW phase after arm moves to position
                     self._target_log_pos_b[i] = torch.stack([x_b, y_b, z_b])
                     self._target_log_quat_w[i] = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device)
 
-                    # Choose minimal rotation yaw target (like heuristic mode)
-                    # Consider both direct angle and +180° flip (gripper is symmetric)
-                    yaw_joint_id = self._find_yaw_joint_id()
-                    yaw_optimized = False
-                    if yaw_joint_id is not None:
-                        import math
-                        current_yaw_joint = float(self.crane.data.joint_pos[i, yaw_joint_id].item())
-
-                        # Wrap function to keep angles in [-π, π]
-                        def wrap(angle):
-                            return (angle + math.pi) % (2.0 * math.pi) - math.pi
-
-                        # Two options: direct target or target + 180° (symmetric gripper)
-                        yaw_option1 = float(yaw_desired.item())
-                        yaw_option2 = wrap(yaw_option1 + math.pi)
-
-                        # Calculate rotation required for each option
-                        diff1 = abs(wrap(yaw_option1 - current_yaw_joint))
-                        diff2 = abs(wrap(yaw_option2 - current_yaw_joint))
-
-                        # Choose minimal rotation
-                        if diff1 <= diff2:
-                            yaw_target = yaw_option1
-                        else:
-                            yaw_target = yaw_option2
-                            yaw_optimized = True
-                    else:
-                        yaw_target = yaw_desired
-
-                    # Set yaw target for ALIGN_YAW phase
-                    self._yaw_targets[i] = yaw_target
-
-                    # Debug: Print policy's target selection (use do_dbg to respect hierarchical loop suppression)
-                    if do_dbg and i < max_envs:
-                        yaw_str = f"yaw={yaw_target:.3f}rad ({yaw_target*57.3:.1f}°)"
-                        if yaw_optimized:
-                            yaw_str += f" [180° flipped for shorter path]"
-                        print(f"[env{i}] POLICY TARGET: pos=({x_b:.2f}, {y_b:.2f}, {z_b:.2f}) {yaw_str}")
-
-                    # Find which log the policy selected (for reward computation)
-                    if hasattr(self, '_logs_obj') and self._logs_obj is not None:
-                        per_env = int(self._per_env_target) if hasattr(self, '_per_env_target') else 16
-                        start = i * per_env
-                        end = min(start + per_env, self._logs_obj.num_instances)
-
-                        if end > start:
-                            log_pos_w, _ = self._get_logs_root_pose_w()
-                            if log_pos_w is not None:
-                                # Get logs for this environment in world frame
-                                all_env_log_pos_w = log_pos_w[start:end]
-
-                                # Filter out deposited logs only (policy learns to avoid problematic ones)
-                                available_local_indices = []
-                                for log_idx in range(end - start):
-                                    global_log_idx = start + log_idx
-                                    if global_log_idx not in self._deposited_logs[i]:
-                                        available_local_indices.append(log_idx)
-
-                                if len(available_local_indices) == 0:
-                                    # No available logs - skip selection
-                                    self._sel_is_valid[i] = False
-                                    self._target_frozen[i] = True
-                                    continue
-
-                                available_indices_tensor = torch.tensor(available_local_indices, device=self.device, dtype=torch.long)
-                                env_log_pos_w = all_env_log_pos_w[available_indices_tensor]
-
-                                # Convert selected target to world frame
-                                root_w = self.crane.data.root_pose_w[i]
-                                target_w = root_w[:3] + self._target_log_pos_b[i]
-
-                                # Find closest AVAILABLE log and highest AVAILABLE log
-                                dists = torch.norm(env_log_pos_w - target_w.unsqueeze(0), dim=-1)
-                                closest_available_idx = torch.argmin(dists).item()
-                                highest_available_idx = torch.argmax(env_log_pos_w[:, 2]).item()  # Highest z among available
-
-                                # Map back to local indices for reward computation
-                                closest_local_idx = available_local_indices[closest_available_idx]
-                                highest_local_idx = available_local_indices[highest_available_idx]
-
-                                # Store for reward computation (using indices within available logs)
-                                self._sel_xy[i] = self._target_log_pos_b[i][:2]
-                                self._sel_z[i] = self._target_log_pos_b[i][2]
-                                self._top_xy[i] = (env_log_pos_w[highest_available_idx] - root_w[:3])[:2]
-                                self._top_z[i] = (env_log_pos_w[highest_available_idx] - root_w[:3])[2]
-                                self._sel_is_valid[i] = True
-                                self._sel_mask[i] = True  # Mark as selection frame
-
-                                # NO SNAPPING - let policy learn XYZ control
-                                # (target_log_pos_b already set from policy action at line 2878)
-                                # Just track which log was closest for reward computation
-                                self._current_target_log_id[i] = start + closest_local_idx
-
-                    self._target_frozen[i] = True
-
                 else:
-                    # Original heuristic: pick the highest available log
+                    # HEURISTIC MODE: pick the highest available log
                     self._target_log_pos_b[i], self._current_target_log_id[i] = self._target_top_log_center_b(i)
 
-                    # Try to freeze that log's quaternion for consistent viz (best-effort)
+                    # Try to freeze that log's quaternion for consistent viz
                     try:
                         if self._logs_obj is not None:
-                            per_env = int(self._per_env_target)
-                            start = i * per_env
-                            end = min(start + per_env, self._logs_obj.num_instances)
+                            per_env = int(self._per_env_log_counts[i]) if hasattr(self, '_per_env_log_counts') else 200
+                            start = i * 200
+                            end = start + per_env
                             if end > start:
                                 log_pos_w, log_quat_w = self._get_logs_root_pose_w()
                                 if log_quat_w is not None:
@@ -2821,21 +2969,74 @@ class CraneDirectEnv(DirectRLEnv):
                                         k = int(torch.argmax(available_pos[:, 2]).item())  # highest Z
                                         self._target_log_quat_w[i] = available_quat[k]
                     except Exception as e:
-                        print(f"[env{i}] Warning: Failed to freeze target log quaternion: {e}")
                         self._target_log_quat_w[i] = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device)
 
-                # Calculate and freeze hover targets (same as before)
-                log_b = self._target_log_pos_b[i]
-                hover_z = log_b[2] + self.HOVER_CLEAR
-                self._frozen_target_bg[i] = torch.tensor(
-                    [log_b[0].item(), log_b[1].item(), hover_z],
-                    device=self.device, dtype=self._ee_goal.dtype
-                )
-                self._frozen_target_upperpassive[i] = torch.tensor(
-                    [log_b[0].item(), log_b[1].item(), hover_z + float(args_cli.ee_to_grapple_offset_z)],
-                    device=self.device, dtype=self._ee_goal.dtype
-                )
-                self._target_frozen[i] = True
+                # Find which log the policy selected (for reward computation)
+                if hasattr(self, '_logs_obj') and self._logs_obj is not None:
+                    per_env = int(self._per_env_log_counts[i]) if hasattr(self, '_per_env_log_counts') else 16
+                    start = i * 200  # Each env has 200 slots
+                    end = start + per_env  # Only active logs
+
+                    if end > start:
+                        log_pos_w, _ = self._get_logs_root_pose_w()
+                        if log_pos_w is not None:
+                            # Get logs for this environment in world frame
+                            all_env_log_pos_w = log_pos_w[start:end]
+
+                            # Filter out deposited logs only (policy learns to avoid problematic ones)
+                            available_local_indices = []
+                            for log_idx in range(end - start):
+                                global_log_idx = start + log_idx
+                                if global_log_idx not in self._deposited_logs[i]:
+                                    available_local_indices.append(log_idx)
+
+                            if len(available_local_indices) == 0:
+                                # No available logs - skip selection
+                                self._sel_is_valid[i] = False
+                                self._target_frozen[i] = True
+                                continue
+
+                            available_indices_tensor = torch.tensor(available_local_indices, device=self.device, dtype=torch.long)
+                            env_log_pos_w = all_env_log_pos_w[available_indices_tensor]
+
+                            # Convert selected target to world frame
+                            root_w = self.crane.data.root_pose_w[i]
+                            target_w = root_w[:3] + self._target_log_pos_b[i]
+
+                            # Find closest AVAILABLE log and highest AVAILABLE log
+                            dists = torch.norm(env_log_pos_w - target_w.unsqueeze(0), dim=-1)
+                            closest_available_idx = torch.argmin(dists).item()
+                            highest_available_idx = torch.argmax(env_log_pos_w[:, 2]).item()  # Highest z among available
+
+                            # Map back to local indices for reward computation
+                            closest_local_idx = available_local_indices[closest_available_idx]
+                            highest_local_idx = available_local_indices[highest_available_idx]
+
+                            # Store for reward computation (using indices within available logs)
+                            self._sel_xy[i] = self._target_log_pos_b[i][:2]
+                            self._sel_z[i] = self._target_log_pos_b[i][2]
+                            self._top_xy[i] = (env_log_pos_w[highest_available_idx] - root_w[:3])[:2]
+                            self._top_z[i] = (env_log_pos_w[highest_available_idx] - root_w[:3])[2]
+                            self._sel_is_valid[i] = True
+                            self._sel_mask[i] = True  # Mark as selection frame
+
+                            # NO SNAPPING - let policy learn XYZ control
+                            # (target_log_pos_b already set from policy action at line 2878)
+                            # Just track which log was closest for reward computation
+                            self._current_target_log_id[i] = start + closest_local_idx
+
+                        # Calculate and freeze hover targets
+                        log_b = self._target_log_pos_b[i]
+                        hover_z = log_b[2] + self.HOVER_CLEAR
+                        self._frozen_target_bg[i] = torch.tensor(
+                [log_b[0].item(), log_b[1].item(), hover_z],
+                device=self.device, dtype=self._ee_goal.dtype
+                    )
+                    self._frozen_target_upperpassive[i] = torch.tensor(
+                [log_b[0].item(), log_b[1].item(), hover_z + float(args_cli.ee_to_grapple_offset_z)],
+                device=self.device, dtype=self._ee_goal.dtype
+                    )
+                    self._target_frozen[i] = True
 
             log_b = self._target_log_pos_b[i]
 
@@ -2894,10 +3095,13 @@ class CraneDirectEnv(DirectRLEnv):
                 self._ee_goal[i, 3:7] = cur_up_quat
                 self._dbg_target_bg[i] = target_bg
 
-                # Compute yaw target from feedback (only for heuristic mode)
-                # Policy mode already set yaw target during target selection
+                # Compute yaw target now that arm is in position
                 use_policy = getattr(self.cfg, "use_hierarchical_rl", False)
-                if not use_policy:
+                if use_policy:
+                    # Policy mode: compute rack-perpendicular yaw (simplified env)
+                    self._yaw_targets[i] = self._calc_optimal_yaw_for_rack_perpendicular(i)
+                else:
+                    # Heuristic mode: align with target log orientation
                     self._yaw_targets[i] = self._calc_optimal_yaw_feedback(i)
 
                 # Two-stage validation (unchanged)
@@ -3050,30 +3254,44 @@ class CraneDirectEnv(DirectRLEnv):
 
                 self._phase_timer[i] += 1  # Increment phase timeout timer
 
-                # Check if we're in hold mode (keeping logs lifted for stabilization)
+                # Check if we're in hold mode (keeping logs lifted for visual feedback)
                 if self._lift_hold_timer[i] > 0:
                     # In hold mode - keep position, decrement timer
                     self._lift_hold_timer[i] -= 1
                     if self._lift_hold_timer[i] == 0:
-                        # Hold complete - now transition to carry home
-                        self._dwell[i] = 0
-                        self._transition(i, self.PH_CARRY_HOME, f"{name}: hold complete, logs stabilized")
+                        # Hold complete - now evaluate and transition
+                        logs_grasped, alignment = self._check_grasped_logs(i)
+                        reward = self._compute_grasp_reward(logs_grasped, alignment, i)
+                        self._grasp_reward_buf[i] = reward
+                        self._prev_logs_grasped[i] = float(logs_grasped)
+                        self._prev_grasp_alignment[i] = alignment
+                        self._cycle_complete_this_step[i] = True
+
+                        cycle_num = self._cycle_count[i].item() + 1
+                        print(f"[env{i}] CYCLE {cycle_num}/30 | GRASP: {logs_grasped} logs, alignment={alignment:.2f}, reward={reward:.2f}")
+
+                        self._despawn_grasped_logs(i)
+                        self._set_gripper(i, open_fraction=1.0)
+                        self._target_frozen[i] = False
+                        self._target_log_pos_b[i].zero_()
+                        self._target_log_quat_w[i].zero_()
+                        self._transition(i, self.PH_HOVER_UP, f"{name}: hold complete, returning to hover")
                 else:
                     # Not in hold mode - check if we should enter it
                     self._dwell[i] = self._dwell[i] + 1 if (upperpassive_error < self.UP_TOL) else torch.tensor(0, device=self.device)
 
                     if self._dwell[i] >= self.DWELL_N:
-                        # Dwell complete - enter hold mode for log stabilization
+                        # Dwell complete - enter hold mode
                         self._dwell[i] = 0
                         self._lift_hold_timer[i] = self.LIFT_HOLD_DURATION
+
                     elif self._phase_timer[i] >= self.PHASE_TIMEOUT:
-                        # Timeout - enter brief hold even on timeout
+                        # Timeout - enter hold mode (brief hold even on timeout)
                         self._lift_hold_timer[i] = self.LIFT_HOLD_DURATION
 
                 if do_dbg and i < max_envs:
                     timeout_progress = f"{self._phase_timer[i]}/{self.PHASE_TIMEOUT}"
-                    hold_status = f"HOLD:{self._lift_hold_timer[i]}" if self._lift_hold_timer[i] > 0 else "LIFTING"
-                    print(f"[env{i}] PHASE={name} | up_err={upperpassive_error:0.3f} (tol {self.UP_TOL:0.2f}) | bg_err={basegrapple_error:0.3f} | {hold_status} | timeout={timeout_progress}")
+                    print(f"[env{i}] PHASE={name} | up_err={upperpassive_error:0.3f} (tol {self.UP_TOL:0.2f}) | bg_err={basegrapple_error:0.3f} (tol {self.UP_TOL:0.2f}) | timeout={timeout_progress}")
 
             elif phase == self.PH_CARRY_HOME:
                 # Step 1 of drop sequence:Move to specified HOME position
@@ -3311,8 +3529,9 @@ class CraneDirectEnv(DirectRLEnv):
         try:
             if hasattr(self, '_logs_obj') and self._logs_obj is not None:
                 # Get environment offset for this env
-                env_offset = env_i * self._per_env_target
-                env_logs_end = min(env_offset + self._per_env_target, self._logs_obj.num_instances)
+                per_env = int(self._per_env_log_counts[env_i]) if hasattr(self, '_per_env_log_counts') else 200
+                env_offset = env_i * 200  # Each env has 200 slots
+                env_logs_end = env_offset + per_env  # Only active logs
                 
                 if env_offset < self._logs_obj.num_instances:
                     # Get crane base pose for coordinate transformation
@@ -3409,9 +3628,9 @@ class CraneDirectEnv(DirectRLEnv):
         bg_y_axis = self._quat_rotate_vec_wxyz(bg_quat_w, torch.tensor([0.0, 1.0, 0.0], device=self.device))
 
         # Get all log positions for this environment
-        per_env = int(self._per_env_target)
-        start = env_i * per_env
-        end = min((env_i + 1) * per_env, self._logs_obj.num_instances)
+        per_env = int(self._per_env_log_counts[env_i])  # Actual active log count
+        start = env_i * 200  # Each env has 200 slots
+        end = start + per_env  # Only check active logs
 
         logs_grasped = 0
         alignment_sum = 0.0
@@ -3430,7 +3649,7 @@ class CraneDirectEnv(DirectRLEnv):
                 # Compute orientation alignment between log and basegrapple
                 log_quat_w = self._logs_obj.data.root_quat_w[log_idx]  # [w, x, y, z]
 
-                # Get log's length direction - try Y axis (logs are often modeled with length along Y)
+                # Get log's length direction - Y axis (logs are modeled with length along Y)
                 log_length_axis = self._quat_rotate_vec_wxyz(log_quat_w, torch.tensor([0.0, 1.0, 0.0], device=self.device))
 
                 # Alignment: grapple Y-axis parallel to log Y-axis (length) when yaw-aligned
@@ -3445,24 +3664,122 @@ class CraneDirectEnv(DirectRLEnv):
         return logs_grasped, avg_alignment
 
     def _count_logs_in_rack(self, env_i: int) -> int:
-        """Count logs still in rack (not yet deposited)."""
-        per_env = int(self._per_env_target)
-        total_logs = per_env
-        deposited = len(self._deposited_logs[env_i])
-        return total_logs - deposited
+        """Count logs still in rack (not yet deposited or knocked off).
 
-    def _compute_grasp_reward(self, logs_grasped: int, alignment: float) -> float:
+        Note: Knocked off logs are added to _deposited_logs, so they're included in the count.
+        """
+        per_env = int(self._per_env_log_counts[env_i])
+        total_logs = per_env
+        removed = len(self._deposited_logs[env_i])  # Includes both deposited and knocked off
+        return total_logs - removed
+
+    def _check_logs_out_of_bounds(self, env_i: int, apply_penalty: bool = True) -> int:
+        """Check how many logs fell out of the rack bounds.
+
+        Uses the same bounds as the action space visualization (green box).
+        Bounds are in base frame - we convert log positions to base frame to check.
+
+        Args:
+            env_i: Environment index
+            apply_penalty: If False, just clean up without counting (for initial settling)
+
+        Returns:
+            Number of logs that are now out of bounds (0 if apply_penalty=False)
+        """
+        if self._logs_obj is None:
+            return 0
+
+        # Make sure action bounds are computed
+        if not hasattr(self, '_action_bounds_valid') or not self._action_bounds_valid[env_i]:
+            return 0
+
+        per_env = int(self._per_env_log_counts[env_i])  # Actual active log count
+        start = env_i * 200  # Each env has 200 slots
+        end = start + per_env  # Only check active logs
+
+        # Get bounds in base frame (same as action space / visualization)
+        min_bounds = self._action_bounds_min[env_i]  # [x_min, y_min, z_min]
+        max_bounds = self._action_bounds_max[env_i]  # [x_max, y_max, z_max]
+
+        # Get crane base pose for coordinate transform
+        root_pose_w = self.crane.data.root_pose_w[env_i]
+        base_pos_w = root_pose_w[0:3]
+        base_quat_w = root_pose_w[3:7]  # [w, x, y, z]
+
+        # Compute inverse rotation (conjugate for unit quaternion)
+        base_quat_inv = base_quat_w.clone()
+        base_quat_inv[1:4] = -base_quat_inv[1:4]  # Negate xyz components
+
+        out_of_bounds_count = 0
+        for log_idx in range(start, end):
+            if log_idx >= self._logs_obj.num_instances:
+                break
+            if log_idx in self._deposited_logs[env_i]:
+                continue  # Already deposited, don't check
+
+            # Get log position in world frame
+            log_pos_w = self._logs_obj.data.root_pos_w[log_idx]
+
+            # Transform to base frame: log_pos_b = R_inv * (log_pos_w - base_pos_w)
+            log_rel_w = log_pos_w - base_pos_w
+            log_pos_b = self._quat_rotate_vec_wxyz(base_quat_inv, log_rel_w)
+
+            # Check if outside action bounds (X, Y, and Z)
+            out_of_bounds = (
+                log_pos_b[0] < min_bounds[0] or log_pos_b[0] > max_bounds[0] or  # X bounds
+                log_pos_b[1] < min_bounds[1] or log_pos_b[1] > max_bounds[1] or  # Y bounds
+                log_pos_b[2] < min_bounds[2]  # Z min (below rack) - don't check z_max (logs can be lifted high)
+            )
+
+            if out_of_bounds:
+                # Mark as deposited so it won't be checked again
+                self._deposited_logs[env_i].add(log_idx)
+                # Despawn by moving far away
+                self._logs_obj.data.root_pos_w[log_idx, 0] = -1000.0
+                self._logs_obj.data.root_pos_w[log_idx, 1] = -1000.0
+                self._logs_obj.data.root_pos_w[log_idx, 2] = -1000.0
+
+                # Zero velocities
+                self._logs_obj.data.root_lin_vel_w[log_idx] = torch.zeros(3, device=self.device)
+                self._logs_obj.data.root_ang_vel_w[log_idx] = torch.zeros(3, device=self.device)
+
+                out_of_bounds_count += 1
+
+        # Write changes to simulation if any logs were despawned
+        if out_of_bounds_count > 0:
+            root_pose = torch.cat([self._logs_obj.data.root_pos_w, self._logs_obj.data.root_quat_w], dim=-1)
+            self._logs_obj.write_root_pose_to_sim(root_pose)
+
+            root_vel = torch.cat([self._logs_obj.data.root_lin_vel_w, self._logs_obj.data.root_ang_vel_w], dim=-1)
+            self._logs_obj.write_root_velocity_to_sim(root_vel)
+
+        # Always return the count - the caller decides whether to penalize
+        return out_of_bounds_count
+
+    def _compute_grasp_reward(self, logs_grasped: int, alignment: float, env_i: int) -> float:
         """Compute reward for grasp outcome.
 
         Args:
             logs_grasped: Number of logs successfully grasped
             alignment: Average orientation alignment (0-1)
+            env_i: Environment index (for checking out-of-bounds)
 
         Returns:
-            Reward value: logs_grasped × alignment + bonus
+            Reward value: logs_grasped × alignment + bonus - penalty for logs knocked off
         """
+        # Check for logs knocked out of bounds (only apply penalty if settling is complete)
+        knocked_off = self._check_logs_out_of_bounds(env_i, apply_penalty=True)
+
+        # Only apply penalty if initial settling is done (not policy's fault during settling)
+        if self._initial_settling_complete:
+            self._logs_knocked_off[env_i] = knocked_off
+        else:
+            knocked_off = 0  # Don't penalize during settling
+
         if logs_grasped == 0:
-            return -1.0  # Penalty for failed grasp
+            # Failed grasp penalty - moderate to allow learning without tanking reward
+            base_penalty = -3.0
+            return base_penalty + (knocked_off * self._logs_out_of_bounds_penalty)
 
         # Base reward: multiplicative (logs × alignment)
         # Linear gives learning signal even with poor alignment
@@ -3476,7 +3793,68 @@ class CraneDirectEnv(DirectRLEnv):
         else:
             total_reward = base_reward
 
+        # Apply penalty for logs knocked out of bounds
+        out_of_bounds_penalty = knocked_off * self._logs_out_of_bounds_penalty
+        total_reward += out_of_bounds_penalty
+
         return total_reward
+
+    def _despawn_grasped_logs(self, env_i: int, proximity_radius: float = 1.5):
+        """Despawn logs that were grasped (no-deposition mode).
+
+        Instead of depositing logs, we teleport them far away and mark them as removed.
+        This prevents deposition physics from disturbing the pile.
+
+        Args:
+            env_i: Environment index
+            proximity_radius: Distance threshold to consider a log as grasped
+        """
+        if self._logs_obj is None:
+            return
+
+        # Get basegrapple pose
+        bg_pose_w = self.crane.data.body_pose_w[env_i, self._basegrapple_body_id]
+        bg_pos_w = bg_pose_w[0:3]
+
+        # Get log range for this environment
+        per_env = int(self._per_env_log_counts[env_i]) if hasattr(self, '_per_env_log_counts') else 200
+        start = env_i * 200  # Each env has 200 slots
+        end = start + per_env  # Only active logs
+
+        despawned_count = 0
+        for log_idx in range(start, end):
+            # Skip already removed logs
+            if log_idx in self._deposited_logs[env_i]:
+                continue
+
+            log_pos_w = self._logs_obj.data.root_pos_w[log_idx]
+            distance = torch.norm(log_pos_w - bg_pos_w).item()
+
+            if distance < proximity_radius:
+                # Teleport log far away (below ground, out of sight)
+                despawn_pos = torch.tensor([0.0, 0.0, -1000.0], device=self.device, dtype=log_pos_w.dtype)
+                self._logs_obj.data.root_pos_w[log_idx] = despawn_pos
+
+                # Keep orientation (quaternion) unchanged
+                # (Already in root_quat_w, no need to modify)
+
+                # Zero out velocities
+                self._logs_obj.data.root_lin_vel_w[log_idx] = torch.zeros(3, device=self.device)
+                self._logs_obj.data.root_ang_vel_w[log_idx] = torch.zeros(3, device=self.device)
+
+                # Mark as deposited (removed from game)
+                self._deposited_logs[env_i].add(log_idx)
+                despawned_count += 1
+
+        # Write updated poses and velocities to simulation
+        if despawned_count > 0:
+            # Concatenate position [N, 3] and quaternion [N, 4] to get full pose [N, 7]
+            root_pose = torch.cat([self._logs_obj.data.root_pos_w, self._logs_obj.data.root_quat_w], dim=-1)
+            self._logs_obj.write_root_pose_to_sim(root_pose)
+
+            # Concatenate linear and angular velocities
+            root_vel = torch.cat([self._logs_obj.data.root_lin_vel_w, self._logs_obj.data.root_ang_vel_w], dim=-1)
+            self._logs_obj.write_root_velocity_to_sim(root_vel)
 
     @staticmethod
     def _quat_rotate_vec_wxyz(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
@@ -3524,15 +3902,17 @@ class CraneDirectEnv(DirectRLEnv):
             self._viz["log"].visualize(log_pos_w)
 
             # Action space bounding box visualization
-            if hasattr(self, '_action_bounds_valid') and self._action_bounds_valid.any():
-                bbox_centers_b = (self._action_bounds_min + self._action_bounds_max) / 2.0
-                bbox_sizes_b = self._action_bounds_max - self._action_bounds_min
-                bbox_centers_w = base_pos_w + self._quat_rotate_vec_wxyz(base_quat_w, bbox_centers_b)
-                self._viz["action_bounds"].visualize(
-                    translations=bbox_centers_w,
-                    orientations=base_quat_w,
-                    scales=bbox_sizes_b,
-                )
+            # Only show if --show_action_bounds flag is set
+            if getattr(args_cli, 'show_action_bounds', False):
+                if hasattr(self, '_action_bounds_valid') and self._action_bounds_valid.any():
+                    bbox_centers_b = (self._action_bounds_min + self._action_bounds_max) / 2.0
+                    bbox_sizes_b = self._action_bounds_max - self._action_bounds_min
+                    bbox_centers_w = base_pos_w + self._quat_rotate_vec_wxyz(base_quat_w, bbox_centers_b)
+                    self._viz["action_bounds"].visualize(
+                        translations=bbox_centers_w,
+                        orientations=base_quat_w,
+                        scales=bbox_sizes_b,
+                    )
         except Exception as e:
             print(f"[VIZ] visualize failed: {e}")
 
@@ -3577,7 +3957,7 @@ def main():
     cfg.gripper_max_velocity = args_cli.gripper_max_velocity
     cfg.gripper_kp = args_cli.gripper_kp
 
-    env = CraneDirectEnv(cfg)
+    env = CraneDirectEnvSimplified(cfg)
     print("[INFO]: Completed setting up the environment...")
 
     # Trigger initial reset which will run settling

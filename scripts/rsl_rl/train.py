@@ -32,6 +32,7 @@ parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
 parser.add_argument("--export_io_descriptors", action="store_true", default=False, help="Export IO descriptors.")
+parser.add_argument("--bc_checkpoint", type=str, default=None, help="Path to BC checkpoint for fine-tuning (loads actor weights only, skips optimizer).")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -40,6 +41,10 @@ args_cli, hydra_args = parser.parse_known_args()
 
 # always enable cameras to record video
 if args_cli.video:
+    args_cli.enable_cameras = True
+
+# automatically enable cameras for depth tasks
+if args_cli.task and "Depth" in args_cli.task:
     args_cli.enable_cameras = True
 
 # clear out sys.argv for Hydra
@@ -79,7 +84,12 @@ import torch
 from datetime import datetime
 
 import omni
+import rsl_rl.modules
 from rsl_rl.runners import OnPolicyRunner
+
+# Register custom CNN actor-critic with RSL-RL so OnPolicyRunner can find it
+from crane_testbed.agents.cnn_actor_critic import CNNActorCritic
+rsl_rl.modules.CNNActorCritic = CNNActorCritic
 
 from isaaclab.envs import (
     DirectMARLEnv,
@@ -130,8 +140,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env_cfg.seed = seed
         agent_cfg.seed = seed
 
-    # specify directory for logging experiments
-    log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
+    # specify directory for logging experiments (use task name for clarity)
+    # Convert task name to folder-friendly format: Isaac-Crane-Full-DR-MR-v0 -> crane_full_dr_mr_v0
+    task_folder = args_cli.task.lower().replace("isaac-", "").replace("-", "_")
+    log_root_path = os.path.join("logs", "rsl_rl", task_folder)
     log_root_path = os.path.abspath(log_root_path)
     print(f"[INFO] Logging experiment in directory: {log_root_path}")
     # specify directory for logging runs: {time-stamp}_{run_name}
@@ -152,11 +164,35 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         )
 
     # create isaac environment
-    env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+    import sys as _sys
+    _sys.stderr.write(f"[DEBUG] Creating environment for task: {args_cli.task}\n")
+    _sys.stderr.flush()
+    if "Depth" in args_cli.task:
+        _sys.stderr.write(f"[DEBUG] Detected Depth task - using CraneDepthDirectEnv\n")
+        _sys.stderr.flush()
+        # Special handling for depth tasks - create env directly to avoid gym wrapper issues
+        import sys
+        from pathlib import Path
+        envs_dir = Path(__file__).parent.parent / "envs"
+        _sys.stderr.write(f"[DEBUG] Adding envs_dir to path: {envs_dir}\n")
+        if str(envs_dir) not in sys.path:
+            sys.path.insert(0, str(envs_dir))
+        try:
+            from crane_depth_direct_env import CraneDepthDirectEnv
+            _sys.stderr.write(f"[DEBUG] Import succeeded\n")
+        except Exception as e:
+            _sys.stderr.write(f"[DEBUG] Import failed: {e}\n")
+            raise
+        _sys.stderr.write(f"[DEBUG] Creating CraneDepthDirectEnv with cfg observation_space={getattr(env_cfg, 'observation_space', 'N/A')}\n")
+        env = CraneDepthDirectEnv(env_cfg, render_mode="rgb_array" if args_cli.video else None)
+        _sys.stderr.write(f"[DEBUG] CraneDepthDirectEnv created with {env.num_observations} obs\n")
+    else:
+        _sys.stderr.write(f"[DEBUG] Using gym.make() for non-Depth task\n")
+        env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
-    # convert to single-agent instance if required by the RL algorithm
-    if isinstance(env.unwrapped, DirectMARLEnv):
-        env = multi_agent_to_single_agent(env)
+        # convert to single-agent instance if required by the RL algorithm
+        if isinstance(env.unwrapped, DirectMARLEnv):
+            env = multi_agent_to_single_agent(env)
 
     # save resume path before creating a new log_dir
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
@@ -182,7 +218,33 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # write git state to logs
     runner.add_git_repo_to_log(__file__)
     # load the checkpoint
-    if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
+    if args_cli.bc_checkpoint:
+        # BC fine-tuning: load only actor weights, skip optimizer
+        print(f"[INFO]: Loading BC checkpoint for fine-tuning: {args_cli.bc_checkpoint}")
+        bc_ckpt = torch.load(args_cli.bc_checkpoint, map_location=agent_cfg.device)
+        model_state = bc_ckpt.get('model_state_dict', bc_ckpt)
+        # RSL-RL stores actor_critic on the algorithm's actor_critic attribute
+        # Try different possible locations
+        if hasattr(runner, 'alg') and hasattr(runner.alg, 'actor_critic'):
+            actor_critic = runner.alg.actor_critic
+        elif hasattr(runner, 'actor_critic'):
+            actor_critic = runner.actor_critic
+        else:
+            # Fallback: check PPO algorithm structure
+            actor_critic = runner.alg.policy if hasattr(runner.alg, 'policy') else None
+            if actor_critic is None:
+                raise AttributeError(f"Cannot find actor_critic. Runner attrs: {dir(runner)}, Alg attrs: {dir(runner.alg)}")
+        # Load with strict=False to allow missing critic weights if needed
+        # RSL-RL's load_state_dict may return bool or tuple depending on version
+        result = actor_critic.load_state_dict(model_state, strict=False)
+        if isinstance(result, tuple):
+            missing, unexpected = result
+            if missing:
+                print(f"[INFO]: Missing keys (will be randomly initialized): {missing}")
+            if unexpected:
+                print(f"[INFO]: Unexpected keys (ignored): {unexpected}")
+        print("[INFO]: BC actor weights loaded. Optimizer starting fresh.")
+    elif agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         runner.load(resume_path)

@@ -34,6 +34,10 @@ parser.add_argument(
     help="Use the pre-trained checkpoint from Nucleus.",
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
+# Evaluation arguments
+parser.add_argument("--num_episodes", type=int, default=None, help="Number of episodes to run for evaluation (if set, exits after completion)")
+parser.add_argument("--save_metrics", action="store_true", default=False, help="Save evaluation metrics to JSON file")
+parser.add_argument("--metrics_output_dir", type=str, default=None, help="Output directory for metrics (default: checkpoint directory)")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -42,6 +46,10 @@ AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
 # always enable cameras to record video
 if args_cli.video:
+    args_cli.enable_cameras = True
+
+# automatically enable cameras for depth tasks
+if args_cli.task and "Depth" in args_cli.task:
     args_cli.enable_cameras = True
 
 # clear out sys.argv for Hydra
@@ -54,11 +62,18 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import gymnasium as gym
+import json
 import os
 import time
 import torch
+from datetime import datetime
 
+import rsl_rl.modules
 from rsl_rl.runners import OnPolicyRunner
+
+# Register custom CNN actor-critic with RSL-RL so OnPolicyRunner can find it
+from crane_testbed.agents.cnn_actor_critic import CNNActorCritic
+rsl_rl.modules.CNNActorCritic = CNNActorCritic
 
 from isaaclab.envs import (
     DirectMARLEnv,
@@ -113,11 +128,22 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     log_dir = os.path.dirname(resume_path)
 
     # create isaac environment
-    env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+    if "Depth" in args_cli.task:
+        # Special handling for depth tasks - create env directly to avoid gym wrapper issues
+        import sys
+        from pathlib import Path
+        envs_dir = Path(__file__).parent.parent / "envs"
+        if str(envs_dir) not in sys.path:
+            sys.path.insert(0, str(envs_dir))
+        from crane_depth_direct_env import CraneDepthDirectEnv
+        print(f"[INFO] Creating CraneDepthDirectEnv for depth-based inference")
+        env = CraneDepthDirectEnv(env_cfg, render_mode="rgb_array" if args_cli.video else None)
+    else:
+        env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
-    # convert to single-agent instance if required by the RL algorithm
-    if isinstance(env.unwrapped, DirectMARLEnv):
-        env = multi_agent_to_single_agent(env)
+        # convert to single-agent instance if required by the RL algorithm
+        if isinstance(env.unwrapped, DirectMARLEnv):
+            env = multi_agent_to_single_agent(env)
 
     # wrap for video recording
     if args_cli.video:
@@ -160,9 +186,52 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     dt = env.unwrapped.step_dt
 
-    # reset environment
+    # Get underlying environment for metrics tracking
+    underlying_env = env.unwrapped
+    if hasattr(underlying_env, 'env'):
+        underlying_env = underlying_env.env  # Unwrap further if needed
+
+    # Metrics tracking
+    episodes_done = 0
+    total_reward = 0.0
+    total_logs_grasped = 0
+    total_grasps = 0
+    successful_grasps = 0
+    failed_grasps = 0
+    total_alignment = 0.0
+    total_stability = 0.0
+    clearing_percentages = []
+    episode_rewards_list = []
+    logs_per_episode = []
+    piles_fully_cleared = 0
+
+    # Per-env tracking
+    num_envs = env.unwrapped.num_envs
+    device = env.unwrapped.device
+    episode_rewards = torch.zeros(num_envs, device=device)
+    episode_logs_cleared = torch.zeros(num_envs, device=device, dtype=torch.int32)
+    episode_starting_logs = torch.zeros(num_envs, device=device, dtype=torch.int32)
+
+    # Get initial observations (triggers reset if needed)
     obs, _ = env.get_observations()
+
+    # Read starting log counts AFTER reset (so we get the actual randomized counts)
+    has_variable_logs = hasattr(underlying_env, '_per_env_log_counts') and underlying_env._per_env_log_counts is not None
+    if has_variable_logs:
+        for i in range(num_envs):
+            episode_starting_logs[i] = int(underlying_env._per_env_log_counts[i].item())
+        log_counts = [int(underlying_env._per_env_log_counts[i].item()) for i in range(num_envs)]
+        print(f"[Eval] Logs per pile: {sum(log_counts)/len(log_counts):.0f} avg (range: {min(log_counts)}-{max(log_counts)})")
+    else:
+        default_logs = int(underlying_env._per_env_target) if hasattr(underlying_env, '_per_env_target') and underlying_env._per_env_target > 0 else 200
+        episode_starting_logs[:] = default_logs
+        print(f"[Eval] Logs per pile: {default_logs}")
+
+    if args_cli.num_episodes:
+        print(f"[Eval] Running evaluation for {args_cli.num_episodes} episodes...")
+    print("=" * 60)
     timestep = 0
+
     # simulate environment
     while simulation_app.is_running():
         start_time = time.time()
@@ -171,7 +240,63 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             # agent stepping
             actions = policy(obs)
             # env stepping
-            obs, _, _, _ = env.step(actions)
+            obs, rewards, dones, _ = env.step(actions)
+
+            # Track rewards
+            episode_rewards += rewards
+
+            # Track per-grasp metrics if available
+            if hasattr(underlying_env, '_prev_logs_grasped'):
+                for i in range(num_envs):
+                    logs_grasped = int(underlying_env._prev_logs_grasped[i].item())
+                    alignment = underlying_env._prev_grasp_alignment[i].item() if hasattr(underlying_env, '_prev_grasp_alignment') else 0.0
+                    stability = underlying_env._prev_grasp_stability[i].item() if hasattr(underlying_env, '_prev_grasp_stability') else 1.0
+                    total_grasps += 1
+                    total_logs_grasped += logs_grasped
+                    episode_logs_cleared[i] += logs_grasped
+                    if logs_grasped > 0:
+                        successful_grasps += 1
+                        total_alignment += alignment
+                        total_stability += stability
+                    else:
+                        failed_grasps += 1
+
+            # Check for episode completion
+            for i in range(num_envs):
+                if dones[i]:
+                    ep_reward = episode_rewards[i].item()
+                    total_reward += ep_reward
+                    episodes_done += 1
+
+                    # Calculate clearing percentage
+                    starting_logs = int(episode_starting_logs[i].item())
+                    logs_cleared = int(episode_logs_cleared[i].item())
+                    clear_pct = (logs_cleared / max(1, starting_logs)) * 100
+                    clearing_percentages.append(clear_pct)
+                    episode_rewards_list.append(ep_reward)
+                    logs_per_episode.append(starting_logs)
+
+                    # Track full clears
+                    if logs_cleared >= starting_logs:
+                        piles_fully_cleared += 1
+
+                    print(f"[Eval] Episode {episodes_done}: reward={ep_reward:.2f}, cleared={clear_pct:.1f}% ({logs_cleared}/{starting_logs} logs)")
+
+                    # Reset per-episode tracking
+                    episode_rewards[i] = 0.0
+                    episode_logs_cleared[i] = 0
+                    # Update starting logs for next episode
+                    if has_variable_logs:
+                        episode_starting_logs[i] = int(underlying_env._per_env_log_counts[i].item())
+
+                    # Check if we've done enough episodes
+                    if args_cli.num_episodes and episodes_done >= args_cli.num_episodes:
+                        break
+
+        # Check exit conditions
+        if args_cli.num_episodes and episodes_done >= args_cli.num_episodes:
+            break
+
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video
@@ -182,6 +307,78 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         sleep_time = dt - (time.time() - start_time)
         if args_cli.real_time and sleep_time > 0:
             time.sleep(sleep_time)
+
+    # Print and save metrics if episodes were tracked
+    if episodes_done > 0:
+        avg_clear_pct = sum(clearing_percentages) / max(1, len(clearing_percentages))
+        grasp_success_rate = successful_grasps / max(1, total_grasps) * 100
+        avg_throughput = total_logs_grasped / max(1, successful_grasps)
+        avg_alignment = total_alignment / max(1, successful_grasps)
+        full_clear_rate = piles_fully_cleared / max(1, episodes_done) * 100
+        avg_reward = total_reward / max(1, episodes_done)
+
+        print("=" * 60)
+        print(f"\n[Eval] ====== RESULTS ======")
+        print(f"[Eval] Episodes: {episodes_done}")
+        print(f"[Eval] Avg Episode Reward: {avg_reward:.2f}")
+        print(f"[Eval] Avg Pile Cleared: {avg_clear_pct:.1f}%")
+        print(f"[Eval] Full Clear Rate: {full_clear_rate:.1f}% ({piles_fully_cleared}/{episodes_done})")
+        print(f"[Eval] Grasp Success Rate: {grasp_success_rate:.1f}%")
+        print(f"[Eval] Avg Throughput: {avg_throughput:.2f} logs/grasp")
+        print(f"[Eval] Avg Alignment: {avg_alignment:.3f}")
+        print(f"[Eval] Total Logs Grasped: {total_logs_grasped}")
+        print(f"[Eval] =======================")
+
+        # Save metrics if requested
+        if args_cli.save_metrics:
+            if args_cli.metrics_output_dir:
+                output_dir = args_cli.metrics_output_dir
+            else:
+                output_dir = log_dir
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            metrics_file = os.path.join(output_dir, f"eval_metrics_{timestamp}.json")
+
+            metrics = {
+                "eval_config": {
+                    "checkpoint": resume_path,
+                    "task": args_cli.task,
+                    "num_envs": num_envs,
+                    "num_episodes": episodes_done,
+                    "timestamp": timestamp,
+                },
+                "episodes": {
+                    "total": episodes_done,
+                    "logs_per_pile_avg": float(sum(logs_per_episode) / max(1, len(logs_per_episode))),
+                    "logs_per_pile_min": int(min(logs_per_episode)) if logs_per_episode else 0,
+                    "logs_per_pile_max": int(max(logs_per_episode)) if logs_per_episode else 0,
+                },
+                "grasp": {
+                    "success_rate": grasp_success_rate,
+                    "successful": successful_grasps,
+                    "failed": failed_grasps,
+                    "total": total_grasps,
+                },
+                "pile_clearing": {
+                    "avg_cleared_pct": avg_clear_pct,
+                    "full_clear_rate": full_clear_rate,
+                    "full_clears": piles_fully_cleared,
+                },
+                "performance": {
+                    "avg_episode_reward": avg_reward,
+                    "avg_throughput": avg_throughput,
+                    "avg_alignment": avg_alignment,
+                    "total_logs_grasped": total_logs_grasped,
+                },
+                "episode_rewards": episode_rewards_list,
+                "clearing_percentages": clearing_percentages,
+            }
+
+            os.makedirs(output_dir, exist_ok=True)
+            with open(metrics_file, "w") as f:
+                json.dump(metrics, f, indent=2)
+
+            print(f"\n[Eval] Metrics saved to: {metrics_file}")
 
     # close the simulator
     env.close()

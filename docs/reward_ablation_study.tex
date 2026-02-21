@@ -1,0 +1,329 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{colortbl}
+\usepackage{multirow}
+\usepackage{caption}
+
+\definecolor{lightgray}{gray}{0.92}
+\definecolor{highlight}{RGB}{230, 242, 255}
+
+\title{Reward Function Ablation Study:\\Hierarchical RL for Crane Log Grasping}
+\author{Crane Testbed Project}
+\date{February 2026}
+
+\begin{document}
+\maketitle
+
+\section{Overview}
+
+We conducted a $2 \times 2$ factorial ablation study comparing reward function designs for hierarchical reinforcement learning in crane log grasping. The two factors are:
+
+\begin{enumerate}
+    \item \textbf{Formula Type}: Multiplicative vs.\ Additive combination of efficiency and alignment
+    \item \textbf{Normalization}: Raw log count vs.\ Normalized efficiency (logs grasped / logs available)
+\end{enumerate}
+
+Additionally, each variant was tested with and without \textbf{Domain Randomization (DR)} (variable pile sizes 50--200 logs).
+
+\section{Grasp Evaluation Metrics}
+
+\subsection{Logs Grasped ($n$)}
+
+After the grapple lifts (LIFT\_HIGH phase), we count logs within a proximity radius $r_{\text{prox}} = 1.5\text{m}$ of the basegrapple center:
+
+\begin{equation}
+    n = \left| \left\{ \text{log}_i : \| \mathbf{p}_{\text{log}_i} - \mathbf{p}_{\text{bg}} \| < r_{\text{prox}} \right\} \right|
+\end{equation}
+
+where $\mathbf{p}_{\text{bg}}$ is the basegrapple position and $\mathbf{p}_{\text{log}_i}$ is each log's position in world frame.
+
+\subsection{Orientation Alignment ($a$)}
+
+Alignment measures how well the grasped logs are oriented relative to the grapple. For each grasped log, we compute the dot product between forward directions:
+
+\begin{equation}
+    a_i = \left| \hat{\mathbf{f}}_{\text{bg}} \cdot \hat{\mathbf{f}}_{\text{log}_i} \right|
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $\hat{\mathbf{f}}_{\text{bg}} = R(\mathbf{q}_{\text{bg}}) \cdot [1, 0, 0]^T$ is the basegrapple's forward direction (rotated from body frame)
+    \item $\hat{\mathbf{f}}_{\text{log}_i} = R(\mathbf{q}_{\text{log}_i}) \cdot [1, 0, 0]^T$ is the log's forward direction (along its length axis)
+    \item $R(\mathbf{q})$ converts quaternion to rotation matrix
+    \item Absolute value handles logs pointing in either direction along their axis
+\end{itemize}
+
+The average alignment over all grasped logs:
+\begin{equation}
+    a = \frac{1}{n} \sum_{i=1}^{n} a_i \in [0, 1]
+\end{equation}
+
+\textbf{Interpretation:}
+\begin{itemize}
+    \item $a = 1.0$: All logs perfectly parallel to grapple (ideal for clean lift)
+    \item $a = 0.0$: All logs perpendicular to grapple (will slip or disturb pile)
+    \item $a > 0.7$: Good alignment threshold---logs lift cleanly without disrupting pile
+\end{itemize}
+
+\subsection{Normalized Efficiency ($\eta$)}
+
+For pile-size agnostic rewards, we normalize by logs available at the target position:
+
+\begin{equation}
+    \eta = \frac{n}{\min\left(\max(n_{\text{avail}}, 1), n_{\text{max}}\right)} \in [0, 1]
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $n_{\text{avail}}$ = logs within a vertical slice of the rack at the grapple's Y position (action bounds prism)
+    \item $n_{\text{max}} = 20$ = physical grapple capacity (prevents $\eta > 1$ for sparse areas)
+    \item The $\max(\cdot, 1)$ prevents division by zero
+\end{itemize}
+
+\section{Reward Function Variants}
+
+\subsection{Alignment Bonus (Multiplicative Variants Only)}
+
+The alignment bonus rewards grasps with $a > 0.7$ (good grapple-log alignment):
+
+\begin{equation}
+    b_{\text{align}} = \begin{cases}
+        \text{efficiency} \times (a - 0.7) \times 5 & \text{if } a > 0.7 \\
+        0 & \text{otherwise}
+    \end{cases}
+\end{equation}
+
+This creates a 6$\times$ steeper gradient above $a = 0.7$, strongly incentivizing good alignment.
+
+\subsection{Variant MR: Multiplicative Raw (Original Baseline)}
+
+\begin{equation}
+    r_{\text{MR}} = \begin{cases}
+        n \cdot a + n \cdot (a - 0.7) \cdot 5 & \text{if } n > 0 \text{ and } a > 0.7 \\
+        n \cdot a & \text{if } n > 0 \text{ and } a \leq 0.7 \\
+        -3.0 & \text{if } n = 0 \text{ (failed grasp)}
+    \end{cases}
+\end{equation}
+
+\textbf{Simplified form} (for $a > 0.7$):
+\begin{equation}
+    r_{\text{MR}} = n \cdot (6a - 3.5)
+\end{equation}
+
+\textbf{Example calculations:}
+\begin{itemize}
+    \item 10 logs, $a=0.5$: $r = 10 \times 0.5 = 5.0$
+    \item 10 logs, $a=0.8$: $r = 10 \times 0.8 + 10 \times 0.1 \times 5 = 8 + 5 = 13.0$
+    \item 20 logs, $a=0.9$: $r = 20 \times 0.9 + 20 \times 0.2 \times 5 = 18 + 20 = 38.0$
+\end{itemize}
+
+\textbf{Properties:}
+\begin{itemize}
+    \item Reward scales with absolute log count (favors larger piles)
+    \item Strong coupling: low alignment zeros out efficiency gains
+    \item Range: $[-3, \sim 150]$ (depends on pile size)
+\end{itemize}
+
+\subsection{Variant MN: Multiplicative Normalized}
+
+\begin{equation}
+    r_{\text{MN}} = \begin{cases}
+        \eta \cdot 10 \cdot a + \eta \cdot 10 \cdot (a - 0.7) \cdot 5 & \text{if } n > 0 \text{ and } a > 0.7 \\
+        \eta \cdot 10 \cdot a & \text{if } n > 0 \text{ and } a \leq 0.7 \\
+        -3.0 & \text{if } n = 0 \text{ (failed grasp)}
+    \end{cases}
+\end{equation}
+
+\textbf{Example calculations} (assuming $n_{\text{avail}} = 20$):
+\begin{itemize}
+    \item 10 logs, $a=0.5$: $\eta=0.5$, $r = 0.5 \times 10 \times 0.5 = 2.5$
+    \item 10 logs, $a=0.8$: $\eta=0.5$, $r = 4.0 + 0.5 \times 10 \times 0.1 \times 5 = 4 + 2.5 = 6.5$
+    \item 20 logs, $a=0.9$: $\eta=1.0$, $r = 9.0 + 1.0 \times 10 \times 0.2 \times 5 = 9 + 10 = 19.0$
+\end{itemize}
+
+\textbf{Properties:}
+\begin{itemize}
+    \item Scale factor of 10 maintains similar magnitude to MR for typical grasps
+    \item Pile-size agnostic: 50\% efficiency on sparse pile = 50\% on dense pile
+    \item Range: $[-3, 25]$ (bounded, consistent across pile sizes)
+\end{itemize}
+
+\subsection{Variant AR: Additive Raw}
+
+\begin{equation}
+    r_{\text{AR}} = \begin{cases}
+        \dfrac{n}{20} + a & \text{if } n > 0 \\[8pt]
+        -0.5 & \text{if } n = 0 \text{ (failed grasp)}
+    \end{cases}
+\end{equation}
+
+\textbf{Example calculations:}
+\begin{itemize}
+    \item 10 logs, $a=0.5$: $r = 0.5 + 0.5 = 1.0$
+    \item 10 logs, $a=0.8$: $r = 0.5 + 0.8 = 1.3$
+    \item 20 logs, $a=0.9$: $r = 1.0 + 0.9 = 1.9$
+\end{itemize}
+
+\textbf{Properties:}
+\begin{itemize}
+    \item Decoupled: efficiency and alignment contribute independently
+    \item No alignment bonus discontinuity (smooth reward landscape)
+    \item Smaller failure penalty ($-0.5$ vs $-3.0$)---less punishing early exploration
+    \item Range: $[-0.5, \sim 11]$
+\end{itemize}
+
+\subsection{Variant AN: Additive Normalized}
+
+\begin{equation}
+    r_{\text{AN}} = \begin{cases}
+        \eta + a & \text{if } n > 0 \\
+        -0.5 & \text{if } n = 0 \text{ (failed grasp)}
+    \end{cases}
+\end{equation}
+
+\textbf{Example calculations:}
+\begin{itemize}
+    \item 10/20 logs, $a=0.5$: $\eta=0.5$, $r = 0.5 + 0.5 = 1.0$
+    \item 10/20 logs, $a=0.8$: $\eta=0.5$, $r = 0.5 + 0.8 = 1.3$
+    \item 20/20 logs, $a=0.9$: $\eta=1.0$, $r = 1.0 + 0.9 = 1.9$
+\end{itemize}
+
+\textbf{Properties:}
+\begin{itemize}
+    \item Both terms in $[0, 1]$, sum in $[0, 2]$
+    \item Clean interpretation: ``grasp quality = efficiency + alignment''
+    \item Fully pile-size agnostic
+    \item Tightest bounded range: $[-0.5, 2.0]$
+\end{itemize}
+
+\section{Summary Comparison}
+
+\begin{table}[h]
+\centering
+\caption{Reward Function Variant Summary}
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Variant} & \textbf{Formula} & \textbf{Norm} & \textbf{Align Bonus} & \textbf{Fail Penalty} & \textbf{Range} \\
+\midrule
+\rowcolor{lightgray} MR & $n \cdot a$ & Raw & $n(a{-}0.7) \cdot 5$ & $-3.0$ & $[-3, {\sim}150]$ \\
+MN & $\eta \cdot 10 \cdot a$ & Norm & $\eta \cdot 10(a{-}0.7) \cdot 5$ & $-3.0$ & $[-3, 25]$ \\
+\rowcolor{lightgray} AR & $\frac{n}{20} + a$ & Raw & None & $-0.5$ & $[-0.5, {\sim}11]$ \\
+AN & $\eta + a$ & Norm & None & $-0.5$ & $[-0.5, 2]$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Training Results}
+
+\subsection{Without Domain Randomization}
+
+\begin{table}[h]
+\centering
+\caption{Training Performance (Fixed 200-log piles)}
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Variant} & \textbf{Iters} & \textbf{Final} & \textbf{Max} & \textbf{@25\%} & \textbf{@50\%} & \textbf{Converged?} \\
+\midrule
+\rowcolor{highlight} MR (baseline) & 505 & 99.51 & \textbf{99.68} & 90.41 & 88.21 & Yes \\
+MN & 304 & 70.21 & 71.36 & 47.94 & 52.87 & Improving \\
+AR & 196 & 17.18 & 17.18 & 15.20 & 15.99 & Improving \\
+AN & 284 & 22.33 & 22.59 & 18.61 & 20.23 & Improving \\
+\bottomrule
+\end{tabular}
+\label{tab:no_dr}
+\end{table}
+
+\textbf{Note:} Absolute reward values are \textbf{not directly comparable} across formula types due to different scales. MR achieving 99.51 and AN achieving 22.33 does not mean MR is 4$\times$ better---they use different reward functions.
+
+\subsection{With Domain Randomization}
+
+\begin{table}[h]
+\centering
+\caption{Training Performance (Variable 50--200 log piles)}
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Variant} & \textbf{Iters} & \textbf{Final} & \textbf{Max} & \textbf{@25\%} & \textbf{@50\%} & \textbf{Trend} \\
+\midrule
+DR-MN & 197 & 44.90 & 48.84 & 16.59 & 39.82 & $\uparrow\uparrow$ (+171\%) \\
+DR-AR & 244 & 7.25 & 8.76 & 5.32 & 6.97 & $\uparrow$ (+36\%) \\
+DR-AN & 345 & 13.82 & 14.44 & 12.27 & 13.11 & $\rightarrow$ (+13\%) \\
+\bottomrule
+\end{tabular}
+\label{tab:dr}
+\end{table}
+
+\section{Key Observations}
+
+\subsection{Multiplicative vs.\ Additive}
+
+\begin{itemize}
+    \item \textbf{Multiplicative} (MR, MN) shows faster convergence and stronger learning signal
+    \item The alignment bonus at $a > 0.7$ creates steep gradient toward good alignment
+    \item \textbf{Additive} (AR, AN) provides smoother reward landscape without discontinuity
+    \item Additive decouples efficiency/alignment---each component provides independent gradient
+\end{itemize}
+
+\subsection{Normalized vs.\ Raw}
+
+\begin{itemize}
+    \item \textbf{Normalization} essential for domain randomization (consistent scale across pile sizes)
+    \item Raw rewards bias toward larger piles (more logs $\Rightarrow$ higher reward regardless of efficiency)
+    \item MR baseline achieves high rewards partly because 200-log piles provide more reward opportunity
+\end{itemize}
+
+\subsection{Alignment Bonus Effect}
+
+For multiplicative variants, the bonus at $a > 0.7$ creates a ``kink'':
+\begin{itemize}
+    \item Below 0.7: gradient w.r.t.\ $a$ is $n$ (or $10\eta$)
+    \item Above 0.7: gradient w.r.t.\ $a$ is $6n$ (or $60\eta$)
+\end{itemize}
+This 6$\times$ steeper gradient strongly incentivizes achieving $a > 0.7$, which correlates with clean lifts that don't disturb the pile.
+
+\subsection{Failure Penalty Impact}
+
+\begin{itemize}
+    \item MR/MN use $-3.0$: harsher penalty, may slow early exploration
+    \item AR/AN use $-0.5$: gentler penalty, allows more exploration but weaker negative signal
+\end{itemize}
+
+\section{Recommendations}
+
+\begin{enumerate}
+    \item \textbf{For fixed pile sizes}: MR (original) converges well to $\sim$100 reward
+    \item \textbf{For domain randomization}: MN recommended (strongest learning signal + pile-size agnostic)
+    \item \textbf{For interpretability}: AN provides cleanest semantics ($\eta + a$)
+    \item \textbf{For gentle exploration}: AR/AN with smaller failure penalty
+\end{enumerate}
+
+\section{Next Steps}
+
+Run standardized inference evaluation on all trained checkpoints measuring reward-agnostic metrics:
+\begin{itemize}
+    \item Logs grasped per episode
+    \item Grasp success rate (\% of grasps with $n > 0$)
+    \item Average alignment
+    \item Pile clearing percentage
+\end{itemize}
+
+\section{Appendix: Gym Task IDs}
+
+\begin{verbatim}
+# Without Domain Randomization
+Isaac-Crane-Full-MR-v0    # Multiplicative Raw (original)
+Isaac-Crane-Full-MN-v0    # Multiplicative Normalized
+Isaac-Crane-Full-AR-v0    # Additive Raw
+Isaac-Crane-Full-AN-v0    # Additive Normalized
+
+# With Domain Randomization
+Isaac-Crane-Full-DR-MR-v0
+Isaac-Crane-Full-DR-MN-v0
+Isaac-Crane-Full-DR-AR-v0
+Isaac-Crane-Full-DR-AN-v0
+\end{verbatim}
+
+\end{document}
