@@ -965,35 +965,147 @@ class CranePointCloudEnvCfg_DR(CraneDirectEnvCfgFull):
     depth_range_max: float = 10.0
 
 
+##
+# Point Cloud CosSin reward variants (no DR)
+##
+
 @configclass
-class CranePointCloudEnvCfg_CosSin(CraneDirectEnvCfgFull):
-    """Crane point cloud environment with 5D CosSin action space (no DR)."""
+class CranePointCloudEnvCfg_CosSin_MR(CraneDirectEnvCfgFull):
+    """PCD-CosSin-MR: multiplicative reward, raw throughput."""
     use_hierarchical_rl: bool = True
     enable_camera: bool = True
     episode_length_s = 600.0
-    action_space = 5  # [x, y, z, cos(2*yaw), sin(2*yaw)]
+    action_space = 5
     observation_space = 3072
     enable_domain_randomization: bool = False
     num_points: int = 1024
     depth_range_min: float = 1.0
     depth_range_max: float = 10.0
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = False
 
 
 @configclass
-class CranePointCloudEnvCfg_CosSin_DR(CraneDirectEnvCfgFull):
-    """Crane point cloud environment with 5D CosSin action + domain randomization."""
+class CranePointCloudEnvCfg_CosSin_MN(CraneDirectEnvCfgFull):
+    """PCD-CosSin-MN: multiplicative reward, normalized efficiency."""
     use_hierarchical_rl: bool = True
     enable_camera: bool = True
     episode_length_s = 600.0
-    action_space = 5  # [x, y, z, cos(2*yaw), sin(2*yaw)]
+    action_space = 5
+    observation_space = 3072
+    enable_domain_randomization: bool = False
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = True
+
+
+@configclass
+class CranePointCloudEnvCfg_CosSin_AR(CraneDirectEnvCfgFull):
+    """PCD-CosSin-AR: additive reward, raw throughput."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    observation_space = 3072
+    enable_domain_randomization: bool = False
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+    reward_formula: str = "additive"
+    normalize_reward: bool = False
+
+
+@configclass
+class CranePointCloudEnvCfg_CosSin_AN(CraneDirectEnvCfgFull):
+    """PCD-CosSin-AN: additive reward, normalized efficiency."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    observation_space = 3072
+    enable_domain_randomization: bool = False
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+    reward_formula: str = "additive"
+    normalize_reward: bool = True
+
+
+##
+# Point Cloud CosSin reward variants (with DR)
+##
+
+@configclass
+class CranePointCloudEnvCfg_CosSin_DR_MR(CraneDirectEnvCfgFull):
+    """PCD-CosSin-DR-MR: multiplicative reward, raw throughput + DR."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5
     observation_space = 3072
     enable_domain_randomization: bool = True
     num_points: int = 1024
     depth_range_min: float = 1.0
     depth_range_max: float = 10.0
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = False
 
 
-# Point cloud environment (4D action, no DR)
+@configclass
+class CranePointCloudEnvCfg_CosSin_DR_MN(CraneDirectEnvCfgFull):
+    """PCD-CosSin-DR-MN: multiplicative reward, normalized efficiency + DR."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    observation_space = 3072
+    enable_domain_randomization: bool = True
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = True
+
+
+@configclass
+class CranePointCloudEnvCfg_CosSin_DR_AR(CraneDirectEnvCfgFull):
+    """PCD-CosSin-DR-AR: additive reward, raw throughput + DR."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    observation_space = 3072
+    enable_domain_randomization: bool = True
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+    reward_formula: str = "additive"
+    normalize_reward: bool = False
+
+
+@configclass
+class CranePointCloudEnvCfg_CosSin_DR_AN(CraneDirectEnvCfgFull):
+    """PCD-CosSin-DR-AN: additive reward, normalized efficiency + DR."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    observation_space = 3072
+    enable_domain_randomization: bool = True
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+    reward_formula: str = "additive"
+    normalize_reward: bool = True
+
+
+##
+# Point Cloud gym registrations
+##
+
+# Legacy 4D action variants
 gym.register(
     id="Isaac-Crane-PointCloud-v0",
     entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
@@ -1004,7 +1116,6 @@ gym.register(
     },
 )
 
-# Point cloud environment with DR (4D action)
 gym.register(
     id="Isaac-Crane-PointCloud-DR-v0",
     entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
@@ -1015,24 +1126,105 @@ gym.register(
     },
 )
 
-# Point cloud environment with 5D CosSin action (no DR)
+# 5D CosSin action — reward ablation variants (no DR)
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-MR-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_MR,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-MN-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_MN,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-AR-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_AR,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-AN-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_AN,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+# 5D CosSin action — reward ablation variants (with DR)
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-DR-MR-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_DR_MR,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-DR-MN-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_DR_MN,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-DR-AR-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_DR_AR,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-DR-AN-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_DR_AN,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+# Backwards-compatible aliases (default to MR)
 gym.register(
     id="Isaac-Crane-PointCloud-CosSin-v0",
     entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin,
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_MR,
         "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
     },
 )
 
-# Point cloud environment with 5D CosSin action + DR
 gym.register(
     id="Isaac-Crane-PointCloud-CosSin-DR-v0",
     entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_DR,
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_DR_MR,
         "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
     },
 )

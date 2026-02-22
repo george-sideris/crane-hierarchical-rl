@@ -339,9 +339,12 @@ def collect_demonstrations(env, num_episodes: int, output_dir: str,
     failed_grasps = 0
     total_logs_grasped = 0
     total_alignment = 0.0
+    total_stability = 0.0
     piles_fully_cleared = 0
     clearing_percentages = []
     logs_per_episode = []
+    knocked_off_per_episode = []
+    cycles_per_episode = []
     episodes_done = 0
 
     episode_logs_cleared = torch.zeros(env.num_envs, device=device, dtype=torch.int32)
@@ -389,6 +392,7 @@ def collect_demonstrations(env, num_episodes: int, output_dir: str,
             for env_i in range(env.num_envs):
                 logs_this_grasp = int(env._prev_logs_grasped[env_i].item())
                 alignment_this_grasp = env._prev_grasp_alignment[env_i].item()
+                stability_this_grasp = env._prev_grasp_stability[env_i].item() if hasattr(env, '_prev_grasp_stability') else 0.0
 
                 episode_logs_cleared[env_i] += logs_this_grasp
 
@@ -398,6 +402,7 @@ def collect_demonstrations(env, num_episodes: int, output_dir: str,
                     successful_grasps += 1
                     total_logs_grasped += logs_this_grasp
                     total_alignment += alignment_this_grasp
+                    total_stability += stability_this_grasp
                 else:
                     failed_grasps += 1
 
@@ -413,6 +418,12 @@ def collect_demonstrations(env, num_episodes: int, output_dir: str,
                     clear_pct = (logs_cleared / max(1, total_logs_this_env)) * 100
                     clearing_percentages.append(clear_pct)
                     logs_per_episode.append(total_logs_this_env)
+
+                    # Track knocked-off logs and cycles for this episode
+                    knocked_off = int(env._logs_knocked_off[env_i].item()) if hasattr(env, '_logs_knocked_off') else 0
+                    cycles = int(env._cycle_count[env_i].item()) if hasattr(env, '_cycle_count') else 0
+                    knocked_off_per_episode.append(knocked_off)
+                    cycles_per_episode.append(cycles)
 
                     if logs_cleared >= total_logs_this_env:
                         piles_fully_cleared += 1
@@ -449,6 +460,9 @@ def collect_demonstrations(env, num_episodes: int, output_dir: str,
     full_clear_rate = piles_fully_cleared / max(1, episodes_done) * 100
     avg_throughput = total_logs_grasped / max(1, successful_grasps)
     avg_align = total_alignment / max(1, successful_grasps)
+    avg_stability = total_stability / max(1, successful_grasps)
+    avg_knocked_off = np.mean(knocked_off_per_episode) if knocked_off_per_episode else 0.0
+    avg_cycles = np.mean(cycles_per_episode) if cycles_per_episode else 0.0
 
     print(f"\n[BC-PointCloud] ====== COLLECTION SUMMARY ======")
     print(f"  Episodes: {episodes_done}")
@@ -458,6 +472,9 @@ def collect_demonstrations(env, num_episodes: int, output_dir: str,
     print(f"  Full clears: {full_clear_rate:.1f}%")
     print(f"  Avg throughput: {avg_throughput:.2f} logs/grasp")
     print(f"  Avg alignment: {avg_align:.3f}")
+    print(f"  Avg stability: {avg_stability:.3f}")
+    print(f"  Avg knocked off: {avg_knocked_off:.1f} logs/episode")
+    print(f"  Avg cycles/episode: {avg_cycles:.1f}")
     print(f"=" * 50)
 
     metrics = {
@@ -479,9 +496,14 @@ def collect_demonstrations(env, num_episodes: int, output_dir: str,
         "performance": {
             "avg_throughput": avg_throughput,
             "avg_alignment": avg_align,
+            "avg_stability": avg_stability,
+            "avg_knocked_off": avg_knocked_off,
+            "avg_cycles_per_episode": avg_cycles,
         },
         "episode_rewards": episode_rewards,
         "clearing_percentages": clearing_percentages,
+        "knocked_off_per_episode": knocked_off_per_episode,
+        "cycles_per_episode": cycles_per_episode,
     }
 
     return np.stack(pointclouds), np.stack(actions), metrics
