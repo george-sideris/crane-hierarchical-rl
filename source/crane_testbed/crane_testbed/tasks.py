@@ -377,9 +377,178 @@ class CraneDirectEnvCfg_Full_DR_PG_v0(CraneDirectEnvCfgFull):
     failure_penalty: float = -0.5
 
 # =============================================================================
+# Cos/Sin Yaw Encoding Variants (5D action space)
+# Same reward formulas as 4D, but with 5D action: [x, y, z, cos(2*yaw), sin(2*yaw)]
+# =============================================================================
+
+# --- No Domain Randomization ---
+
+# CosSin-MR: multiplicative, raw
+@configclass
+class CraneDirectEnvCfg_Full_CosSin_MR_v0(CraneDirectEnvCfgFull):
+    """CosSin-MR v0: 5D action, multiplicative reward, raw log count."""
+    use_hierarchical_rl: bool = True
+    episode_length_s = 600.0
+    action_space = 5  # [x, y, z, cos(2*yaw), sin(2*yaw)]
+    max_logs_obs: int = 32
+    observation_space = 128  # 32 logs × 4 features (x, y, z, yaw)
+    enable_domain_randomization: bool = False
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = False
+    use_stability_reward: bool = True
+    failure_penalty: float = -1.0
+
+
+# CosSin-MN: multiplicative, normalized
+@configclass
+class CraneDirectEnvCfg_Full_CosSin_MN_v0(CraneDirectEnvCfgFull):
+    """CosSin-MN v0: 5D action, multiplicative reward, normalized efficiency."""
+    use_hierarchical_rl: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    max_logs_obs: int = 32
+    observation_space = 128
+    enable_domain_randomization: bool = False
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = True
+    use_stability_reward: bool = True
+    failure_penalty: float = -1.0
+
+
+# CosSin-AR: additive, raw
+@configclass
+class CraneDirectEnvCfg_Full_CosSin_AR_v0(CraneDirectEnvCfgFull):
+    """CosSin-AR v0: 5D action, additive reward (eff + align + stab), raw log count."""
+    use_hierarchical_rl: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    max_logs_obs: int = 32
+    observation_space = 128
+    enable_domain_randomization: bool = False
+    reward_formula: str = "additive"
+    normalize_reward: bool = False
+    use_stability_reward: bool = True
+    failure_penalty: float = -0.5
+
+
+# CosSin-AN: additive, normalized
+@configclass
+class CraneDirectEnvCfg_Full_CosSin_AN_v0(CraneDirectEnvCfgFull):
+    """CosSin-AN v0: 5D action, additive reward (eff + align + stab), normalized efficiency."""
+    use_hierarchical_rl: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    max_logs_obs: int = 32
+    observation_space = 128
+    enable_domain_randomization: bool = False
+    reward_formula: str = "additive"
+    normalize_reward: bool = True
+    use_stability_reward: bool = True
+    failure_penalty: float = -0.5
+
+
+# CosSin-PG: progress-gated reward
+@configclass
+class CraneDirectEnvCfg_Full_CosSin_PG_v0(CraneDirectEnvCfgFull):
+    """CosSin-PG v0: 5D action, progress-gated reward (no DR)."""
+    use_hierarchical_rl: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    max_logs_obs: int = 32
+    observation_space = 128
+    enable_domain_randomization: bool = False
+    reward_formula: str = "progress_gate"
+    normalize_reward: bool = False
+    use_stability_reward: bool = True
+    failure_penalty: float = -1.0
+
+
+# --- With Domain Randomization ---
+
+# CosSin-DR-MR: multiplicative, raw + DR
+@configclass
+class CraneDirectEnvCfg_Full_CosSin_DR_MR_v0(CraneDirectEnvCfgFull):
+    """CosSin-DR-MR v0: 5D action, multiplicative reward, raw log count + DR."""
+    use_hierarchical_rl: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    max_logs_obs: int = 32
+    observation_space = 128
+    enable_domain_randomization: bool = True
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = False
+    use_stability_reward: bool = True
+    failure_penalty: float = -1.0
+
+
+# CosSin-DR-MN: multiplicative, normalized + DR
+@configclass
+class CraneDirectEnvCfg_Full_CosSin_DR_MN_v0(CraneDirectEnvCfgFull):
+    """CosSin-DR-MN v0: 5D action, multiplicative reward, normalized efficiency + DR."""
+    use_hierarchical_rl: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    max_logs_obs: int = 32
+    observation_space = 128
+    enable_domain_randomization: bool = True
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = True
+    use_stability_reward: bool = True
+    failure_penalty: float = -1.0
+
+
+# CosSin-DR-AR: additive, raw + DR
+@configclass
+class CraneDirectEnvCfg_Full_CosSin_DR_AR_v0(CraneDirectEnvCfgFull):
+    """CosSin-DR-AR v0: 5D action, additive reward (eff + align + stab), raw + DR."""
+    use_hierarchical_rl: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    max_logs_obs: int = 32
+    observation_space = 128
+    enable_domain_randomization: bool = True
+    reward_formula: str = "additive"
+    normalize_reward: bool = False
+    use_stability_reward: bool = True
+    failure_penalty: float = -0.5
+
+
+# CosSin-DR-AN: additive, normalized + DR
+@configclass
+class CraneDirectEnvCfg_Full_CosSin_DR_AN_v0(CraneDirectEnvCfgFull):
+    """CosSin-DR-AN v0: 5D action, additive reward (eff + align + stab), normalized + DR."""
+    use_hierarchical_rl: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    max_logs_obs: int = 32
+    observation_space = 128
+    enable_domain_randomization: bool = True
+    reward_formula: str = "additive"
+    normalize_reward: bool = True
+    use_stability_reward: bool = True
+    failure_penalty: float = -0.5
+
+
+# CosSin-DR-PG: progress-gated + DR
+@configclass
+class CraneDirectEnvCfg_Full_CosSin_DR_PG_v0(CraneDirectEnvCfgFull):
+    """CosSin-DR-PG v0: 5D action, progress-gated reward + DR."""
+    use_hierarchical_rl: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    max_logs_obs: int = 32
+    observation_space = 128
+    enable_domain_randomization: bool = True
+    reward_formula: str = "progress_gate"
+    normalize_reward: bool = False
+    use_stability_reward: bool = True
+    failure_penalty: float = -1.0
+
+# =============================================================================
 # Gym Task Registrations
 # Naming: MR=Multiplicative Raw, MN=Multiplicative Normalized,
 #         AR=Additive Raw, AN=Additive Normalized
+#         CosSin=5D action space with cos/sin yaw encoding
 # =============================================================================
 
 # --- No Domain Randomization ---
@@ -487,6 +656,108 @@ gym.register(
     },
 )
 
+# --- Cos/Sin Yaw Encoding (5D Action Space) - No DR ---
+gym.register(
+    id="Isaac-Crane-Full-CosSin-MR-v0",  # 5D action, Multiplicative Raw
+    entry_point="crane_rl_env_full:CraneDirectEnvFull",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CraneDirectEnvCfg_Full_CosSin_MR_v0,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Full",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-Full-CosSin-MN-v0",  # 5D action, Multiplicative Normalized
+    entry_point="crane_rl_env_full:CraneDirectEnvFull",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CraneDirectEnvCfg_Full_CosSin_MN_v0,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Full",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-Full-CosSin-AR-v0",  # 5D action, Additive Raw
+    entry_point="crane_rl_env_full:CraneDirectEnvFull",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CraneDirectEnvCfg_Full_CosSin_AR_v0,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Full",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-Full-CosSin-AN-v0",  # 5D action, Additive Normalized
+    entry_point="crane_rl_env_full:CraneDirectEnvFull",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CraneDirectEnvCfg_Full_CosSin_AN_v0,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Full",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-Full-CosSin-PG-v0",  # 5D action, Progress-Gated
+    entry_point="crane_rl_env_full:CraneDirectEnvFull",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CraneDirectEnvCfg_Full_CosSin_PG_v0,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Full",
+    },
+)
+
+# --- Cos/Sin Yaw Encoding (5D Action Space) - With DR ---
+gym.register(
+    id="Isaac-Crane-Full-CosSin-DR-MR-v0",  # 5D action, DR + Multiplicative Raw
+    entry_point="crane_rl_env_full:CraneDirectEnvFull",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CraneDirectEnvCfg_Full_CosSin_DR_MR_v0,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Full",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-Full-CosSin-DR-MN-v0",  # 5D action, DR + Multiplicative Normalized
+    entry_point="crane_rl_env_full:CraneDirectEnvFull",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CraneDirectEnvCfg_Full_CosSin_DR_MN_v0,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Full",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-Full-CosSin-DR-AR-v0",  # 5D action, DR + Additive Raw
+    entry_point="crane_rl_env_full:CraneDirectEnvFull",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CraneDirectEnvCfg_Full_CosSin_DR_AR_v0,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Full",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-Full-CosSin-DR-AN-v0",  # 5D action, DR + Additive Normalized
+    entry_point="crane_rl_env_full:CraneDirectEnvFull",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CraneDirectEnvCfg_Full_CosSin_DR_AN_v0,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Full",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-Full-CosSin-DR-PG-v0",  # 5D action, DR + Progress-Gated
+    entry_point="crane_rl_env_full:CraneDirectEnvFull",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CraneDirectEnvCfg_Full_CosSin_DR_PG_v0,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Full",
+    },
+)
+
 ##
 # Depth observation environment: CNN-based visual RL
 ##
@@ -541,6 +812,56 @@ class CraneDepthEnvCfg_Raw(CraneDirectEnvCfgFull):
     use_semantic_mask: bool = False  # No segmentation - raw depth
 
 
+# --- Depth with Cos/Sin Yaw Encoding (5D Action Space) ---
+
+@configclass
+class CraneDepthEnvCfg_CosSin(CraneDirectEnvCfgFull):
+    """Crane depth environment with 5D CosSin action space."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5  # [x, y, z, cos(2*yaw), sin(2*yaw)]
+    observation_space = 65536  # 256x256 depth image
+    enable_domain_randomization: bool = False
+    depth_height: int = 256
+    depth_width: int = 256
+    depth_min: float = 1.5
+    depth_max: float = 8.0
+    use_semantic_mask: bool = True
+
+
+@configclass
+class CraneDepthEnvCfg_CosSin_DR(CraneDirectEnvCfgFull):
+    """Crane depth environment with 5D CosSin action + domain randomization."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5  # [x, y, z, cos(2*yaw), sin(2*yaw)]
+    observation_space = 65536
+    enable_domain_randomization: bool = True
+    depth_height: int = 256
+    depth_width: int = 256
+    depth_min: float = 1.5
+    depth_max: float = 8.0
+    use_semantic_mask: bool = True
+
+
+@configclass
+class CraneDepthEnvCfg_CosSin_Raw(CraneDirectEnvCfgFull):
+    """Crane depth environment with 5D CosSin action + RAW depth (no semantic mask)."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5  # [x, y, z, cos(2*yaw), sin(2*yaw)]
+    observation_space = 65536
+    enable_domain_randomization: bool = False
+    depth_height: int = 256
+    depth_width: int = 256
+    depth_min: float = 1.5
+    depth_max: float = 8.0
+    use_semantic_mask: bool = False  # No segmentation - raw depth
+
+
 # Depth environment (no DR)
 gym.register(
     id="Isaac-Crane-Depth-v0",
@@ -570,6 +891,39 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": CraneDepthEnvCfg_Raw,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Depth",
+    },
+)
+
+# Depth environment with 5D CosSin action (no DR)
+gym.register(
+    id="Isaac-Crane-Depth-CosSin-v0",
+    entry_point="crane_depth_direct_env:CraneDepthDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CraneDepthEnvCfg_CosSin,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Depth",
+    },
+)
+
+# Depth environment with 5D CosSin action + DR
+gym.register(
+    id="Isaac-Crane-Depth-CosSin-DR-v0",
+    entry_point="crane_depth_direct_env:CraneDepthDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CraneDepthEnvCfg_CosSin_DR,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Depth",
+    },
+)
+
+# Depth environment with 5D CosSin action + RAW depth (no semantic mask)
+gym.register(
+    id="Isaac-Crane-Depth-CosSin-Raw-v0",
+    entry_point="crane_depth_direct_env:CraneDepthDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CraneDepthEnvCfg_CosSin_Raw,
         "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Depth",
     },
 )

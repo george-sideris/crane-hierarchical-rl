@@ -3509,15 +3509,23 @@ class CraneDirectEnvFull(DirectRLEnv):
                     x_norm = torch.tanh(a[0])  # [-1, 1] -> X position
                     y_norm = torch.tanh(a[1])  # [-1, 1] -> Y position
                     z_norm = torch.tanh(a[2])  # [-1, 1] -> Z position
-                    yaw_norm = torch.tanh(a[3])  # [-1, 1] -> Yaw angle
 
                     # Map positions to bounds: val = min + (norm + 1) / 2 * (max - min)
                     x_b = min_bounds[0] + (x_norm + 1.0) / 2.0 * (max_bounds[0] - min_bounds[0])
                     y_b = min_bounds[1] + (y_norm + 1.0) / 2.0 * (max_bounds[1] - min_bounds[1])
                     z_b = min_bounds[2] + (z_norm + 1.0) / 2.0 * (max_bounds[2] - min_bounds[2])
-                    # Map yaw to [-π/2, π/2] (normalized for log symmetry)
+
+                    # Decode yaw - supports both 4D and 5D action spaces
                     import math
-                    yaw_target = yaw_norm * (math.pi / 2)
+                    if a.shape[0] == 5:
+                        # 5D: [x, y, z, cos(2*yaw), sin(2*yaw)] - cos/sin encoding
+                        yaw_cos = torch.tanh(a[3])  # cos(2*yaw) in [-1, 1]
+                        yaw_sin = torch.tanh(a[4])  # sin(2*yaw) in [-1, 1]
+                        yaw_target = torch.atan2(yaw_sin, yaw_cos) / 2.0  # Decode to yaw
+                    else:
+                        # 4D: [x, y, z, yaw] - direct encoding (legacy)
+                        yaw_norm = torch.tanh(a[3])  # [-1, 1] -> Yaw angle
+                        yaw_target = yaw_norm * (math.pi / 2)  # Map to [-π/2, π/2]
 
                     # Cache target position and yaw for downstream phases
                     self._target_log_pos_b[i] = torch.stack([x_b, y_b, z_b])
