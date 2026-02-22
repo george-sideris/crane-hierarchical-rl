@@ -172,6 +172,10 @@ class PointNetActorCritic(nn.Module):
         """Reset internal state (no-op for this architecture)."""
         pass
 
+    def update_normalization(self, obs=None, critic_obs=None):
+        """Update observation normalization (no-op — point clouds are already in base frame)."""
+        pass
+
     def forward(self):
         raise NotImplementedError
 

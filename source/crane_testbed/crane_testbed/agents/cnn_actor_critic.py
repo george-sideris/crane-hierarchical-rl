@@ -181,6 +181,10 @@ class CNNActorCritic(nn.Module):
         """Reset internal state (no-op for this architecture)."""
         pass
 
+    def update_normalization(self, obs=None, critic_obs=None):
+        """Update observation normalization (no-op)."""
+        pass
+
     def forward(self):
         raise NotImplementedError
 
