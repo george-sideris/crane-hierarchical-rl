@@ -20,44 +20,31 @@ class CNNActorCritic(nn.Module):
     """
 
     @staticmethod
-    def _extract_obs_dim(obs_spec) -> int:
-        """Extract integer observation dimension from various RSL-RL formats.
-
-        Newer RSL-RL versions may pass tensordict, dict, list of ints,
-        or even list of group-name strings instead of a plain int.
-        Returns 0 if the dimension cannot be determined.
-        """
-        if isinstance(obs_spec, (int, float)):
-            return int(obs_spec)
-        if isinstance(obs_spec, (list, tuple)):
-            if len(obs_spec) > 0 and isinstance(obs_spec[0], (int, float)):
-                return int(sum(obs_spec))
-            return 0
-        if isinstance(obs_spec, dict):
-            for key in ('policy', 'critic'):
-                if key in obs_spec:
-                    val = CNNActorCritic._extract_obs_dim(obs_spec[key])
-                    if val > 0:
-                        return val
-            for val in obs_spec.values():
-                result = CNNActorCritic._extract_obs_dim(val)
-                if result > 0:
-                    return result
-            return 0
-        if hasattr(obs_spec, 'shape'):
-            return int(obs_spec.shape[-1])
-        try:
-            return int(obs_spec)
-        except (TypeError, ValueError):
-            return 0
+    def _to_tensor(obs):
+        """Extract raw tensor from dict/tensordict observations."""
+        if isinstance(obs, torch.Tensor):
+            return obs
+        if isinstance(obs, dict):
+            return obs.get('policy', next(iter(obs.values())))
+        if hasattr(obs, 'get'):
+            try:
+                return obs.get('policy')
+            except Exception:
+                pass
+        if hasattr(obs, '__getitem__'):
+            try:
+                return obs['policy']
+            except Exception:
+                pass
+        return obs
 
     def __init__(
         self,
-        num_actor_obs: int,
-        num_critic_obs: int,
+        num_actor_obs,
+        num_critic_obs,
         num_actions: int,
-        img_height: int = None,
-        img_width: int = None,
+        img_height: int = 48,
+        img_width: int = 48,
         encoder_features: int = 256,
         actor_hidden_dims: list = [128, 64],
         critic_hidden_dims: list = [128, 64],
@@ -66,32 +53,6 @@ class CNNActorCritic(nn.Module):
         **kwargs,
     ):
         super().__init__()
-
-        # Newer RSL-RL versions may pass tensordict/dict/list instead of int
-        num_actor_obs = self._extract_obs_dim(num_actor_obs)
-        num_critic_obs = self._extract_obs_dim(num_critic_obs)
-
-        # If extraction couldn't determine dims, infer from image size or default
-        if num_actor_obs == 0:
-            if img_height is not None and img_width is not None:
-                num_actor_obs = img_height * img_width
-            else:
-                num_actor_obs = 48 * 48
-        if num_critic_obs == 0:
-            num_critic_obs = num_actor_obs
-
-        # Auto-detect image dimensions from num_actor_obs if not specified
-        if img_height is None or img_width is None:
-            import math
-            side = int(math.sqrt(num_actor_obs))
-            if side * side == num_actor_obs:
-                img_height = side
-                img_width = side
-            else:
-                # Default fallback
-                img_height = 48
-                img_width = 48
-            print(f"[CNNActorCritic] Auto-detected image size: {img_height}x{img_width} from {num_actor_obs} obs")
 
         self.img_height = img_height
         self.img_width = img_width
@@ -206,8 +167,9 @@ class CNNActorCritic(nn.Module):
 
         print(f"[CNNActorCritic] Created: {img_height}x{img_width} -> {encoder_features} -> {num_actions} actions")
 
-    def _encode(self, obs: torch.Tensor) -> torch.Tensor:
+    def _encode(self, obs) -> torch.Tensor:
         """Encode observation through CNN."""
+        obs = self._to_tensor(obs)
         batch_size = obs.shape[0]
         x = obs.view(batch_size, 1, self.img_height, self.img_width)
         x = self.encoder(x)
@@ -234,13 +196,13 @@ class CNNActorCritic(nn.Module):
     def entropy(self):
         return self.distribution.entropy().sum(dim=-1)
 
-    def update_distribution(self, observations: torch.Tensor):
+    def update_distribution(self, observations):
         """Update action distribution given observations."""
         latent = self._encode(observations)
         mean = self.actor(latent)
         self.distribution = Normal(mean, self.std)
 
-    def act(self, observations: torch.Tensor, **kwargs) -> torch.Tensor:
+    def act(self, observations, **kwargs) -> torch.Tensor:
         """Sample action from distribution."""
         self.update_distribution(observations)
         return self.distribution.sample()
@@ -249,12 +211,12 @@ class CNNActorCritic(nn.Module):
         """Get log probability of actions."""
         return self.distribution.log_prob(actions).sum(dim=-1)
 
-    def act_inference(self, observations: torch.Tensor) -> torch.Tensor:
+    def act_inference(self, observations) -> torch.Tensor:
         """Deterministic action for inference."""
         latent = self._encode(observations)
         return self.actor(latent)
 
-    def evaluate(self, critic_observations: torch.Tensor, **kwargs) -> torch.Tensor:
+    def evaluate(self, critic_observations, **kwargs) -> torch.Tensor:
         """Get value estimate."""
         latent = self._encode(critic_observations)
         return self.critic(latent)
