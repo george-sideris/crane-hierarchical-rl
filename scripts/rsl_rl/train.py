@@ -33,6 +33,7 @@ parser.add_argument(
 )
 parser.add_argument("--export_io_descriptors", action="store_true", default=False, help="Export IO descriptors.")
 parser.add_argument("--bc_checkpoint", type=str, default=None, help="Path to BC checkpoint for fine-tuning (loads actor weights only, skips optimizer).")
+parser.add_argument("--save_debug_pointclouds", action="store_true", default=False, help="Save debug point cloud .npy and plots on first observation.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -43,8 +44,8 @@ args_cli, hydra_args = parser.parse_known_args()
 if args_cli.video:
     args_cli.enable_cameras = True
 
-# automatically enable cameras for depth tasks
-if args_cli.task and "Depth" in args_cli.task:
+# automatically enable cameras for depth/pointcloud tasks
+if args_cli.task and ("Depth" in args_cli.task or "PointCloud" in args_cli.task):
     args_cli.enable_cameras = True
 
 # clear out sys.argv for Hydra
@@ -90,6 +91,10 @@ from rsl_rl.runners import OnPolicyRunner
 # Register custom CNN actor-critic with RSL-RL so OnPolicyRunner can find it
 from crane_testbed.agents.cnn_actor_critic import CNNActorCritic
 rsl_rl.modules.CNNActorCritic = CNNActorCritic
+
+# Register custom PointNet actor-critic with RSL-RL so OnPolicyRunner can find it
+from crane_testbed.agents.pointnet_actor_critic import PointNetActorCritic
+rsl_rl.modules.PointNetActorCritic = PointNetActorCritic
 
 from isaaclab.envs import (
     DirectMARLEnv,
@@ -186,6 +191,20 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         _sys.stderr.write(f"[DEBUG] Creating CraneDepthDirectEnv with cfg observation_space={getattr(env_cfg, 'observation_space', 'N/A')}\n")
         env = CraneDepthDirectEnv(env_cfg, render_mode="rgb_array" if args_cli.video else None)
         _sys.stderr.write(f"[DEBUG] CraneDepthDirectEnv created with {env.num_observations} obs\n")
+    elif "PointCloud" in args_cli.task:
+        _sys.stderr.write(f"[DEBUG] Detected PointCloud task - using CranePointCloudDirectEnv\n")
+        _sys.stderr.flush()
+        import sys
+        from pathlib import Path
+        envs_dir = Path(__file__).parent.parent / "envs"
+        if str(envs_dir) not in sys.path:
+            sys.path.insert(0, str(envs_dir))
+        from crane_pointcloud_direct_env import CranePointCloudDirectEnv
+        _sys.stderr.write(f"[DEBUG] Creating CranePointCloudDirectEnv with cfg observation_space={getattr(env_cfg, 'observation_space', 'N/A')}\n")
+        env = CranePointCloudDirectEnv(env_cfg, render_mode="rgb_array" if args_cli.video else None)
+        env.log_dir = log_dir
+        env.save_debug_pointclouds = args_cli.save_debug_pointclouds
+        _sys.stderr.write(f"[DEBUG] CranePointCloudDirectEnv created with {env.num_observations} obs\n")
     else:
         _sys.stderr.write(f"[DEBUG] Using gym.make() for non-Depth task\n")
         env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)

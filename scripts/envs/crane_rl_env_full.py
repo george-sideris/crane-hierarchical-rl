@@ -653,78 +653,58 @@ def plan_grid_yz_pattern_c(center_y_local: float, rows: int, layers: int, spacin
 
 def plan_grid_yz_random(center_y_local: float, rows: int, layers: int, spacing_y: float, spacing_z: float,
                        base_z: float, cap: int, row_y_jitter: float, layer_y_offset: float, seed: Optional[int]):
-    """Generate truly random log pile patterns that will settle into different profiles.
+    """Generate random log pile with varied spacing, center shift, and jitter.
 
-    Randomizes:
-    - Grid dimensions (row count, layer count)
-    - Spacing between logs (horizontal and vertical)
-    - Center position shifts
-    - Layer offsets for irregular stacking
-    - Per-log jitter for organic pile shapes
+    Spawns a full uniform grid. The actual pile profile (flat, peak, slope)
+    is carved after physics settling via _apply_pile_profile().
     """
     import random
     if seed is not None:
         random.seed(seed)
 
-    # Randomize grid dimensions (keep total ~200 logs)
-    # More rows = wider pile, more layers = taller pile
-    pattern_rows = random.randint(15, 25)  # More conservative range
-    pattern_layers = random.randint(10, 20)  # More conservative range
+    # Randomize grid dimensions
+    pattern_rows = random.randint(15, 25)
+    pattern_layers_max = random.randint(10, 20)
 
-    # Randomize spacing (affects density and pile shape)
-    # Base spacing: y=0.16m, z=0.12m
-    random_spacing_y = spacing_y * random.uniform(0.9, 1.15)  # 14-18cm horizontal
-    random_spacing_z = spacing_z * random.uniform(0.9, 1.15)  # 11-14cm vertical
+    # Randomize spacing
+    random_spacing_y = spacing_y * random.uniform(0.9, 1.15)
+    random_spacing_z = spacing_z * random.uniform(0.9, 1.15)
 
-    # Randomize center shift (left/right bias) - keep within rack bounds
-    center_shift = random.uniform(-0.6, 0.6)  # ±60cm shift (conservative)
+    # Randomize center shift
+    center_shift = random.uniform(-0.6, 0.6)
     shifted_center = center_y_local + center_shift
 
+    # --- Height profile: controls max layers per column ---
     # Randomize layer offsets for irregular stacking
     layer_offs = []
-    for L in range(pattern_layers):
-        # Each layer can have different offset pattern
+    for L in range(pattern_layers_max):
         if random.random() < 0.5:
-            # Alternating offset
             offset = (layer_y_offset if (L % 2 == 1) else 0.0)
         else:
-            # Random offset per layer (smaller range)
-            offset = random.uniform(-0.05, 0.05)  # ±5cm instead of ±10cm
+            offset = random.uniform(-0.05, 0.05)
         layer_offs.append(offset)
 
-    # Center the offsets
-    if pattern_layers > 0:
-        mean_off = sum(layer_offs) / pattern_layers
+    if pattern_layers_max > 0:
+        mean_off = sum(layer_offs) / pattern_layers_max
         layer_offs = [o - mean_off for o in layer_offs]
 
+    # Build positions layer by layer (uniform grid — profile is carved after settling)
     positions, placed = [], 0
     y0 = shifted_center - 0.5 * (pattern_rows - 1) * random_spacing_y
+    base_z_variation = random.uniform(-0.02, 0.02)
 
-    # Randomize base height variation (small to keep logs stable)
-    base_z_variation = random.uniform(-0.02, 0.02)  # ±2cm base height
-
-    # Keep generating layers until we have enough logs
     L = 0
-    max_layers = 100  # Safety limit to prevent infinite loop
-
-    while placed < cap and L < max_layers:
-        zc = base_z + base_z_variation + L * random_spacing_z
-
-        # Get layer offset (cycle through if we exceed original pattern_layers)
+    while placed < cap and L < 100:
         layer_offset = layer_offs[L % len(layer_offs)] if layer_offs else 0.0
-
-        for i in range(pattern_rows):
-            if placed >= cap: break
-
-            yc = y0 + i * random_spacing_y + layer_offset
-
-            # Add moderate jitter for organic pile shapes (stay within rack bounds)
-            yc += (random.random()*2 - 1) * 0.04  # ±4cm y jitter (reduced from 8cm)
-            zc_jittered = zc + (random.random()*2 - 1) * 0.02  # ±2cm z jitter (reduced from 4cm)
-
-            positions.append((yc, zc_jittered))
+        for col in range(pattern_rows):
+            if placed >= cap:
+                break
+            yc = y0 + col * random_spacing_y + layer_offset
+            zc = base_z + base_z_variation + L * random_spacing_z
+            yc += (random.random() * 2 - 1) * 0.04
+            zc += (random.random() * 2 - 1) * 0.02
+            positions.append((yc, zc))
             placed += 1
-
         L += 1
 
     return positions
@@ -1231,7 +1211,7 @@ class CraneDirectEnvFull(DirectRLEnv):
 
         # Track logs knocked out of bounds (for penalty)
         self._logs_knocked_off = torch.zeros(self.num_envs, device=self.device, dtype=torch.int32)
-        self._logs_out_of_bounds_penalty = 0.0  # No penalty - let policy explore freely
+        self._logs_out_of_bounds_penalty = 0.0  # Tracked for metrics but not penalized
         self._initial_settling_complete = False  # Track if initial settling has finished
 
         # Cache drop goals to avoid repeated calculations and debug prints
@@ -2248,14 +2228,13 @@ class CraneDirectEnvFull(DirectRLEnv):
             env_o = self.scene.env_origins[env_id]
             rack_world_x = env_o[0] + self.cfg.rack_x
 
-            # Randomize log count for domain randomization (20-200 logs)
-            if randomize_patterns:
+            # Log count: fixed at default unless DR is on
+            if self.cfg.enable_domain_randomization:
                 import random
                 per_env_target = random.randint(20, 200)
-                self._per_env_log_counts[env_id] = per_env_target
             else:
                 per_env_target = default_per_env_target
-                self._per_env_log_counts[env_id] = per_env_target
+            self._per_env_log_counts[env_id] = per_env_target
 
             # Select pattern function
             if randomize_patterns:
@@ -2290,7 +2269,7 @@ class CraneDirectEnvFull(DirectRLEnv):
                 spacing_z=self.cfg.spacing_z,
                 base_z=self.cfg.base_z,
                 cap=per_env_target,
-                row_y_jitter=self.cfg.row_y_jitter,  # Random function handles its own jitter
+                row_y_jitter=self.cfg.row_y_jitter,
                 layer_y_offset=self.cfg.layer_y_offset,
                 seed=pattern_seed,
             )
@@ -2744,9 +2723,10 @@ class CraneDirectEnvFull(DirectRLEnv):
         depth_mask = (depth >= min_depth) & (depth <= max_depth) & (~torch.isinf(depth))
         filtered_depth = torch.where(depth_mask, depth, torch.tensor(float('inf'), device=self.device))
 
-        # Get camera pose in world frame
+        # Get camera pose – use quat_w_ros because unproject_depth returns points
+        # in the ROS camera convention (Z-forward), not the world convention (X-forward)
         cam_pos = self._camera.data.pos_w[env_idx]  # (3,)
-        cam_quat = self._camera.data.quat_w_world[env_idx]  # (4,) wxyz
+        cam_quat = self._camera.data.quat_w_ros[env_idx]  # (4,) wxyz
 
         # Create point cloud in world frame
         points = create_pointcloud_from_depth(
@@ -2792,8 +2772,6 @@ class CraneDirectEnvFull(DirectRLEnv):
         depth = self._camera.data.output["depth"][env_idx].squeeze(-1)  # (H, W)
         semantic_seg = self._camera.data.output["semantic_segmentation"][env_idx]  # (H, W, C)
 
-        # Debug: print semantic segmentation shape
-        print(f"[DEBUG] Semantic seg shape: {semantic_seg.shape}, dtype: {semantic_seg.dtype}")
 
         # Semantic segmentation returns class IDs - find the "log" class
         # The semantic value depends on how the class was registered
@@ -2805,7 +2783,6 @@ class CraneDirectEnvFull(DirectRLEnv):
 
         # Find unique semantic IDs
         unique_ids = torch.unique(semantic_ids)
-        print(f"[DEBUG] Unique semantic IDs: {unique_ids.tolist()}")
 
         # Create mask for log pixels with depth range filter
         # The "log" class should have a specific ID - we need to find it
@@ -2814,7 +2791,6 @@ class CraneDirectEnvFull(DirectRLEnv):
         log_mask = (semantic_ids > 0) & (~torch.isinf(depth)) & (depth >= min_depth) & (depth <= max_depth)
 
         num_log_pixels = log_mask.sum().item()
-        print(f"[DEBUG] Log pixels found: {num_log_pixels}")
 
         if num_log_pixels == 0:
             return torch.empty((0, 3), device=self.device)
@@ -2822,10 +2798,11 @@ class CraneDirectEnvFull(DirectRLEnv):
         # Apply mask to depth
         masked_depth = torch.where(log_mask, depth, torch.tensor(float('inf'), device=self.device))
 
-        # Get camera pose
+        # Get camera pose – use quat_w_ros because unproject_depth returns points
+        # in the ROS camera convention (Z-forward), not the world convention (X-forward)
         intrinsics = self._camera.data.intrinsic_matrices[env_idx]
         cam_pos = self._camera.data.pos_w[env_idx]
-        cam_quat = self._camera.data.quat_w_world[env_idx]
+        cam_quat = self._camera.data.quat_w_ros[env_idx]
 
         # Create filtered point cloud
         points = create_pointcloud_from_depth(
@@ -2856,17 +2833,12 @@ class CraneDirectEnvFull(DirectRLEnv):
             env_ids = self.crane._ALL_INDICES
         super()._reset_idx(env_ids)
 
-        # Domain randomization: rebuild log origins for resetting environments with random patterns
-        if self.cfg.enable_domain_randomization:
-            if self._log_origins_world.numel() == 0:
-                # First reset: build all environments
-                self._rebuild_log_origins_world(randomize_patterns=True, env_ids=None)
-            else:
-                # Subsequent resets: only rebuild the environments that are resetting
-                self._rebuild_log_origins_world(randomize_patterns=True, env_ids=env_ids)
-        elif self._log_origins_world.numel() == 0:
-            # First reset only: build with fixed patterns
-            self._rebuild_log_origins_world(randomize_patterns=False, env_ids=None)
+        # Always randomize pile arrangement (spacing, jitter, center shift) on reset.
+        # Log count is only randomized when domain randomization is enabled.
+        if self._log_origins_world.numel() == 0:
+            self._rebuild_log_origins_world(randomize_patterns=True, env_ids=None)
+        else:
+            self._rebuild_log_origins_world(randomize_patterns=True, env_ids=env_ids)
 
         # Run settling on first reset to let logs fall and stabilize
         # This prevents target selection before logs have stopped moving
@@ -3270,6 +3242,7 @@ class CraneDirectEnvFull(DirectRLEnv):
         # Compute action space bounds from settled log positions
         # Always compute bounds (needed for OOB checking in both heuristic and RL modes)
         self._compute_action_space_bounds()
+
     def _probe_logs(self, tag: str = "STEP", max_envs: int | None = None, force: bool = False):
             """Simple, readable snapshot of live log poses (world frame)."""
             if (not force) and (not args_cli.debug_logs):

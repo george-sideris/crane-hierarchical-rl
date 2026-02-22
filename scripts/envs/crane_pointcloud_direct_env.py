@@ -1,0 +1,408 @@
+#!/usr/bin/env python3
+"""
+Crane environment with point cloud observations as a proper DirectRLEnv.
+
+This extends CraneDirectEnvFull to return base-frame point cloud observations
+instead of log pose observations, for proper RSL-RL integration with PointNet.
+"""
+
+import torch
+from dataclasses import dataclass
+from typing import Dict, Any
+
+import gymnasium as gym
+from isaaclab.utils import configclass
+
+# Will import CraneDirectEnvFull after app launch
+# from crane_rl_env_full import CraneDirectEnvFull, CraneDirectEnvCfgFull
+
+
+@configclass
+class CranePointCloudEnvCfg:
+    """Additional config for point cloud observations."""
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+    save_debug_pointclouds: bool = False
+
+
+class CranePointCloudDirectEnv(gym.Env):
+    """Crane environment that returns point cloud observations.
+
+    This is a proper DirectRLEnv-compatible class that can be used with RSL-RL.
+    It extends CraneDirectEnvFull's functionality but overrides observation handling.
+
+    Observation: Flattened base-frame point cloud (num_points * 3 dims)
+    Action: Same as base env (4D: x, y, z, yaw or 5D with cos/sin yaw)
+    """
+
+    def __init__(self, cfg, render_mode=None, **kwargs):
+        super().__init__()
+
+        # Import here after Isaac app is launched
+        from crane_rl_env_full import CraneDirectEnvFull, CraneDirectEnvCfgFull
+
+        # Point cloud observation config
+        self.num_points = getattr(cfg, 'num_points', 1024)
+        self.depth_range_min = getattr(cfg, 'depth_range_min', 1.0)
+        self.depth_range_max = getattr(cfg, 'depth_range_max', 10.0)
+        self.save_debug_pointclouds = getattr(cfg, 'save_debug_pointclouds', False)
+        self._obs_dim = self.num_points * 3
+
+        print(f"[PointCloudDirectEnv] Config: {self.num_points} points, "
+              f"depth=[{self.depth_range_min}, {self.depth_range_max}], "
+              f"obs_dim={self._obs_dim}", flush=True)
+
+        # Merge point cloud config into base config
+        base_cfg = CraneDirectEnvCfgFull()
+
+        # Copy all attributes from cfg to base_cfg
+        for attr in dir(cfg):
+            if not attr.startswith('_') and hasattr(base_cfg, attr):
+                try:
+                    setattr(base_cfg, attr, getattr(cfg, attr))
+                except AttributeError:
+                    pass
+
+        # Explicitly set observation_space to point cloud dimensions
+        base_cfg.observation_space = self._obs_dim
+        print(f"[PointCloudDirectEnv] Set base_cfg.observation_space = {base_cfg.observation_space}", flush=True)
+
+        # Ensure camera is enabled
+        base_cfg.enable_camera = True
+
+        # Create base environment
+        self._base_env = CraneDirectEnvFull(base_cfg, render_mode=render_mode, **kwargs)
+
+        # Verify and patch single_observation_space
+        import numpy as np
+        print(f"[PointCloudDirectEnv] Base env single_observation_space before patch: "
+              f"{self._base_env.single_observation_space}", flush=True)
+        pc_obs_space = gym.spaces.Box(low=-float('inf'), high=float('inf'),
+                                       shape=(self._obs_dim,), dtype=np.float32)
+        self._base_env.single_observation_space["policy"] = pc_obs_space
+        print(f"[PointCloudDirectEnv] Base env single_observation_space after patch: "
+              f"{self._base_env.single_observation_space}", flush=True)
+
+        # Monkey-patch base env's _get_observations to return point cloud
+        # This is needed because RslRlVecEnvWrapper calls unwrapped._get_observations()
+        pc_env = self  # Capture reference for closure
+
+        def patched_get_observations():
+            pc_obs = pc_env._get_pointcloud_observation()
+            return {"policy": pc_obs}
+
+        self._base_env._get_observations = patched_get_observations
+        print(f"[PointCloudDirectEnv] Patched base env _get_observations", flush=True)
+
+    def _get_pointcloud_observation(self) -> torch.Tensor:
+        """Get base-frame point cloud observations for all environments.
+
+        For each env:
+        1. Call get_log_pointcloud_world() to get world-frame log point cloud
+        2. Transform world -> base frame (translate + rotate by inverse root pose)
+        3. FPS downsample to num_points
+        4. Flatten to (num_points * 3,)
+
+        Returns:
+            (num_envs, num_points * 3) tensor
+        """
+        # Update camera
+        self._base_env._camera.update(dt=self._base_env.cfg.sim.dt)
+
+        all_obs = []
+        for env_idx in range(self.num_envs):
+            # Get log point cloud in world frame
+            pc_world = self._base_env.get_log_pointcloud_world(
+                env_idx, max_points=5000,
+                depth_range=(self.depth_range_min, self.depth_range_max)
+            )
+
+            if pc_world.shape[0] == 0:
+                all_obs.append(torch.zeros(self._obs_dim, device=self.device))
+                continue
+
+            # Transform to base frame
+            pc_base = self._world_to_base_frame(pc_world, env_idx)
+
+            # FPS to fixed number of points
+            pc_sampled = self._farthest_point_sampling(pc_base, self.num_points)
+
+            # Flatten
+            all_obs.append(pc_sampled.view(-1))
+
+        obs = torch.stack(all_obs, dim=0)  # (num_envs, num_points * 3)
+
+        # Verification logging
+        if not hasattr(self, '_obs_call_count'):
+            self._obs_call_count = 0
+        self._obs_call_count += 1
+
+        # Save debug point clouds + plots on first call (opt-in)
+        if self._obs_call_count == 1 and self.save_debug_pointclouds:
+            import numpy as np, os
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+
+            # Save alongside policy logs if log_dir is set, else fallback
+            base_dir = getattr(self, 'log_dir', None) or '.'
+            debug_dir = os.path.join(base_dir, "debug_pointclouds")
+            os.makedirs(debug_dir, exist_ok=True)
+
+            for i in range(self.num_envs):
+                pc = obs[i].view(self.num_points, 3).cpu().numpy()
+                np.save(os.path.join(debug_dir, f"env{i}_pointcloud.npy"), pc)
+
+                # Render 3D scatter plot
+                fig = plt.figure(figsize=(10, 8))
+                ax = fig.add_subplot(111, projection='3d')
+                ax.scatter(pc[:, 0], pc[:, 1], pc[:, 2], s=1, c=pc[:, 2], cmap='viridis')
+                ax.set_xlabel('X (base frame)')
+                ax.set_ylabel('Y (base frame)')
+                ax.set_zlabel('Z (base frame)')
+                ax.set_title(f'Env {i}: {self.num_points} points (base frame)')
+
+                # Top-down view
+                fig2 = plt.figure(figsize=(10, 8))
+                ax2 = fig2.add_subplot(111)
+                sc = ax2.scatter(pc[:, 0], pc[:, 1], s=1, c=pc[:, 2], cmap='viridis')
+                ax2.set_xlabel('X (base frame)')
+                ax2.set_ylabel('Y (base frame)')
+                ax2.set_title(f'Env {i}: Top-Down View ({self.num_points} points)')
+                ax2.set_aspect('equal')
+                plt.colorbar(sc, label='Z height')
+
+                fig.savefig(os.path.join(debug_dir, f"env{i}_3d.png"), dpi=150, bbox_inches='tight')
+                fig2.savefig(os.path.join(debug_dir, f"env{i}_topdown.png"), dpi=150, bbox_inches='tight')
+                plt.close(fig)
+                plt.close(fig2)
+
+            print(f"[PointCloudDirectEnv] Saved debug point clouds + plots to {debug_dir}/")
+
+        if self._obs_call_count <= 3 or self._obs_call_count % 1000 == 0:
+            import sys
+            sys.stderr.write(f"[VERIFY] _get_pointcloud_observation call #{self._obs_call_count}: "
+                           f"shape={obs.shape}, expected=({self.num_envs}, {self._obs_dim}), "
+                           f"range=[{obs.min():.3f}, {obs.max():.3f}]\n")
+            assert obs.shape[1] == self._obs_dim, \
+                f"WRONG OBS DIM! Got {obs.shape[1]}, expected {self._obs_dim}"
+
+        return obs
+
+    def _world_to_base_frame(self, pc_world: torch.Tensor, env_idx: int) -> torch.Tensor:
+        """Transform world-frame point cloud to crane base frame.
+
+        Matches the transform in train_bc_pointcloud.py:get_log_pointcloud_base_frame.
+
+        Args:
+            pc_world: (N, 3) points in world frame
+            env_idx: Environment index
+
+        Returns:
+            (N, 3) points in base frame
+        """
+        # Get crane base pose in world frame
+        base_pos_w = self._base_env.crane.data.root_pos_w[env_idx]    # (3,)
+        base_quat_w = self._base_env.crane.data.root_quat_w[env_idx]  # (4,) wxyz
+
+        # Translate to base origin
+        pc_translated = pc_world - base_pos_w
+
+        # Rotate by inverse of base orientation
+        w, x, y, z = base_quat_w[0], base_quat_w[1], base_quat_w[2], base_quat_w[3]
+
+        # Rotation matrix from quaternion (wxyz convention)
+        R = torch.stack([
+            torch.stack([1 - 2*y*y - 2*z*z, 2*x*y - 2*w*z, 2*x*z + 2*w*y]),
+            torch.stack([2*x*y + 2*w*z, 1 - 2*x*x - 2*z*z, 2*y*z - 2*w*x]),
+            torch.stack([2*x*z - 2*w*y, 2*y*z + 2*w*x, 1 - 2*x*x - 2*y*y]),
+        ])  # (3, 3)
+
+        # Apply inverse rotation: (R.T @ points.T).T = points @ R
+        pc_base = pc_translated @ R
+
+        return pc_base
+
+    def _farthest_point_sampling(self, points: torch.Tensor, num_samples: int) -> torch.Tensor:
+        """Farthest Point Sampling for point cloud downsampling.
+
+        Matches the FPS in train_bc_pointcloud.py.
+
+        Args:
+            points: (N, 3) point cloud
+            num_samples: number of points to sample
+
+        Returns:
+            (num_samples, 3) sampled points
+        """
+        device = points.device
+        N = points.shape[0]
+
+        if N <= num_samples:
+            # Pad with zeros if not enough points
+            if N == 0:
+                return torch.zeros((num_samples, 3), device=device)
+            padding = torch.zeros((num_samples - N, 3), device=device)
+            return torch.cat([points, padding], dim=0)
+
+        # FPS algorithm
+        sampled_indices = torch.zeros(num_samples, dtype=torch.long, device=device)
+        distances = torch.full((N,), float('inf'), device=device)
+
+        # Start with random point
+        current_idx = torch.randint(0, N, (1,), device=device).item()
+
+        for i in range(num_samples):
+            sampled_indices[i] = current_idx
+            current_point = points[current_idx:current_idx+1]  # (1, 3)
+
+            # Update distances
+            dist_to_current = torch.norm(points - current_point, dim=1)
+            distances = torch.minimum(distances, dist_to_current)
+
+            # Select farthest point
+            current_idx = torch.argmax(distances).item()
+
+        return points[sampled_indices]
+
+    def reset(self, **kwargs):
+        """Reset and return point cloud observations in dict format for RslRlVecEnvWrapper."""
+        import sys
+        obs_dict, info = self._base_env.reset(**kwargs)
+        self._base_env.sim.render()
+
+        # Replace observations with point cloud
+        pc_obs = self._get_pointcloud_observation()
+
+        # Verify we're returning point cloud, not pose observations
+        assert pc_obs.shape[1] == self._obs_dim, \
+            f"[CRITICAL] reset() returning wrong obs! Got {pc_obs.shape[1]}, expected {self._obs_dim} (pointcloud)"
+        sys.stderr.write(f"[PointCloudDirectEnv] reset() returning POINTCLOUD obs: {pc_obs.shape}\n")
+
+        return {"policy": pc_obs}, info
+
+    def step(self, action):
+        """Step and return point cloud observations in dict format for RslRlVecEnvWrapper."""
+        obs_dict, reward, terminated, truncated, info = self._base_env.step(action)
+        self._base_env.sim.render()
+
+        # Replace observations with point cloud
+        pc_obs = self._get_pointcloud_observation()
+
+        return {"policy": pc_obs}, reward, terminated, truncated, info
+
+    def _get_observations(self):
+        """Override to return point cloud observations when wrapper calls this directly."""
+        pc_obs = self._get_pointcloud_observation()
+        return {"policy": pc_obs}
+
+    # ============ Proxy all other attributes to base env ============
+
+    @property
+    def num_envs(self):
+        return self._base_env.num_envs
+
+    @property
+    def device(self):
+        return self._base_env.device
+
+    @property
+    def cfg(self):
+        return self._base_env.cfg
+
+    @property
+    def sim(self):
+        return self._base_env.sim
+
+    @property
+    def num_observations(self):
+        return self._obs_dim
+
+    @property
+    def num_actions(self):
+        return self._base_env.num_actions
+
+    @property
+    def observation_space(self):
+        import gymnasium as gym
+        import numpy as np
+        return gym.spaces.Box(low=-float('inf'), high=float('inf'),
+                              shape=(self._obs_dim,), dtype=np.float32)
+
+    @property
+    def action_space(self):
+        return self._base_env.action_space
+
+    @property
+    def max_episode_length(self):
+        return self._base_env.max_episode_length
+
+    @property
+    def episode_length_buf(self):
+        return self._base_env.episode_length_buf
+
+    @property
+    def unwrapped(self):
+        """Return base env for DirectRLEnv isinstance check (obs space is patched)."""
+        return self._base_env
+
+    def close(self):
+        self._base_env.close()
+
+    def __getattr__(self, name):
+        """Proxy any missing attributes to base env."""
+        return getattr(self._base_env, name)
+
+
+# Test
+if __name__ == "__main__":
+    import argparse
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).parent))
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--num_envs", type=int, default=2)
+    parser.add_argument("--num_steps", type=int, default=5)
+
+    from isaaclab.app import AppLauncher
+    AppLauncher.add_app_launcher_args(parser)
+    args = parser.parse_args()
+
+    app_launcher = AppLauncher(args)
+    simulation_app = app_launcher.app
+
+    from crane_rl_env_full import CraneDirectEnvCfgFull
+
+    # Create config with point cloud settings
+    @configclass
+    class TestPointCloudCfg(CraneDirectEnvCfgFull):
+        num_points: int = 1024
+        depth_range_min: float = 1.0
+        depth_range_max: float = 10.0
+
+    cfg = TestPointCloudCfg()
+    cfg.scene.num_envs = args.num_envs
+
+    print("\n[Test] Creating point cloud environment...")
+    env = CranePointCloudDirectEnv(cfg)
+
+    print(f"  Observation dim: {env.num_observations}")
+    print(f"  Action dim: {env.num_actions}")
+
+    print("\n[Test] Resetting...")
+    obs, info = env.reset()
+    print(f"  Obs shape: {obs['policy'].shape}")
+    print(f"  Obs range: [{obs['policy'].min():.3f}, {obs['policy'].max():.3f}]")
+
+    print(f"\n[Test] Running {args.num_steps} steps...")
+    for i in range(args.num_steps):
+        action = torch.zeros((env.num_envs, env.num_actions), device=env.device)
+        obs, reward, term, trunc, info = env.step(action)
+        print(f"  Step {i}: obs=[{obs['policy'].min():.2f}, {obs['policy'].max():.2f}], reward={reward.mean():.2f}")
+
+    print("\n[Test] Done!")
+    env.close()
+    simulation_app.close()

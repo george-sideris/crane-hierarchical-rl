@@ -8,6 +8,8 @@ from isaaclab.utils import configclass
 
 # Import CNN actor-critic for depth observations
 from crane_testbed.agents.cnn_actor_critic import CNNActorCritic
+# Import PointNet actor-critic for point cloud observations
+from crane_testbed.agents.pointnet_actor_critic import PointNetActorCritic
 
 
 @configclass
@@ -232,6 +234,55 @@ class CranePPORunnerCfg_Depth(RslRlOnPolicyRunnerCfg):
         clip_param=0.2,
         entropy_coef=0.01,
         num_learning_epochs=5,  # Same as 32-pose training
+        num_mini_batches=4,
+        learning_rate=3e-4,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+    )
+
+
+@configclass
+class CranePPORunnerCfg_PointCloud(RslRlOnPolicyRunnerCfg):
+    """PPO configuration for crane RL with point cloud observations.
+
+    Uses PointNet actor-critic instead of MLP.
+
+    Environment:
+    - Observation: 1024-point cloud in base frame (1024 * 3 = 3072 dims)
+    - Action: 4D [x, y, z, yaw]
+    """
+
+    num_steps_per_env = 4
+    max_iterations = 5000
+    save_interval = 10
+    experiment_name = "crane_pointcloud"
+    empirical_normalization = False  # Point cloud coords are already meaningful
+
+    # Logging
+    logger = "tensorboard"
+    neptune_project = None
+    wandb_project = None
+    resume = False
+    load_run = None
+    load_checkpoint = None
+
+    policy = RslRlPpoActorCriticCfg(
+        class_name="rsl_rl.modules.PointNetActorCritic",  # Registered in train.py
+        init_noise_std=1.0,
+        actor_hidden_dims=[128, 64],
+        critic_hidden_dims=[128, 64],
+        activation="elu",
+    )
+
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.01,
+        num_learning_epochs=5,
         num_mini_batches=4,
         learning_rate=3e-4,
         schedule="adaptive",

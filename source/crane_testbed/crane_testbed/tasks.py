@@ -38,6 +38,9 @@ from crane_rl_env_full import CraneDirectEnvFull, CraneDirectEnvCfgFull
 import crane_depth_direct_env
 from crane_depth_direct_env import CraneDepthDirectEnv
 
+import crane_pointcloud_direct_env
+from crane_pointcloud_direct_env import CranePointCloudDirectEnv
+
 
 ##
 # Crane Hierarchical RL Task - Configure for hierarchical mode
@@ -925,5 +928,111 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": CraneDepthEnvCfg_CosSin_Raw,
         "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Depth",
+    },
+)
+
+##
+# Point cloud observation environment: PointNet-based visual RL
+##
+
+@configclass
+class CranePointCloudEnvCfg(CraneDirectEnvCfgFull):
+    """Crane environment with point cloud observations (4D action, no DR)."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 4
+    # Point cloud observation: 1024 points × 3 coords = 3072
+    observation_space = 3072
+    enable_domain_randomization: bool = False
+    # Point cloud settings
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+
+
+@configclass
+class CranePointCloudEnvCfg_DR(CraneDirectEnvCfgFull):
+    """Crane point cloud environment with domain randomization (4D action)."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 4
+    observation_space = 3072
+    enable_domain_randomization: bool = True
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+
+
+@configclass
+class CranePointCloudEnvCfg_CosSin(CraneDirectEnvCfgFull):
+    """Crane point cloud environment with 5D CosSin action space (no DR)."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5  # [x, y, z, cos(2*yaw), sin(2*yaw)]
+    observation_space = 3072
+    enable_domain_randomization: bool = False
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+
+
+@configclass
+class CranePointCloudEnvCfg_CosSin_DR(CraneDirectEnvCfgFull):
+    """Crane point cloud environment with 5D CosSin action + domain randomization."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5  # [x, y, z, cos(2*yaw), sin(2*yaw)]
+    observation_space = 3072
+    enable_domain_randomization: bool = True
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+
+
+# Point cloud environment (4D action, no DR)
+gym.register(
+    id="Isaac-Crane-PointCloud-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+# Point cloud environment with DR (4D action)
+gym.register(
+    id="Isaac-Crane-PointCloud-DR-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_DR,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+# Point cloud environment with 5D CosSin action (no DR)
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+# Point cloud environment with 5D CosSin action + DR
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-DR-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_DR,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
     },
 )

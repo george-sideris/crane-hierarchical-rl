@@ -32,6 +32,8 @@ parser.add_argument("--domain_randomization", action="store_true", help="Enable 
 parser.add_argument("--headless", action="store_true", help="Run without visualization")
 parser.add_argument("--save_metrics", action="store_true", help="Save metrics to JSON")
 parser.add_argument("--output_dir", type=str, default=None, help="Output directory for metrics")
+parser.add_argument("--visualize", action="store_true", help="Save per-step visualization PNGs")
+parser.add_argument("--viz_dir", type=str, default=None, help="Directory for viz PNGs (default: checkpoint dir / viz)")
 args_cli, _ = parser.parse_known_args()
 
 # IsaacLab imports
@@ -175,17 +177,139 @@ def load_bc_policy(checkpoint_path: str, device: str) -> tuple:
     return policy, num_points, metadata
 
 
+def decode_action(raw_action, min_bounds, max_bounds):
+    """Decode raw network output to (x, y, z, yaw) in base frame.
+
+    Mirrors the env's _apply_action decode logic exactly:
+      xyz: min + (tanh(a) + 1) / 2 * (max - min)
+      yaw: 5D -> atan2(tanh(a4), tanh(a3)) / 2
+           4D -> tanh(a3) * pi/2
+    """
+    a = raw_action.cpu().numpy()
+    x = float(min_bounds[0] + (np.tanh(a[0]) + 1) / 2 * (max_bounds[0] - min_bounds[0]))
+    y = float(min_bounds[1] + (np.tanh(a[1]) + 1) / 2 * (max_bounds[1] - min_bounds[1]))
+    z = float(min_bounds[2] + (np.tanh(a[2]) + 1) / 2 * (max_bounds[2] - min_bounds[2]))
+    if len(a) == 5:
+        yaw = float(np.arctan2(np.tanh(a[4]), np.tanh(a[3])) / 2.0)
+    else:
+        yaw = float(np.tanh(a[3]) * (np.pi / 2))
+    return x, y, z, yaw
+
+
+def save_step_viz(points_np, x, y, z, yaw, step_idx, viz_dir,
+                  logs_grasped=None, alignment=None,
+                  bounds_min=None, bounds_max=None):
+    """Save a 2-panel visualization PNG for one grasp step.
+
+    Left:  top-down view (X vs Y) — horizontal placement + yaw arrow
+    Right: side view (Y vs Z) — height targeting
+    Both overlay: point cloud scatter + red star at predicted target.
+    Optionally draws dashed action-bounds rectangle on each panel.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
+
+    fig, (ax_top, ax_side) = plt.subplots(1, 2, figsize=(14, 6))
+
+    # Filter out zero-padding points for cleaner viz
+    mask = np.any(points_np != 0.0, axis=1)
+    pts = points_np[mask] if mask.any() else points_np
+
+    # Compute point cloud bounding box for reference
+    pc_min = pts.min(axis=0) if len(pts) > 0 else np.zeros(3)
+    pc_max = pts.max(axis=0) if len(pts) > 0 else np.zeros(3)
+
+    # -- Left panel: top-down (X vs Y) colored by height --
+    if len(pts) > 0:
+        sc = ax_top.scatter(pts[:, 0], pts[:, 1], c=pts[:, 2], cmap='viridis',
+                            s=1, alpha=0.5, label='Point cloud')
+        plt.colorbar(sc, ax=ax_top, label='Z (height)')
+    ax_top.plot(x, y, 'r*', markersize=15, markeredgecolor='k', markeredgewidth=0.5,
+                label=f'Target ({x:.2f}, {y:.2f})')
+    # Yaw direction arrow
+    arrow_len = 0.3
+    ax_top.annotate('', xy=(x + arrow_len * np.cos(yaw), y + arrow_len * np.sin(yaw)),
+                    xytext=(x, y),
+                    arrowprops=dict(arrowstyle='->', color='red', lw=2))
+    # Draw point cloud bounding box (X-Y)
+    if len(pts) > 0:
+        ax_top.add_patch(Rectangle(
+            (pc_min[0], pc_min[1]), pc_max[0] - pc_min[0], pc_max[1] - pc_min[1],
+            linewidth=1, edgecolor='lime', facecolor='none',
+            linestyle='-', label='PC bbox'))
+    # Draw action bounds rectangle (X-Y)
+    if bounds_min is not None and bounds_max is not None:
+        bw = bounds_max[0] - bounds_min[0]
+        bh = bounds_max[1] - bounds_min[1]
+        ax_top.add_patch(Rectangle(
+            (bounds_min[0], bounds_min[1]), bw, bh,
+            linewidth=1.5, edgecolor='orange', facecolor='none',
+            linestyle='--', label='Action bounds'))
+    ax_top.set_xlabel('X (base frame)')
+    ax_top.set_ylabel('Y (base frame)')
+    ax_top.set_title('Top-down (X vs Y)')
+    ax_top.set_aspect('equal')
+    ax_top.legend(loc='upper right', fontsize=8)
+    ax_top.grid(True, alpha=0.3)
+
+    # -- Right panel: side view (Y vs Z) --
+    if len(pts) > 0:
+        ax_side.scatter(pts[:, 1], pts[:, 2], c=pts[:, 0], cmap='viridis',
+                        s=1, alpha=0.5, label='Point cloud')
+    ax_side.plot(y, z, 'r*', markersize=15, markeredgecolor='k', markeredgewidth=0.5,
+                 label=f'Target (z={z:.2f})')
+    # Draw point cloud bounding box (Y-Z)
+    if len(pts) > 0:
+        ax_side.add_patch(Rectangle(
+            (pc_min[1], pc_min[2]), pc_max[1] - pc_min[1], pc_max[2] - pc_min[2],
+            linewidth=1, edgecolor='lime', facecolor='none',
+            linestyle='-', label='PC bbox'))
+    # Draw action bounds rectangle (Y-Z)
+    if bounds_min is not None and bounds_max is not None:
+        bw = bounds_max[1] - bounds_min[1]
+        bh = bounds_max[2] - bounds_min[2]
+        ax_side.add_patch(Rectangle(
+            (bounds_min[1], bounds_min[2]), bw, bh,
+            linewidth=1.5, edgecolor='orange', facecolor='none',
+            linestyle='--', label='Action bounds'))
+    ax_side.set_xlabel('Y (base frame)')
+    ax_side.set_ylabel('Z (base frame)')
+    ax_side.set_title('Side view (Y vs Z)')
+    ax_side.set_aspect('equal')
+    ax_side.legend(loc='upper right', fontsize=8)
+    ax_side.grid(True, alpha=0.3)
+
+    # Suptitle with step info
+    title = f'Step {step_idx} | Target: ({x:.3f}, {y:.3f}, {z:.3f}) yaw={np.degrees(yaw):.1f}°'
+    if logs_grasped is not None:
+        result = 'SUCCESS' if logs_grasped > 0 else 'MISS'
+        title += f' | {result} ({logs_grasped} logs)'
+    if alignment is not None and logs_grasped and logs_grasped > 0:
+        title += f' | align={alignment:.3f}'
+    fig.suptitle(title, fontsize=11)
+
+    fig.savefig(os.path.join(viz_dir, f"step_{step_idx:04d}.png"),
+                dpi=100, bbox_inches='tight')
+    plt.close(fig)
+
+
 def main():
     # Load policy
     policy, num_points, metadata = load_bc_policy(args_cli.checkpoint, args_cli.device)
 
-    print(f"[Play] Num points: {num_points}")
+    # Detect action dim from checkpoint
+    checkpoint = torch.load(args_cli.checkpoint, map_location=args_cli.device)
+    action_dim = checkpoint.get('action_dim', 4)
+    print(f"[Play] Num points: {num_points}, Action dim: {action_dim}")
 
     # Create environment
     cfg = CraneDirectEnvCfgFull()
     cfg.scene.num_envs = args_cli.num_envs
     cfg.sim.device = args_cli.device
     cfg.use_hierarchical_rl = True
+    cfg.action_space = action_dim  # Match policy output (4D or 5D)
     cfg.enable_camera = True
     cfg.camera_cfg.data_types = ["depth", "semantic_segmentation"]
     cfg.enable_domain_randomization = args_cli.domain_randomization
@@ -196,10 +320,35 @@ def main():
     print(f"[Play] Environment created with {env.num_envs} envs")
     print(f"[Play] Domain randomization: {args_cli.domain_randomization}")
 
+    # Set up visualization directory
+    if args_cli.visualize:
+        viz_dir = args_cli.viz_dir or os.path.join(os.path.dirname(args_cli.checkpoint), "viz")
+        os.makedirs(viz_dir, exist_ok=True)
+        print(f"[Play] Saving visualizations to: {viz_dir}")
+
     # Reset and initialize camera
     env.reset()
     env.sim.render()
     env._camera.update(dt=env.cfg.sim.dt)
+
+    # Ensure action bounds are computed before visualization loop
+    # (bounds are lazily computed inside _apply_action, so they're zero before the first step)
+    env._compute_action_space_bounds()
+
+    # Diagnostic: verify bounds were actually computed
+    if args_cli.visualize:
+        root_pos = env.crane.data.root_pos_w[0].cpu().numpy()
+        root_quat = env.crane.data.root_quat_w[0].cpu().numpy()
+        b_min = env._action_bounds_min[0].cpu().numpy()
+        b_max = env._action_bounds_max[0].cpu().numpy()
+        print(f"[Viz-Init] Crane root pos_w: {root_pos}")
+        print(f"[Viz-Init] Crane root quat_w: {root_quat}")
+        print(f"[Viz-Init] Computed bounds min: {b_min}")
+        print(f"[Viz-Init] Computed bounds max: {b_max}")
+        print(f"[Viz-Init] Bounds range: X={b_max[0]-b_min[0]:.2f}, "
+              f"Y={b_max[1]-b_min[1]:.2f}, Z={b_max[2]-b_min[2]:.2f}")
+        if np.allclose(b_min, 0) and np.allclose(b_max, 0):
+            print("[Viz-Init] WARNING: bounds are still zero!")
 
     # Tracking
     episodes_done = 0
@@ -250,6 +399,40 @@ def main():
                 print(f"[Debug] Grasp {total_grasps}: points={obs.shape}, "
                       f"action=[{actions.min():.2f},{actions.max():.2f}]")
 
+            # Pre-step: decode actions for visualization (before env.step modifies state)
+            if args_cli.visualize:
+                viz_decoded = []
+                viz_bounds = []
+                for i in range(env.num_envs):
+                    min_b = env._action_bounds_min[i].cpu().numpy()
+                    max_b = env._action_bounds_max[i].cpu().numpy()
+                    x, y, z, yaw = decode_action(actions[i], min_b, max_b)
+                    pts = obs[i].cpu().numpy()
+                    if obs[i].dim() == 1:
+                        pts = pts.reshape(-1, 3)
+                    viz_decoded.append((pts, x, y, z, yaw))
+                    viz_bounds.append((min_b.copy(), max_b.copy()))
+
+                    # One-time diagnostic
+                    if total_grasps == 0 and i == 0:
+                        mask = np.any(pts != 0.0, axis=1)
+                        diag_pts = pts[mask] if mask.any() else pts
+                        pc_min = diag_pts.min(axis=0)
+                        pc_max = diag_pts.max(axis=0)
+                        print(f"[Viz] Action bounds min: {min_b}")
+                        print(f"[Viz] Action bounds max: {max_b}")
+                        print(f"[Viz] Point cloud  min: {pc_min}")
+                        print(f"[Viz] Point cloud  max: {pc_max}")
+                        print(f"[Viz] Decoded target: ({x:.3f}, {y:.3f}, {z:.3f})")
+                        overlap_x = min_b[0] <= pc_max[0] and max_b[0] >= pc_min[0]
+                        overlap_y = min_b[1] <= pc_max[1] and max_b[1] >= pc_min[1]
+                        overlap_z = min_b[2] <= pc_max[2] and max_b[2] >= pc_min[2]
+                        star_in_pc = (pc_min[0] <= x <= pc_max[0] and
+                                      pc_min[1] <= y <= pc_max[1] and
+                                      pc_min[2] <= z <= pc_max[2])
+                        print(f"[Viz] Bounds/PC overlap: X={overlap_x} Y={overlap_y} Z={overlap_z}")
+                        print(f"[Viz] Star inside point cloud bbox: {star_in_pc}")
+
             # Step environment
             _, rew, terminated, truncated, _ = env.step(actions)
             env.sim.render()
@@ -262,6 +445,17 @@ def main():
                 logs_grasped = int(env._prev_logs_grasped[i].item())
                 alignment = env._prev_grasp_alignment[i].item() if hasattr(env, '_prev_grasp_alignment') else 0.0
                 stability = env._prev_grasp_stability[i].item() if hasattr(env, '_prev_grasp_stability') else 1.0
+
+                # Save visualization with grasp result
+                if args_cli.visualize:
+                    pts, vx, vy, vz, vyaw = viz_decoded[i]
+                    vmin_b, vmax_b = viz_bounds[i]
+                    save_step_viz(pts, vx, vy, vz, vyaw,
+                                  total_grasps, viz_dir,
+                                  logs_grasped=logs_grasped,
+                                  alignment=alignment,
+                                  bounds_min=vmin_b, bounds_max=vmax_b)
+
                 total_grasps += 1
                 total_logs_grasped += logs_grasped
                 episode_logs_cleared[i] += logs_grasped

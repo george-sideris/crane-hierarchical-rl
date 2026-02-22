@@ -48,8 +48,8 @@ args_cli, hydra_args = parser.parse_known_args()
 if args_cli.video:
     args_cli.enable_cameras = True
 
-# automatically enable cameras for depth tasks
-if args_cli.task and "Depth" in args_cli.task:
+# automatically enable cameras for depth/pointcloud tasks
+if args_cli.task and ("Depth" in args_cli.task or "PointCloud" in args_cli.task):
     args_cli.enable_cameras = True
 
 # clear out sys.argv for Hydra
@@ -74,6 +74,10 @@ from rsl_rl.runners import OnPolicyRunner
 # Register custom CNN actor-critic with RSL-RL so OnPolicyRunner can find it
 from crane_testbed.agents.cnn_actor_critic import CNNActorCritic
 rsl_rl.modules.CNNActorCritic = CNNActorCritic
+
+# Register custom PointNet actor-critic with RSL-RL so OnPolicyRunner can find it
+from crane_testbed.agents.pointnet_actor_critic import PointNetActorCritic
+rsl_rl.modules.PointNetActorCritic = PointNetActorCritic
 
 from isaaclab.envs import (
     DirectMARLEnv,
@@ -138,6 +142,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         from crane_depth_direct_env import CraneDepthDirectEnv
         print(f"[INFO] Creating CraneDepthDirectEnv for depth-based inference")
         env = CraneDepthDirectEnv(env_cfg, render_mode="rgb_array" if args_cli.video else None)
+    elif "PointCloud" in args_cli.task:
+        # Special handling for point cloud tasks
+        import sys
+        from pathlib import Path
+        envs_dir = Path(__file__).parent.parent / "envs"
+        if str(envs_dir) not in sys.path:
+            sys.path.insert(0, str(envs_dir))
+        from crane_pointcloud_direct_env import CranePointCloudDirectEnv
+        print(f"[INFO] Creating CranePointCloudDirectEnv for pointcloud-based inference")
+        env = CranePointCloudDirectEnv(env_cfg, render_mode="rgb_array" if args_cli.video else None)
     else:
         env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
