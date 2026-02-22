@@ -26,10 +26,11 @@ class CNNActorCritic(nn.Module):
             return int(obs_spec)
         if isinstance(obs_spec, (list, tuple)):
             return int(sum(obs_spec))
+        if isinstance(obs_spec, dict):
+            val = obs_spec.get('policy', next(iter(obs_spec.values())))
+            return CNNActorCritic._extract_obs_dim(val)
         if hasattr(obs_spec, 'shape'):
             return int(obs_spec.shape[-1])
-        if isinstance(obs_spec, dict) and 'policy' in obs_spec:
-            return int(obs_spec['policy'])
         return int(obs_spec)
 
     def __init__(
