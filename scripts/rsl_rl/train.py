@@ -104,7 +104,41 @@ from isaaclab.envs import (
     multi_agent_to_single_agent,
 )
 from isaaclab.utils.dict import print_dict
-from isaaclab.utils.io import dump_pickle, dump_yaml
+
+# Compatibility: dump_pickle/dump_yaml may be missing or broken in some Isaac Lab versions
+import os as _os, pickle as _pickle, yaml as _yaml
+try:
+    from isaaclab.utils.io import dump_yaml as _isaaclab_dump_yaml
+except Exception:
+    _isaaclab_dump_yaml = None
+
+try:
+    from isaaclab.utils.dict import class_to_dict
+except Exception:
+    from isaaclab.utils import class_to_dict
+
+
+def dump_pickle(filename, data):
+    _os.makedirs(_os.path.dirname(filename), exist_ok=True)
+    with open(filename, "wb") as f:
+        _pickle.dump(data, f)
+
+
+def dump_yaml(filename, data, sort_keys=False):
+    _os.makedirs(_os.path.dirname(filename), exist_ok=True)
+    if _isaaclab_dump_yaml is not None:
+        try:
+            return _isaaclab_dump_yaml(filename, data, sort_keys=sort_keys)
+        except Exception:
+            pass
+    try:
+        if not isinstance(data, dict):
+            data = class_to_dict(data)
+    except Exception:
+        if hasattr(data, "__dict__"):
+            data = data.__dict__
+    with open(filename, "w") as f:
+        _yaml.dump(data, f, default_flow_style=False, sort_keys=sort_keys)
 
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
 

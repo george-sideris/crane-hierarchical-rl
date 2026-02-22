@@ -88,6 +88,26 @@ class PointNetActorCritic(nn.Module):
     ):
         super().__init__()
 
+        # Newer RSL-RL versions may pass tensordict instead of int
+        if not isinstance(num_actor_obs, (int, float)):
+            # Extract integer obs dim from tensordict/dict
+            if hasattr(num_actor_obs, 'shape'):
+                num_actor_obs = num_actor_obs.shape[-1]
+            elif isinstance(num_actor_obs, dict) and 'policy' in num_actor_obs:
+                num_actor_obs = num_actor_obs['policy']
+            else:
+                num_actor_obs = int(num_actor_obs)
+        num_actor_obs = int(num_actor_obs)
+
+        if not isinstance(num_critic_obs, (int, float)):
+            if hasattr(num_critic_obs, 'shape'):
+                num_critic_obs = num_critic_obs.shape[-1]
+            elif isinstance(num_critic_obs, dict) and 'policy' in num_critic_obs:
+                num_critic_obs = num_critic_obs['policy']
+            else:
+                num_critic_obs = int(num_critic_obs)
+        num_critic_obs = int(num_critic_obs)
+
         # Auto-detect num_points from observation dimension
         if num_points is None:
             if num_actor_obs % 3 == 0:
