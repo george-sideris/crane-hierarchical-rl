@@ -19,6 +19,19 @@ class CNNActorCritic(nn.Module):
         Depth (1, 128, 128) -> CNN Encoder -> Latent (256) -> Actor/Critic MLP
     """
 
+    @staticmethod
+    def _extract_obs_dim(obs_spec) -> int:
+        """Extract integer observation dimension from various RSL-RL formats."""
+        if isinstance(obs_spec, (int, float)):
+            return int(obs_spec)
+        if isinstance(obs_spec, (list, tuple)):
+            return int(sum(obs_spec))
+        if hasattr(obs_spec, 'shape'):
+            return int(obs_spec.shape[-1])
+        if isinstance(obs_spec, dict) and 'policy' in obs_spec:
+            return int(obs_spec['policy'])
+        return int(obs_spec)
+
     def __init__(
         self,
         num_actor_obs: int,
@@ -34,6 +47,10 @@ class CNNActorCritic(nn.Module):
         **kwargs,
     ):
         super().__init__()
+
+        # Newer RSL-RL versions may pass tensordict/dict/list instead of int
+        num_actor_obs = self._extract_obs_dim(num_actor_obs)
+        num_critic_obs = self._extract_obs_dim(num_critic_obs)
 
         # Auto-detect image dimensions from num_actor_obs if not specified
         if img_height is None or img_width is None:
