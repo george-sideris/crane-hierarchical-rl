@@ -1228,3 +1228,64 @@ gym.register(
         "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
     },
 )
+
+
+##
+# Point Cloud v2: LayerNorm + Asymmetric Actor-Critic
+# Uses PointNet (LayerNorm) actor with state-based MLP critic
+##
+
+@configclass
+class CranePointCloudEnvCfg_v2(CraneDirectEnvCfgFull):
+    """PCD v2: LayerNorm + asymmetric critic, 5D CosSin action, no DR."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5  # [x, y, z, cos(2*yaw), sin(2*yaw)]
+    observation_space = 3072  # 1024 points × 3 coords (actor)
+    enable_domain_randomization: bool = False
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+    asymmetric_critic: bool = True  # Critic sees 128D state vector
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = False
+
+
+@configclass
+class CranePointCloudEnvCfg_v2_DR(CraneDirectEnvCfgFull):
+    """PCD v2: LayerNorm + asymmetric critic, 5D CosSin action, with DR."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5  # [x, y, z, cos(2*yaw), sin(2*yaw)]
+    observation_space = 3072
+    enable_domain_randomization: bool = True
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+    asymmetric_critic: bool = True
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = False
+
+
+# v2 registrations (LayerNorm + asymmetric critic, always 5D CosSin)
+gym.register(
+    id="Isaac-Crane-PointCloud-v2",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_v2,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud_v2",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-DR-v2",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_v2_DR,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud_v2",
+    },
+)

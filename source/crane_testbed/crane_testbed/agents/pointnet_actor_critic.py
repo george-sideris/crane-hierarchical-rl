@@ -2,6 +2,10 @@
 PointNet Actor-Critic for point cloud observations.
 
 Compatible with RSL-RL's ActorCritic interface.
+Supports:
+  - BatchNorm (default for compat) or LayerNorm via norm_type parameter
+  - Asymmetric actor-critic: PointNet actor with state-based MLP critic
+  - Separate encoder learning rate via get_param_groups()
 """
 
 import torch
@@ -13,28 +17,36 @@ class PointNetEncoder(nn.Module):
     """PointNet encoder for point cloud feature extraction.
 
     Architecture: SharedMLP per point -> MaxPool -> FC projection
+
+    Args:
+        input_dim: Per-point feature dimension (default 3 for XYZ).
+        output_dim: Output latent dimension.
+        norm_type: "batchnorm" (default for compat) or "layernorm" (recommended for RL).
     """
 
-    def __init__(self, input_dim: int = 3, output_dim: int = 256):
+    def __init__(self, input_dim: int = 3, output_dim: int = 256, norm_type: str = "batchnorm"):
         super().__init__()
+
+        self.norm_type = norm_type
+        norm_cls = nn.LayerNorm if norm_type == "layernorm" else nn.BatchNorm1d
 
         # Shared MLP (applied per-point)
         self.mlp1 = nn.Sequential(
             nn.Linear(input_dim, 64),
-            nn.BatchNorm1d(64),
+            norm_cls(64),
             nn.ELU(),
             nn.Linear(64, 128),
-            nn.BatchNorm1d(128),
+            norm_cls(128),
             nn.ELU(),
             nn.Linear(128, 256),
-            nn.BatchNorm1d(256),
+            norm_cls(256),
             nn.ELU(),
         )
 
         # After max-pooling, project to output dimension
         self.fc = nn.Sequential(
             nn.Linear(256, output_dim),
-            nn.BatchNorm1d(output_dim),
+            norm_cls(output_dim),
             nn.ELU(),
         )
 
@@ -50,7 +62,8 @@ class PointNetEncoder(nn.Module):
         """
         batch_size, num_points, _ = x.shape
 
-        # Reshape for batch norm: (batch * points, features)
+        # Reshape to (batch * points, features) for per-point MLP
+        # Required for BatchNorm1d; also works with LayerNorm
         x = x.view(batch_size * num_points, -1)
         x = self.mlp1(x)
 
@@ -70,7 +83,11 @@ class PointNetActorCritic(nn.Module):
     """Actor-Critic with PointNet encoder for point cloud observations.
 
     Architecture:
-        Points (N, 3) -> PointNet Encoder -> Latent (256) -> Actor/Critic MLP
+        Actor: Points (N, 3) -> PointNet Encoder -> Latent -> MLP -> Actions
+        Critic (symmetric):  Points (N, 3) -> shared PointNet -> Latent -> MLP -> Value
+        Critic (asymmetric): State (D,) -> MLP Encoder -> Latent -> MLP -> Value
+
+    Asymmetric mode activates when num_critic_obs != num_actor_obs.
     """
 
     @staticmethod
@@ -108,11 +125,14 @@ class PointNetActorCritic(nn.Module):
         critic_hidden_dims: list = [128, 64],
         activation: str = "elu",
         init_noise_std: float = 1.0,
+        norm_type: str = "batchnorm",
+        encoder_lr_scale: float = 0.2,
         **kwargs,
     ):
         super().__init__()
 
         self.num_points = num_points
+        self.encoder_lr_scale = encoder_lr_scale
 
         # Activation
         if activation == "elu":
@@ -124,8 +144,8 @@ class PointNetActorCritic(nn.Module):
         else:
             act_fn = nn.ELU
 
-        # PointNet encoder (shared between actor and critic)
-        self.encoder = PointNetEncoder(input_dim=3, output_dim=encoder_features)
+        # PointNet encoder for actor (and critic if symmetric)
+        self.encoder = PointNetEncoder(input_dim=3, output_dim=encoder_features, norm_type=norm_type)
 
         # Actor MLP
         actor_layers = []
@@ -136,9 +156,23 @@ class PointNetActorCritic(nn.Module):
         actor_layers.append(nn.Linear(in_dim, num_actions))
         self.actor = nn.Sequential(*actor_layers)
 
+        # Asymmetric critic: state-based MLP when critic obs differs from actor obs
+        self._asymmetric = (num_critic_obs != num_actor_obs) and (num_critic_obs > 0)
+        if self._asymmetric:
+            # Critic encoder: state vector -> latent
+            self.critic_encoder = nn.Sequential(
+                nn.Linear(num_critic_obs, 256),
+                act_fn(),
+                nn.Linear(256, encoder_features),
+                act_fn(),
+            )
+            critic_in_dim = encoder_features
+        else:
+            critic_in_dim = encoder_features
+
         # Critic MLP
         critic_layers = []
-        in_dim = encoder_features
+        in_dim = critic_in_dim
         for hidden_dim in critic_hidden_dims:
             critic_layers.extend([nn.Linear(in_dim, hidden_dim), act_fn()])
             in_dim = hidden_dim
@@ -155,7 +189,9 @@ class PointNetActorCritic(nn.Module):
         # RSL-RL compatibility
         self.is_recurrent = False
 
+        mode = "asymmetric (state-based critic)" if self._asymmetric else "symmetric"
         print(f"[PointNetActorCritic] Created: {num_points} points -> {encoder_features} latent -> {num_actions} actions")
+        print(f"[PointNetActorCritic] norm={norm_type}, mode={mode}, encoder_lr_scale={encoder_lr_scale}")
 
     def _encode(self, obs) -> torch.Tensor:
         """Encode observation through PointNet."""
@@ -212,9 +248,34 @@ class PointNetActorCritic(nn.Module):
         return self.actor(latent)
 
     def evaluate(self, critic_observations, **kwargs) -> torch.Tensor:
-        """Get value estimate."""
-        latent = self._encode(critic_observations)
+        """Get value estimate.
+
+        In asymmetric mode, critic_observations is the state vector (not point cloud).
+        In symmetric mode, critic_observations is the same point cloud as the actor.
+        """
+        if self._asymmetric:
+            obs = self._to_tensor(critic_observations)
+            latent = self.critic_encoder(obs)
+        else:
+            latent = self._encode(critic_observations)
         return self.critic(latent)
+
+    def get_param_groups(self, base_lr: float) -> list:
+        """Return parameter groups with lower encoder learning rate.
+
+        Usage: pass to optimizer instead of model.parameters()
+            optimizer = Adam(model.get_param_groups(lr=3e-4))
+        """
+        encoder_lr = base_lr * self.encoder_lr_scale
+        groups = [
+            {"params": list(self.encoder.parameters()), "lr": encoder_lr},
+            {"params": list(self.actor.parameters()), "lr": base_lr},
+            {"params": list(self.critic.parameters()), "lr": base_lr},
+            {"params": [self.std], "lr": base_lr},
+        ]
+        if self._asymmetric:
+            groups.append({"params": list(self.critic_encoder.parameters()), "lr": base_lr})
+        return groups
 
 
 # Factory function for RSL-RL

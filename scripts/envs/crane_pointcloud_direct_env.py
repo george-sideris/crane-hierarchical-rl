@@ -24,6 +24,8 @@ class CranePointCloudEnvCfg:
     depth_range_min: float = 1.0
     depth_range_max: float = 10.0
     save_debug_pointclouds: bool = False
+    asymmetric_critic: bool = False
+    """If True, also return 128D state vector as 'critic' obs for asymmetric actor-critic."""
 
 
 class CranePointCloudDirectEnv(gym.Env):
@@ -47,11 +49,13 @@ class CranePointCloudDirectEnv(gym.Env):
         self.depth_range_min = getattr(cfg, 'depth_range_min', 1.0)
         self.depth_range_max = getattr(cfg, 'depth_range_max', 10.0)
         self.save_debug_pointclouds = getattr(cfg, 'save_debug_pointclouds', False)
+        self.asymmetric_critic = getattr(cfg, 'asymmetric_critic', False)
         self._obs_dim = self.num_points * 3
+        self._critic_obs_dim = 128  # 32 logs × 4 (x, y, z, yaw) from _build_target_selection_obs
 
         print(f"[PointCloudDirectEnv] Config: {self.num_points} points, "
               f"depth=[{self.depth_range_min}, {self.depth_range_max}], "
-              f"obs_dim={self._obs_dim}", flush=True)
+              f"obs_dim={self._obs_dim}, asymmetric_critic={self.asymmetric_critic}", flush=True)
 
         # Merge point cloud config into base config
         base_cfg = CraneDirectEnvCfgFull()
@@ -81,19 +85,35 @@ class CranePointCloudDirectEnv(gym.Env):
         pc_obs_space = gym.spaces.Box(low=-float('inf'), high=float('inf'),
                                        shape=(self._obs_dim,), dtype=np.float32)
         self._base_env.single_observation_space["policy"] = pc_obs_space
+        if self.asymmetric_critic:
+            critic_obs_space = gym.spaces.Box(low=-1.0, high=1.0,
+                                               shape=(self._critic_obs_dim,), dtype=np.float32)
+            self._base_env.single_observation_space["critic"] = critic_obs_space
+            # RslRlVecEnvWrapper requires num_states attr to detect privileged obs
+            self._base_env.num_states = self._critic_obs_dim
         print(f"[PointCloudDirectEnv] Base env single_observation_space after patch: "
               f"{self._base_env.single_observation_space}", flush=True)
 
         # Monkey-patch base env's _get_observations to return point cloud
         # This is needed because RslRlVecEnvWrapper calls unwrapped._get_observations()
         pc_env = self  # Capture reference for closure
+        self._skip_internal_obs = False  # Guard flag to avoid double PC computation in step()
 
         def patched_get_observations():
+            if pc_env._skip_internal_obs:
+                # Return dummy — wrapper's step() will compute real PC obs after render
+                obs = {"policy": torch.zeros(pc_env.num_envs, pc_env._obs_dim, device=pc_env.device)}
+                if pc_env.asymmetric_critic:
+                    obs["critic"] = torch.zeros(pc_env.num_envs, pc_env._critic_obs_dim, device=pc_env.device)
+                return obs
             pc_obs = pc_env._get_pointcloud_observation()
-            return {"policy": pc_obs}
+            obs = {"policy": pc_obs}
+            if pc_env.asymmetric_critic:
+                obs["critic"] = pc_env._base_env._build_target_selection_obs()
+            return obs
 
         self._base_env._get_observations = patched_get_observations
-        print(f"[PointCloudDirectEnv] Patched base env _get_observations", flush=True)
+        print(f"[PointCloudDirectEnv] Patched base env _get_observations (with skip guard)", flush=True)
 
     def _get_pointcloud_observation(self) -> torch.Tensor:
         """Get base-frame point cloud observations for all environments.
@@ -137,6 +157,26 @@ class CranePointCloudDirectEnv(gym.Env):
         if not hasattr(self, '_obs_call_count'):
             self._obs_call_count = 0
         self._obs_call_count += 1
+
+        # One-time diagnostic: compare RL observation with BC-style direct computation
+        if self._obs_call_count == 1:
+            import sys
+            for i in range(min(2, self.num_envs)):
+                pc_world = self._base_env.get_log_pointcloud_world(
+                    i, max_points=5000,
+                    depth_range=(self.depth_range_min, self.depth_range_max)
+                )
+                pc_base = self._world_to_base_frame(pc_world, i)
+                pc_fps = self._farthest_point_sampling(pc_base, self.num_points)
+                rl_obs = obs[i].view(self.num_points, 3)
+                # Note: FPS has a random starting point so exact match isn't expected;
+                # check that value ranges and point counts are consistent.
+                sys.stderr.write(
+                    f"[DIAGNOSTIC] env{i}: "
+                    f"RL obs range=[{rl_obs.min():.3f}, {rl_obs.max():.3f}], "
+                    f"BC-style range=[{pc_fps.min():.3f}, {pc_fps.max():.3f}], "
+                    f"world points={pc_world.shape[0]}, base points={pc_base.shape[0]}\n"
+                )
 
         # Save debug point clouds + plots on first call (opt-in)
         if self._obs_call_count == 1 and self.save_debug_pointclouds:
@@ -280,22 +320,37 @@ class CranePointCloudDirectEnv(gym.Env):
             f"[CRITICAL] reset() returning wrong obs! Got {pc_obs.shape[1]}, expected {self._obs_dim} (pointcloud)"
         sys.stderr.write(f"[PointCloudDirectEnv] reset() returning POINTCLOUD obs: {pc_obs.shape}\n")
 
-        return {"policy": pc_obs}, info
+        obs = {"policy": pc_obs}
+        if self.asymmetric_critic:
+            obs["critic"] = self._base_env._build_target_selection_obs()
+        return obs, info
 
     def step(self, action):
         """Step and return point cloud observations in dict format for RslRlVecEnvWrapper."""
+        # Skip the expensive PC computation inside base_env.step() → _get_observations()
+        # since it reads a stale camera buffer (render hasn't happened yet).
+        # We compute the real observation below after rendering.
+        self._skip_internal_obs = True
         obs_dict, reward, terminated, truncated, info = self._base_env.step(action)
+        self._skip_internal_obs = False
+
         self._base_env.sim.render()
 
-        # Replace observations with point cloud
+        # Compute point cloud from the freshly rendered camera buffer
         pc_obs = self._get_pointcloud_observation()
 
-        return {"policy": pc_obs}, reward, terminated, truncated, info
+        obs = {"policy": pc_obs}
+        if self.asymmetric_critic:
+            obs["critic"] = self._base_env._build_target_selection_obs()
+        return obs, reward, terminated, truncated, info
 
     def _get_observations(self):
         """Override to return point cloud observations when wrapper calls this directly."""
         pc_obs = self._get_pointcloud_observation()
-        return {"policy": pc_obs}
+        obs = {"policy": pc_obs}
+        if self.asymmetric_critic:
+            obs["critic"] = self._base_env._build_target_selection_obs()
+        return obs
 
     # ============ Proxy all other attributes to base env ============
 

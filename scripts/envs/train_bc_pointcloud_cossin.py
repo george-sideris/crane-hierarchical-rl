@@ -49,6 +49,8 @@ parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
 parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
 parser.add_argument("--epochs", type=int, default=100, help="Training epochs")
 parser.add_argument("--dropout", type=float, default=0.2, help="Dropout rate")
+parser.add_argument("--norm_type", type=str, default="batchnorm", choices=["batchnorm", "layernorm"],
+                    help="Normalization type for PointNet encoder (default: batchnorm for compat)")
 # Collection options
 parser.add_argument("--save_interval", type=int, default=20, help="Save checkpoint every N episodes")
 parser.add_argument("--collect_only", action="store_true", help="Only collect, skip training")
@@ -66,28 +68,36 @@ if args_cli.train_only is None:
 
 
 class PointNetEncoder(nn.Module):
-    """PointNet encoder for point cloud feature extraction."""
+    """PointNet encoder for point cloud feature extraction.
 
-    def __init__(self, input_dim: int = 3, output_dim: int = 256):
+    Args:
+        input_dim: Per-point feature dimension (default 3 for XYZ).
+        output_dim: Output latent dimension.
+        norm_type: "layernorm" (recommended for RL) or "batchnorm" (legacy).
+    """
+
+    def __init__(self, input_dim: int = 3, output_dim: int = 256, norm_type: str = "batchnorm"):
         super().__init__()
+
+        norm_cls = nn.LayerNorm if norm_type == "layernorm" else nn.BatchNorm1d
 
         # Shared MLP (applied per-point)
         self.mlp1 = nn.Sequential(
             nn.Linear(input_dim, 64),
-            nn.BatchNorm1d(64),
+            norm_cls(64),
             nn.ELU(),
             nn.Linear(64, 128),
-            nn.BatchNorm1d(128),
+            norm_cls(128),
             nn.ELU(),
             nn.Linear(128, 256),
-            nn.BatchNorm1d(256),
+            norm_cls(256),
             nn.ELU(),
         )
 
         # After max-pooling, project to output dimension
         self.fc = nn.Sequential(
             nn.Linear(256, output_dim),
-            nn.BatchNorm1d(output_dim),
+            norm_cls(output_dim),
             nn.ELU(),
         )
 
@@ -101,7 +111,7 @@ class PointNetEncoder(nn.Module):
         """
         batch_size, num_points, _ = x.shape
 
-        # Reshape for batch norm: (batch * points, features)
+        # Reshape to (batch * points, features) for per-point MLP
         x = x.view(batch_size * num_points, -1)
         x = self.mlp1(x)
 
@@ -121,14 +131,14 @@ class BCPointNetPolicy(nn.Module):
     """PointNet policy for BC, outputs 5D action [x, y, z, cos(2*yaw), sin(2*yaw)]."""
 
     def __init__(self, num_points: int = 1024, action_dim: int = 5,
-                 latent_dim: int = 256, dropout: float = 0.2):
+                 latent_dim: int = 256, dropout: float = 0.2, norm_type: str = "batchnorm"):
         super().__init__()
 
         self.num_points = num_points
         self.latent_dim = latent_dim
 
         # PointNet encoder
-        self.encoder = PointNetEncoder(input_dim=3, output_dim=latent_dim)
+        self.encoder = PointNetEncoder(input_dim=3, output_dim=latent_dim, norm_type=norm_type)
 
         # Dropout for regularization
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
@@ -530,7 +540,8 @@ def save_checkpoint(output_dir, pointclouds, actions, metrics, num_points):
 
 def train_policy(pointclouds: np.ndarray, actions: np.ndarray,
                  num_points: int, batch_size: int, lr: float,
-                 epochs: int, device: str, dropout: float = 0.2):
+                 epochs: int, device: str, dropout: float = 0.2,
+                 norm_type: str = "batchnorm"):
     """Train PointNet policy via supervised learning."""
 
     print(f"\n[BC-PointCloud] Training PointNet policy")
@@ -556,7 +567,7 @@ def train_policy(pointclouds: np.ndarray, actions: np.ndarray,
     print(f"  Train: {train_size}, Val: {val_size}")
 
     # Create model
-    policy = BCPointNetPolicy(num_points=num_points, action_dim=5, dropout=dropout).to(device)
+    policy = BCPointNetPolicy(num_points=num_points, action_dim=5, dropout=dropout, norm_type=norm_type).to(device)
 
     optimizer = optim.AdamW(policy.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10)
@@ -700,7 +711,8 @@ def main():
             lr=args_cli.lr,
             epochs=args_cli.epochs,
             device=args_cli.device,
-            dropout=args_cli.dropout
+            dropout=args_cli.dropout,
+            norm_type=args_cli.norm_type
         )
 
         save_policy(policy, output_dir, num_points, metadata)
@@ -766,14 +778,17 @@ def main():
     with open(os.path.join(output_dir, "metrics.json"), "w") as f:
         json.dump(metrics, f, indent=2)
 
-    # Close env to free memory
+    # Close env and simulator to free GPU memory before training
     env.close()
+    simulation_app.close()
+    import gc
+    gc.collect()
+    torch.cuda.empty_cache()
 
     if args_cli.collect_only:
         print(f"\n[BC-PointCloud] Collection complete! Data saved to {output_dir}")
         print(f"To train later:")
         print(f"  python train_bc_pointcloud.py --train_only {output_dir} --epochs 100")
-        simulation_app.close()
         return
 
     # Train
@@ -784,7 +799,8 @@ def main():
         lr=args_cli.lr,
         epochs=args_cli.epochs,
         device=args_cli.device,
-        dropout=args_cli.dropout
+        dropout=args_cli.dropout,
+        norm_type=args_cli.norm_type
     )
 
     metadata = {
@@ -801,8 +817,6 @@ def main():
     print(f"  ./isaaclab.sh -p crane_testbed/scripts/rsl_rl/train.py \\")
     print(f"      --task Isaac-Crane-Full-CosSin-MR-v0 --num_envs 4 --headless \\")
     print(f"      --load_checkpoint {output_dir}/bc_pointcloud_policy_rsl_rl.pt")
-
-    simulation_app.close()
 
 
 if __name__ == "__main__":

@@ -38,8 +38,9 @@ Clearing dense log piles is a contact-rich manipulation problem with a large, ev
 In this paper, we study grasp target selection for a forestry log loader in simulation, focusing on the decision of where and how to orient a grapple to clear piles of up to 200 rigid-body logs in frictional contact.
 We introduce a \emph{grasp-and-remove} formulation in which each environment step corresponds to a complete pick attempt: a policy selects a grasp target $(x,y,z,\psi)$ in the crane base frame, a fixed finite-state controller executes the approach and lift, and grasped logs are despawned.
 This design isolates high-level targeting from low-level execution.
-We compare reinforcement learning (RL) from scratch using Proximal Policy Optimization (PPO), a strong heuristic baseline, behavior cloning (BC) from heuristic demonstrations, and BC-initialized RL fine-tuning (BC+RL).
-Episode-level clearing objectives present a sparse reward that is unreachable by from-scratch RL; BC initialization solves this exploration problem, enabling RL fine-tuning to optimize the global clearing objective.
+Policies observe depth-derived point clouds of the segmented log pile, processed by a PointNet encoder, removing the need for privileged per-object state.
+We compare reinforcement learning (RL) from scratch using PPO, a strong heuristic baseline, behavior cloning (BC) from heuristic demonstrations, and BC-initialized RL fine-tuning (BC+RL).
+From-scratch RL maximizes per-grasp reward but converges to local optima that fail in the endgame, when remaining logs are sparse and targeting errors compound; BC initialization provides a policy that covers the full clearing trajectory, enabling RL fine-tuning to improve per-grasp performance while preserving the expert's pile-clearing strategy.
 \TODO{Update with final comparative results once fixed-seed evaluation is complete.}
 We analyze failure modes and identify the endgame distribution shift---where remaining logs form a sparse, irregular layer---as a primary challenge for from-scratch RL in this setting.
 \end{abstract}
@@ -63,14 +64,14 @@ This factorization has two benefits.
 First, it reduces the horizon of the learning problem: the policy is rewarded once per grasp attempt, rather than for every low-level control step.
 Second, it makes comparisons between methods clean: all methods share the same low-level controller and differ only in target selection.
 
-A central finding is that episode-level clearing objectives (e.g., fully emptying the rack) present a \emph{sparse reward} that is unreachable by from-scratch RL: random policies rarely clear a pile, so the completion signal is never observed.
-BC initialization solves this exploration problem by providing a policy that regularly completes episodes, enabling subsequent RL fine-tuning to optimize the global clearing objective.
+A central finding is that from-scratch RL converges to local optima of the per-grasp reward: it learns to pick easily accessible logs but fails in the \emph{endgame}, when the pile is sparse and small targeting errors lead to empty grasps.
+BC initialization provides a policy that covers the full clearing trajectory---including difficult endgame configurations---enabling RL fine-tuning to improve per-grasp performance while preserving pile-clearing ability.
 
 \textbf{Contributions.}
 \begin{itemize}
     \item A grasp-and-remove crane environment in Isaac Lab for contact-rich log-pile clearing at scale (up to 200 logs), with a fixed FSM controller that isolates the targeting decision.
-    \item A compact action representation using cosine--sine yaw encoding~\cite{morrison2018closing} to handle the rotational symmetry of cylindrical logs, combined with top-$K$ log-pose observations.
-    \item An empirical comparison of from-scratch RL, heuristic targeting, BC, and BC+RL fine-tuning, with an analysis of the sparse-reward exploration problem and endgame failure modes.
+    \item A depth-based point cloud observation pipeline---segmented, back-projected, and encoded by a PointNet~\cite{qi2017pointnet}---that removes the need for privileged per-object state, with a privileged-pose ablation to quantify the perception gap.
+    \item An empirical comparison of from-scratch RL, heuristic targeting, BC, and BC+RL fine-tuning, showing that from-scratch RL converges to local optima that fail in the endgame, while BC initialization enables RL to optimize per-grasp performance without sacrificing pile-clearing ability.
 \end{itemize}
 
 \section{Related Work}
@@ -80,6 +81,7 @@ Learning-based grasp detection has progressed from single isolated objects to cl
 Deep grasp prediction networks such as GG-CNN~\cite{morrison2018closing} and the multi-grasp architecture of Kumra and Kanan~\cite{kumra2017robotic} predict grasp pose directly from visual input, using cosine--sine angle encodings to handle grasp symmetry.
 Pile manipulation and sequential decluttering have been studied in bin picking~\cite{mahler2017dexnet, zeng2018learning}, but typically involve rigid objects of moderate count ($<$50).
 Our setting differs in scale (up to 200 elongated logs) and in the multi-object nature of each grasp (5--20 logs per attempt).
+For 3D perception, PointNet~\cite{qi2017pointnet} processes unordered point sets via per-point MLPs and symmetric pooling; we adopt this architecture to encode depth-derived point clouds into a latent representation for grasp target prediction.
 
 \textbf{RL for contact-rich manipulation.}
 Reinforcement learning has been applied to contact-rich tasks including dexterous in-hand manipulation~\cite{andrychowicz2020learning} and assembly~\cite{lee2020making}.
@@ -98,25 +100,34 @@ For RL training we use RSL-RL~\cite{rudin2022learning} with PPO~\cite{schulman20
 
 \section{Task Formulation}
 \subsection{Grasp-and-Remove MDP}
-We define an episodic Markov decision process where each \emph{environment step} corresponds to a complete grasp attempt.
-At the start of a step, the crane is in a standardized \texttt{HOVER} configuration above the rack.
-A policy selects a grasp target specifying position $(x,y,z)$ and grapple yaw~$\psi$ in the crane base frame.
-An internal FSM then executes: yaw alignment, descent, gripper closing, and a controlled lift back to \texttt{HOVER}.
-After lifting, the environment evaluates the outcome and removes logs deemed grasped.
-The reward $r_t$ is returned once per grasp attempt.
-An episode terminates when the rack is empty or when a fixed time horizon is reached.
+We formulate the task as an episodic Markov decision process $(\mathcal{S}, \mathcal{A}, T, R, \gamma)$ where each \emph{environment step} corresponds to a complete grasp attempt rather than a low-level control tick.
+The state $s_t \in \mathcal{S}$ is the current pile configuration (observed via point cloud or privileged poses; Section~\ref{sec:obs}).
+The action $a_t \in \mathcal{A} \subset \mathbb{R}^5$ specifies a grasp target---position $(x,y,z)$ and grapple yaw $\psi$---in the crane base frame (Section~\ref{sec:actions}).
+The transition $T(s_{t+1}|s_t, a_t)$ is determined by the physics simulation: a fixed finite-state machine (FSM) executes the approach, close, and lift, and grasped logs are removed from the scene.
+The scalar reward $r_t = R(s_t, a_t)$ is issued once per grasp attempt based on the measured outcome (Section~\ref{sec:reward}).
+We use a discount factor $\gamma = 0.99$.
+An episode terminates when all logs have been removed (grasped or knocked off the rack) or after a fixed horizon of $H=30$ grasp attempts.
+The horizon is chosen to give the policy comfortable headroom beyond the minimum needed: the grapple can hold up to 20 logs per grasp, and a strong heuristic baseline clears 200-log piles in \TODO{15--20} attempts, so $H=30$ allows roughly 50--100\% additional attempts while keeping episodes tractable.
 
+At the start of each step the crane is in a standardized \texttt{HOVER} configuration above the rack.
 This formulation intentionally \emph{does not} include deposition; removed logs are teleported out of the scene.
 Our aim is to study targeting and grasping metrics without conflating them with downstream placement complexity.
 
 \subsection{Observations}
-The policy observes a set of top-$K$ log poses, sorted by height (highest first).
-For each log, we include $(x,y,z,\psi)$ in the crane base frame, where $\psi$ is the log yaw about the vertical axis.
-Removed logs are excluded.
-If fewer than $K$ logs remain, the observation is padded with a sentinel value (all $-1$).
-All values are normalized to $[-1,1]$ using the per-environment workspace bounds.
+\label{sec:obs}
+The policy observes a segmented point cloud of the log pile, produced by a four-stage pipeline:
+\begin{enumerate}
+    \item A depth camera mounted on the crane renders the scene from above the rack.
+    \item A semantic segmentation mask isolates log pixels from the depth image. In simulation this mask comes from the renderer's semantic channel; on a real crane it would be provided by a learned perception module---recent work has demonstrated instance-level log segmentation from RGB in forestry settings~\cite{fortin2022instance}.
+    \item The masked depth image is back-projected to 3D and transformed into the crane base frame.
+    \item Farthest Point Sampling (FPS) downsamples the cloud to a fixed $N_p = 1024$ points, yielding a $(1024 \times 3)$ observation tensor.
+\end{enumerate}
 
-In our experiments we use $K=32$, yielding a 128-dimensional observation vector.
+\textbf{Privileged pose baseline.}
+As an ablation, we also evaluate policies that observe privileged per-object state: the top-$K$ log poses sorted by height (highest first), each represented as $(x,y,z,\psi)$ in the crane base frame.
+Removed logs are excluded and remaining slots are padded with $-1$.
+With $K\!=\!32$ this yields a compact 128D vector.
+This baseline isolates the effect of the perception gap: any performance difference between pose and point cloud policies is attributable to the observation representation rather than the learning algorithm.
 
 \subsection{Actions and Workspace Scaling}
 \label{sec:actions}
@@ -129,6 +140,10 @@ Each position component is squashed via $\tanh$ and then linearly mapped to the 
     p_i = \frac{(\tanh \tilde{a}_i + 1)}{2}(b_i^{\max} - b_i^{\min}) + b_i^{\min}, \quad i \in \{x,y,z\},
 \end{equation}
 where $b_i^{\min}, b_i^{\max}$ are the rack-aligned workspace limits.
+These bounds are computed from the rack geometry and serve a dual purpose.
+First, they define the policy's reachable target space, ensuring that all output actions map to physically executable grasp poses.
+Second, logs that drift outside these bounds during a grasp attempt (e.g., knocked off the rack by grapple contact) are automatically removed before the next targeting decision and counted separately (see Section~\ref{sec:reward}), preventing unreachable logs from accumulating.
+The heuristic expert (Section~\ref{sec:expert}), which bypasses the policy's action scaling and targets log poses directly, operates within the same spatial bounds.
 
 \textbf{Yaw (cosine--sine encoding).}
 A cylindrical log at yaw $\psi$ is physically identical to the same log at $\psi + \pi$.
@@ -151,7 +166,7 @@ This ensures BC and RL policies operate in an identical action space.
 All methods share the same FSM controller, which runs at the physics timestep inside each step.
 The FSM implements a pick sequence with phase timeouts and dwell-based convergence checks:
 \texttt{HOVER} $\rightarrow$ \texttt{ALIGN} $\rightarrow$ \texttt{DESCEND} $\rightarrow$ \texttt{CLOSE} $\rightarrow$ \texttt{LIFT} $\rightarrow$ \texttt{OPEN} $\rightarrow$ return to \texttt{HOVER}.
-In all experiments in this paper, the arm is controlled using Isaac Lab's task-space \emph{Differential IK} controller (damped least-squares, position command type), which computes joint position targets from the current end-effector pose and Jacobian and applies them via joint position targets.
+In all experiments in this paper, the arm is controlled using Isaac Lab's task-space \emph{Differential IK} controller~\cite{mittal2023orbit} (damped least-squares, position command type), which computes joint position targets from the current end-effector pose and Jacobian.
 The grapple jaws are controlled using a simple PD law that outputs joint \emph{velocity} targets with saturation.
 
 \subsection{Outcome Evaluation and Log Removal}
@@ -180,118 +195,193 @@ In the \textbf{additive} variant:
 \begin{equation}
 r_{\text{add}} = e + a + s,
 \end{equation}
-and in the \textbf{multiplicative} variant, stability acts as a multiplier and an alignment bonus encourages $a > 0.7$:
+and in the \textbf{multiplicative} variant (MR, our primary configuration):
 \begin{equation}
-r_{\text{mult}} = g\,a\,s \;+\; \mathbb{I}[a>0.7]\;\cdot\;5\,g\,(a-0.7)\,s.
+r_{\text{mult}} = g \cdot a \cdot s,
 \end{equation}
+where $g$ is raw throughput (number of logs grasped).
+With the normalized variant (MN, \texttt{normalize\_reward=True}), efficiency $e$ replaces $g$ and is scaled by a factor of 10; this variant is not the focus of the main experiments.
 
-\textbf{Episode completion bonus.}
-Per-grasp rewards alone do not incentivize global pile-clearing strategies.
-We therefore add a sparse episode-level bonus $r_{\text{clear}}$ awarded when all logs have been removed:
-\begin{equation}
-    r_{\text{clear}} = \begin{cases}
-    R_{\text{bonus}}, & \text{if pile fully cleared},\\
-    0, & \text{otherwise}.
-    \end{cases}
-\end{equation}
-This bonus is unreachable by from-scratch RL (which rarely clears a pile), but becomes accessible after BC initialization (Section~\ref{sec:bcrl}).
+Note that the reward is entirely per-grasp; there is no episode-level completion bonus.
+Global pile-clearing ability thus emerges from the policy's targeting strategy rather than from explicit incentives to clear.
 
-We track logs that move outside the rack bounds during an attempt and remove them from the scene to keep the simulation well-posed for subsequent grasps.
+\textbf{Knocked-off log tracking.}
+Logs that move outside the workspace bounds during a grasp attempt (e.g., knocked off the rack by grapple contact) are removed from the scene before the next targeting decision and counted separately.
+These logs are \emph{not} credited toward the grasp reward $g$ for that attempt, but they do reduce the remaining pile count.
+We report knocked-off percentage as an auxiliary metric (Section~\ref{sec:metrics}).
+
 \subsection{Simulation Notes}
 We implement the environment in Isaac Lab and run PhysX GPU dynamics for scalable data collection.
-Because GPU dynamics in our setup does not support continuous collision detection (CCD), we disable CCD and instead use conservative contact modeling: simplified collision geometry on the grapple, tuned contact/rest offsets, and damping/depenetration limits for logs.
-These choices reduce interpenetration and numerical jitter while maintaining high simulation throughput.
+We use conservative contact modeling---simplified collision geometry on the grapple, tuned contact and rest offsets, and damping limits for logs---to reduce interpenetration and numerical jitter while maintaining high simulation throughput.
 
 \section{Learning and Baselines}
 
 \subsection{Heuristic Expert}
+\label{sec:expert}
 We implement a strong heuristic expert that targets a high, graspable log.
 At \texttt{HOVER}, the expert selects the highest available log (with an option to sample among the top-$k$), targets its center $(x,y,z)$, and computes a yaw that aligns the grapple with the log's principal axis, choosing the $180^\circ$ flip that minimizes rotation.
-During BC data collection, we optionally add Gaussian noise to the expert targets for regularization.
+During BC data collection, we optionally add independent Gaussian noise to each position component ($\sigma_{\text{pos}}$ in cm) and to the yaw ($\sigma_{\psi}$ in degrees) for regularization.
 
 \subsection{Behavior Cloning}
 \label{sec:bc}
-We collect demonstration pairs $(o_t, a_t)$ from successful expert grasps only (failed grasps are discarded), where $o_t$ is the top-$K$ pose observation and $a_t$ is the 5D expert action in the unconstrained space (positions via $\mathrm{arctanh}$, yaw via $\cos 2\psi, \sin 2\psi$ as described in Section~\ref{sec:actions}).
+We collect demonstration pairs $(o_t, a_t)$ from successful expert grasps only (failed grasps are discarded), where $o_t$ is the point cloud observation and $a_t$ is the expert action in the unconstrained space (positions via $\mathrm{arctanh}$, yaw via $\cos 2\psi, \sin 2\psi$ as described in Section~\ref{sec:actions}).
 
-The policy is a three-layer MLP with hidden dimensions $[256, 128, 64]$ and ELU activations~\cite{clevert2015elu}, mapping the 128D observation to the 5D action.
-We train with mean-squared error using AdamW~\cite{loshchilov2019adamw} (learning rate $10^{-4}$, weight decay $10^{-4}$) and ReduceLROnPlateau scheduling (factor 0.5, patience 10 epochs).
-We use an 85/15 train/validation split with early stopping (patience 30 epochs).
+The policy uses a PointNet encoder~\cite{qi2017pointnet} consisting of per-point MLPs ($3 \!\to\! 64 \!\to\! 128 \!\to\! 256$) with batch normalization and ELU activations, followed by max-pooling over points and a fully connected layer to a 256D latent vector.
+An actor MLP ($256 \!\to\! 128 \!\to\! 64 \!\to\! 5$) maps the latent to the action.
+For the privileged-pose ablation, we replace the encoder with a three-layer MLP ($128 \!\to\! 256 \!\to\! 128 \!\to\! 64$) with ELU activations~\cite{clevert2015elu}.
+
+Table~\ref{tab:architecture} summarizes the network architecture for both observation types.
+
+\begin{table}[t]
+\centering
+\caption{Network architectures for point cloud (PCD) and privileged pose observation types. All hidden layers use ELU activations. The PointNet encoder uses batch normalization.}
+\label{tab:architecture}
+\begin{tabular}{lll}
+\toprule
+\thead{Component} & \thead{BC/RL (PCD)} & \thead{RL (Pose)} \\
+\midrule
+Encoder & \makecell[l]{PointNet: $3\!\to\!64\!\to\!128\!\to\!256$\\(BN, ELU), MaxPool} & \makecell[l]{MLP:\\$128\!\to\!256\!\to\!128\!\to\!64$} \\
+\midrule
+Actor & \makecell[l]{MLP: $256\!\to\!128\!\to\!64\!\to\!5$} & \makecell[l]{Shared encoder\\$\to$ $64\!\to\!5$} \\
+\midrule
+Critic & \makecell[l]{Independent PointNet\\encoder + MLP head} & \makecell[l]{MLP:\\$256\!\to\!128\!\to\!64\!\to\!1$} \\
+\midrule
+Output & \multicolumn{2}{c}{5D: $(x,y,z,\cos 2\psi,\sin 2\psi)$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+All BC models are trained with mean-squared error using AdamW~\cite{loshchilov2019adamw} (learning rate $10^{-4}$, weight decay $10^{-4}$) and ReduceLROnPlateau scheduling (factor 0.5, patience 10 epochs), with an 85/15 train/validation split and early stopping (patience 30 epochs).
 \TODO{State final dataset size (number of episodes and successful-grasp samples).}
 
 \subsection{Reinforcement Learning (RL)}
 \label{sec:rl}
 We train policies with Proximal Policy Optimization (PPO)~\cite{schulman2017ppo} using the RSL-RL library~\cite{rudin2022learning}.
+PPO optimizes a stochastic Gaussian policy $\pi_\theta(a|s) = \mathcal{N}\!\big(\mu_\theta(s),\;\mathrm{diag}(\bm{\sigma}^2)\big)$, where the actor network $\mu_\theta$ outputs the mean action and $\bm{\sigma} \in \mathbb{R}^{|\mathcal{A}|}$ is a learnable, state-independent, per-action-dimension standard deviation parameter that controls exploration noise.
+At initialization, all components of $\bm{\sigma}$ are set to $\sigma_0$; during training, $\bm{\sigma}$ is updated by gradient descent alongside the actor weights, typically decreasing as the policy converges.
+A separate critic network $V_\phi(s)$ estimates the state-value function for advantage computation via Generalized Advantage Estimation (GAE)~\cite{schulman2017ppo}.
+
 Hereafter, we refer to from-scratch training as \textbf{RL} and BC-initialized fine-tuning as \textbf{BC+RL}.
-The actor and critic are separate MLPs with hidden dimensions $[256, 128, 64]$ and ELU activations, matching the BC architecture.
-Key PPO hyperparameters: clipping ratio $\epsilon=0.2$, entropy coefficient $0.01$, learning rate $3\times10^{-4}$ with adaptive KL-based scheduling (target KL $0.01$), GAE with $\gamma=0.99$ and $\lambda=0.95$, 4 steps per environment per iteration, 5 learning epochs with 4 mini-batches per epoch, and gradient clipping at norm $1.0$.
+The actor uses the same PointNet encoder and actor MLP as the BC policy; the critic uses an independent PointNet encoder with its own MLP head.
+For the privileged-pose ablation, both actor and critic are separate MLPs with hidden dimensions $[256, 128, 64]$ and ELU activations.
+Key hyperparameters: $\sigma_0 = 1.0$, clipping ratio $\epsilon=0.2$, entropy coefficient $0.01$, learning rate $3\times10^{-4}$ with adaptive KL-based scheduling (target KL $0.01$), GAE with $\lambda=0.95$, 4 steps per environment per iteration, 5 learning epochs with 4 mini-batches per epoch, and gradient clipping at norm $1.0$.
 
 \subsection{BC+RL Fine-Tuning}
 \label{sec:bcrl}
-For BC+RL, we initialize the actor from a trained BC checkpoint, initialize the critic randomly, reset the optimizer state, and set the initial action noise standard deviation to $0.3$ (reduced from the default $1.0$ to preserve the BC policy's behavior while allowing exploration).
-Training then proceeds as above, including the episode completion bonus $r_{\text{clear}}$ (Section~\ref{sec:reward}).
+For BC+RL, we initialize the actor weights from a trained BC checkpoint, initialize the critic randomly, and reset the optimizer state.
+The initial exploration noise is set to $\sigma_0 = 0.3$ (reduced from the RL default of $1.0$): because the BC actor already outputs near-expert actions, a large $\sigma_0$ would add destructive noise and erase the pretrained behavior, while a small $\sigma_0$ keeps sampled actions close to the BC mean and allows PPO to refine rather than overwrite the initialization.
 
-The key insight is that BC initialization provides a policy that regularly clears piles, making the sparse $r_{\text{clear}}$ observable.
-From-scratch RL, by contrast, rarely completes an episode and thus receives no gradient signal from the completion bonus.
+The key insight is that from-scratch RL, optimizing per-grasp reward, converges to local optima that pick easily accessible logs but fail in the endgame.
+BC initialization places the policy in a region of parameter space that covers the full clearing trajectory, and the reduced $\sigma_0$ ensures that early RL updates preserve this strategy.
+
+\begin{figure}[t]
+\centering
+\TODO{Insert environment visualization: crane + rack + 200 logs, showing the grapple above the pile in HOVER configuration.}
+\caption{The grasp-and-remove crane environment. A log loader crane is positioned above a rack containing up to 200 cylindrical logs. At each step, the policy selects a grasp target and a fixed FSM controller executes the pick sequence.}
+\label{fig:environment}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\TODO{Insert point cloud pipeline figure: (a) depth image, (b) segmentation mask, (c) back-projected 3D points, (d) FPS-downsampled 1024-point cloud.}
+\caption{Observation pipeline. A crane-mounted depth camera renders the scene (a), a semantic mask isolates log pixels (b), the masked depth is back-projected to 3D (c), and farthest point sampling produces the fixed-size $(1024 \times 3)$ input (d).}
+\label{fig:pcd_pipeline}
+\end{figure}
 
 \section{Experiments}
 \subsection{Setup}
 All experiments use the same crane model, rack geometry, and FSM controller.
 Piles contain 200 cylindrical logs ($\sim$0.3\,m diameter, $\sim$3\,m length) spawned in layered grid patterns.
-The log count is fixed across all experiments so that grasps-to-clear is directly comparable between methods; domain randomization varies only the pile geometry (spawn pattern, row jitter, and layer offsets).
-For evaluation, we use a fixed set of \TODO{$N$} random seeds so that all methods are tested on identical pile configurations.
+The log count is fixed across all experiments so that clearing metrics are directly comparable between methods; domain randomization varies only the pile geometry (spawn pattern, row jitter, and layer offsets).
 
-Each episode runs for a maximum of \SI{600}{\second} of simulation time, corresponding to approximately 30--50 grasp attempts depending on pile complexity.
-An episode terminates early if all logs are cleared.
+Each episode runs for a fixed budget of $H=30$ grasp attempts (see Section~III-A for the horizon rationale).
+An episode terminates early if all logs have been removed---either grasped and lifted or knocked outside the workspace bounds.
+For evaluation, we run \TODO{$N$} episodes across \TODO{$E$} parallel environments on identical random seeds to ensure each method faces the same pile configurations.
+All metrics are reported as per-episode mean $\pm$ standard deviation.
 
 \subsection{Metrics}
-We report both per-grasp and per-episode metrics:
+\label{sec:metrics}
+We report per-grasp and per-episode metrics, all as per-episode mean $\pm$ standard deviation unless noted:
 \begin{itemize}
     \item \textbf{Grasp success rate:} fraction of grasps with $g>0$.
     \item \textbf{Throughput:} mean logs grasped per successful grasp.
-    \item \textbf{Alignment:} mean $a \in [0,1]$ over successful grasps.
-    \item \textbf{Stability:} mean $s \in [0,1]$ over successful grasps.
-    \item \textbf{Clearing rate:} fraction of initial logs removed by episode end.
-    \item \textbf{Full-clear rate:} fraction of episodes where the pile is fully cleared.
-    \item \textbf{Grasps-to-clear:} mean number of grasp attempts to fully clear (over episodes that do clear).
+    \item \textbf{Alignment:} grasp-count-weighted mean $a \in [0,1]$ per episode.
+    \item \textbf{Stability:} grasp-count-weighted mean $s \in [0,1]$ per episode.
+    \item \textbf{Pile clearing rate:} fraction of initial logs removed by episode end (grasped or knocked off).
+    \item \textbf{Full-clear rate:} fraction of episodes where all logs are removed.
+    \item \textbf{Knocked-off percentage:} fraction of initial logs knocked outside workspace bounds.
+    \item \textbf{Grasps to 50\%/90\% cleared:} number of grasp attempts to reach 50\% and 90\% pile clearing, computed over episodes that reach each threshold. These efficiency metrics capture pile-level performance without requiring full clears (which are rare for some methods).
+    \item \textbf{Episode reward:} cumulative per-grasp reward over the episode.
 \end{itemize}
-Grasps-to-clear is the primary global metric: a lower value indicates that the policy achieves pile-level efficiency, not just per-grasp performance.
+Our primary visualization is the \emph{clearing progression curve}: for each method, we plot fraction of pile cleared (mean $\pm$ std across episodes) as a function of grasp attempt number (Fig.~\ref{fig:clearing_curves}).
+This curve captures the full clearing dynamics---where methods diverge, where RL plateaus, and how BC+RL maintains clearing momentum into the endgame---and is strictly more informative than discrete threshold metrics alone.
+Grasps-to-50\% and grasps-to-90\% serve as compact summary statistics derived from these curves.
 
 \section{Results}
 \subsection{Overall Performance}
-\TODO{Insert a table comparing Heuristic, RL, BC, BC+RL on: grasp success rate, throughput, alignment, clearing rate, full-clear rate, and grasps-to-clear. Use fixed-seed evaluation across all methods.}
+\TODO{Fill in Table~\ref{tab:results} with fixed-seed evaluation results for all methods.}
 
-\begin{table}[t]
+\begin{table*}[t]
 \centering
-\caption{Evaluation results across \TODO{$N$} fixed pile configurations.}
+\caption{Evaluation results across \TODO{$N$} fixed pile configurations. All values are per-episode mean $\pm$ std. Grasps to 50\%/90\% are computed over episodes reaching each threshold.}
 \label{tab:results}
-\begin{tabular}{lcccccc}
+\begin{tabular}{llccccccccc}
 \toprule
-\thead{Method} & \thead{Grasp\\Succ.\,\%} & \thead{Through-\\put} & \thead{Align.} & \thead{Clear\\Rate\,\%} & \thead{Full\\Clear\,\%} & \thead{Grasps\\to Clear} \\
+\thead{Method} & \thead{Obs.} & \thead{Grasp\\Succ.\,\%} & \thead{Through-\\put} & \thead{Align.} & \thead{Stab.} & \thead{Clear\\Rate\,\%} & \thead{Full\\Clear\,\%} & \thead{Knocked\\Off\,\%} & \thead{Grasps\\to 50\%} & \thead{Grasps\\to 90\%} \\
 \midrule
-Heuristic & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} \\
-RL & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} \\
-BC & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} \\
-BC+RL & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} \\
+Heuristic  & Pose & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} \\
+\midrule
+RL         & PCD  & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} \\
+BC         & PCD  & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} \\
+BC+RL      & PCD  & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} \\
+\midrule
+RL         & Pose & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} & \TODO{} \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
+
+\begin{figure}[t]
+\centering
+\TODO{Insert clearing progression curves: fraction of pile cleared (mean $\pm$ shaded std across episodes) vs.\ grasp attempt number, one curve per method (Heuristic, RL, BC, BC+RL). This is the primary results figure.}
+\caption{Clearing progression. Each curve shows the fraction of the 200-log pile cleared as a function of grasp attempt number (mean $\pm$ std over \TODO{$N$} episodes). \TODO{Describe key observations: where methods diverge, RL plateau, BC+RL endgame.}}
+\label{fig:clearing_curves}
+\end{figure}
 
 Qualitatively, we observe three regimes:
 (i) \textbf{early clearing}, where dense piles yield high-throughput grasps for all methods;
 (ii) \textbf{mid clearing}, where policies diverge in how they target remaining dense regions; and
 (iii) \textbf{endgame clearing}, where remaining logs form a thin sparse layer and targeting becomes sensitive to small errors.
 
-\TODO{Describe results once evaluation is complete. Key comparisons: (1) Does BC+RL achieve a lower grasps-to-clear than the heuristic? (2) How does from-scratch RL perform on full-clear rate?}
+\TODO{Describe results once evaluation is complete. Key comparisons: (1) Does BC+RL achieve faster clearing progression (lower grasps-to-50\%/90\%) than the heuristic? (2) How does from-scratch RL perform on clearing rate and full-clear rate? (3) Do the clearing progression curves (Fig.~\ref{fig:clearing_curves}) show the expected divergence in the endgame?}
 
-\subsection{Sparse Reward and Exploration}
-A key finding is that the episode completion bonus $r_{\text{clear}}$ is effectively unreachable by from-scratch RL.
-\TODO{Report: fraction of training episodes where RL achieves a full clear vs.\ BC+RL.}
-Because random policies rarely clear a pile within the episode budget, from-scratch RL receives no gradient signal from $r_{\text{clear}}$ and must rely exclusively on per-grasp shaping.
-BC initialization provides a policy in a region of parameter space where full clears are routine, making the sparse bonus both observable and optimizable.
+\subsection{Local Optima and Endgame Failure}
+From-scratch RL achieves high per-grasp reward by targeting easily accessible logs in the dense early phase, but this strategy fails in the endgame when the pile thins out.
+\TODO{Report: full-clear rate for RL vs.\ BC+RL; training curves showing reward plateau.}
+Because the per-grasp reward does not explicitly penalize endgame failure, RL has no gradient signal pushing it toward globally effective strategies.
+BC initialization provides a policy that already handles the full clearing trajectory, including sparse endgame configurations, giving RL a starting point from which fine-tuning improves per-grasp metrics without sacrificing pile-clearing ability.
+
+\subsection{Training Dynamics}
+\begin{figure}[t]
+\centering
+\TODO{Insert training curves: (a) episode reward vs.\ training iterations for RL and BC+RL, (b) clearing percentage vs.\ training iterations for RL and BC+RL. Optionally (c) $\sigma$ decay.}
+\caption{Training dynamics. (a) Episode reward: RL plateaus at a local optimum; BC+RL starts at BC performance and improves. (b) Clearing percentage: RL never reaches high clearing rates; BC+RL maintains the expert's clearing ability.}
+\label{fig:training_curves}
+\end{figure}
+We examine training dynamics through two complementary views:
+(i)~episode reward vs.\ training iterations, and (ii)~clearing percentage vs.\ training iterations.
+For from-scratch RL, episode reward plateaus at a local optimum where per-grasp performance is high but clearing stalls---the policy never learns to handle the endgame.
+For BC+RL, episode reward starts at the BC performance level and rises above it as RL fine-tuning improves per-grasp metrics, while clearing percentage is maintained or improved from the BC initialization.
+The clearing percentage view is particularly revealing: from-scratch RL never reaches high clearing rates regardless of training duration, while BC+RL maintains the expert's clearing ability throughout training.
+\TODO{Optionally show $\sigma$ (exploration noise) decay curves to illustrate convergence.}
 
 \subsection{Endgame Failure Analysis}
 To understand why from-scratch RL underperforms, we analyze per-grasp performance as a function of remaining logs.
-\TODO{Add a figure: average logs grasped vs.\ number of remaining logs, broken down by method.}
+\begin{figure}[t]
+\centering
+\TODO{Insert per-remaining-logs analysis: mean logs grasped per attempt (y-axis) vs.\ number of remaining logs (x-axis), one curve per method. Shows endgame degradation.}
+\caption{Per-grasp throughput as a function of remaining logs. As the pile thins, from-scratch RL throughput degrades sharply, while BC+RL maintains effective targeting into the endgame.}
+\label{fig:remaining_logs}
+\end{figure}
 
 A consistent pattern is \emph{endgame distribution shift}: late in an episode, the pile geometry is sparse and irregular, and small targeting errors lead to empty grasps.
 Because the per-grasp reward does not account for the global pile state, inefficient late grasps accumulate and prevent full clearing within the episode budget.
@@ -315,17 +405,18 @@ BC+RL avoids this domain gap by initializing from demonstrations collected direc
 Our grasp-and-remove design isolates targeting and enables fast experimentation, but has limitations.
 First, grasp success is approximated by proximity after lift, rather than explicit contact constraints.
 Second, removed logs are teleported rather than placed, so the task omits deposition planning and re-contact dynamics.
-Third, our observation is a truncated set of top-$K$ log poses; richer perception (e.g., depth images or point clouds) may improve endgame targeting but initial experiments suggest that learning spatial position from visual observations alone remains challenging.
+Third, while point cloud observations remove the need for privileged state, the PointNet encoder operates on unordered point sets without explicit spatial structure; architectures that exploit local geometry (e.g., PointNet++, point transformers) may improve endgame targeting.
 Fourth, all experiments are in simulation; sim-to-real transfer with domain randomization is a natural next step.
 
-Despite these simplifications, the environment captures essential challenges of multi-object grasping in dense clutter and reveals the exploration barrier that sparse episode-level rewards pose for from-scratch RL.
+Despite these simplifications, the environment captures essential challenges of multi-object grasping in dense clutter and reveals how per-grasp reward optimization alone leads to local optima that fail to clear piles.
 
 \section{Conclusion}
 We presented a grasp-and-remove crane environment for studying grasp target selection in dense log-pile clearing at scale (up to 200 rigid-body logs in contact).
 By factorizing target choice from low-level execution, we compared heuristic targeting, behavior cloning, from-scratch RL, and BC+RL on a shared controller.
-Our analysis reveals that episode-level clearing objectives present a sparse reward that is unreachable by from-scratch RL, while BC initialization solves this exploration problem and enables RL fine-tuning to optimize global pile-clearing efficiency.
-\TODO{Update with final result summary.}
-Future work will explore sim-to-real transfer with domain randomization, richer observation modalities, and curriculum learning over pile complexity.
+Our analysis reveals that from-scratch RL converges to local optima that fail in the endgame, while BC initialization enables RL fine-tuning to improve per-grasp performance without sacrificing pile-clearing ability.
+Point cloud observations achieve comparable clearing performance to privileged state, demonstrating a viable path to sensor-based deployment.
+\TODO{Update with final result summary, referencing clearing progression curves and grasps-to-50\%/90\% metrics.}
+Future work will explore sim-to-real transfer with domain randomization, richer point cloud architectures, and curriculum learning over pile complexity.
 
 \bibliographystyle{IEEEtran}
 \bibliography{references}

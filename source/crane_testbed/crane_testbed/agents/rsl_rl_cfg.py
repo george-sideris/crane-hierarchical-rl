@@ -13,6 +13,17 @@ from crane_testbed.agents.pointnet_actor_critic import PointNetActorCritic
 
 
 @configclass
+class PointNetActorCriticCfg(RslRlPpoActorCriticCfg):
+    """Actor-critic config with PointNet-specific fields (norm_type, encoder_lr_scale)."""
+
+    norm_type: str = "batchnorm"
+    """Normalization type: "layernorm" (recommended) or "batchnorm" (legacy)."""
+
+    encoder_lr_scale: float = 0.2
+    """Encoder learning rate as fraction of base LR (used when optimizer is overridden)."""
+
+
+@configclass
 class CranePPORunnerCfg(RslRlOnPolicyRunnerCfg):
     """PPO configuration for crane hierarchical RL (original version with strategic state)."""
 
@@ -269,12 +280,68 @@ class CranePPORunnerCfg_PointCloud(RslRlOnPolicyRunnerCfg):
     load_run = None
     load_checkpoint = None
 
-    policy = RslRlPpoActorCriticCfg(
+    policy = PointNetActorCriticCfg(
         class_name="rsl_rl.modules.PointNetActorCritic",  # Registered in train.py
         init_noise_std=1.0,
         actor_hidden_dims=[128, 64],
         critic_hidden_dims=[128, 64],
         activation="elu",
+        norm_type="batchnorm",  # Legacy: compatible with existing trained policies
+    )
+
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.01,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=3e-4,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+    )
+
+
+@configclass
+class CranePPORunnerCfg_PointCloud_v2(RslRlOnPolicyRunnerCfg):
+    """PPO configuration for crane RL with point cloud observations (v2).
+
+    Improvements over v1:
+    - LayerNorm instead of BatchNorm (better RL training stability)
+    - Asymmetric actor-critic: PointNet actor + state-based MLP critic
+      (requires env to return both "policy" and "critic" observation groups)
+
+    Environment:
+    - Actor obs: 1024-point cloud in base frame (3072 dims)
+    - Critic obs: 128D state vector (top 32 log poses) — privileged
+    - Action: 4D [x, y, z, yaw]
+    """
+
+    num_steps_per_env = 4
+    max_iterations = 5000
+    save_interval = 10
+    experiment_name = "crane_pointcloud_v2"
+    empirical_normalization = False
+
+    # Logging
+    logger = "tensorboard"
+    neptune_project = None
+    wandb_project = None
+    resume = False
+    load_run = None
+    load_checkpoint = None
+
+    policy = PointNetActorCriticCfg(
+        class_name="rsl_rl.modules.PointNetActorCritic",
+        init_noise_std=1.0,
+        actor_hidden_dims=[128, 64],
+        critic_hidden_dims=[128, 64],
+        activation="elu",
+        norm_type="layernorm",
+        encoder_lr_scale=0.2,
     )
 
     algorithm = RslRlPpoAlgorithmCfg(

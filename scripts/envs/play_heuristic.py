@@ -79,11 +79,24 @@ def main():
     episode_rewards_list = []
     logs_per_episode = []
     piles_fully_cleared = 0
+    total_knocked_off = 0
+    knocked_off_per_episode = []
+    logs_cleared_per_episode = []
 
     # Track per-episode metrics
     episode_rewards = torch.zeros(env.num_envs, device=env.device)
     episode_logs_cleared = torch.zeros(env.num_envs, device=env.device, dtype=torch.int32)
     episode_starting_logs = torch.zeros(env.num_envs, device=env.device, dtype=torch.int32)
+    ep_successful_grasps = torch.zeros(env.num_envs, device=env.device, dtype=torch.int32)
+    ep_failed_grasps = torch.zeros(env.num_envs, device=env.device, dtype=torch.int32)
+    ep_alignment_sum = torch.zeros(env.num_envs, device=env.device)
+    ep_stability_sum = torch.zeros(env.num_envs, device=env.device)
+
+    # Per-episode result lists (for mean ± std reporting)
+    per_ep_success_rates = []
+    per_ep_throughputs = []
+    per_ep_alignments = []
+    per_ep_stabilities = []
 
     # Reset environment FIRST (this sets _per_env_log_counts with domain randomization)
     env.reset()
@@ -124,8 +137,12 @@ def main():
                     successful_grasps += 1
                     total_alignment += alignment
                     total_stability += stability
+                    ep_successful_grasps[i] += 1
+                    ep_alignment_sum[i] += alignment * logs_grasped
+                    ep_stability_sum[i] += stability * logs_grasped
                 else:
                     failed_grasps += 1
+                    ep_failed_grasps[i] += 1
 
             # Check for episode completion
             done = terminated | truncated
@@ -147,11 +164,30 @@ def main():
                     if logs_cleared >= starting_logs:
                         piles_fully_cleared += 1
 
-                    print(f"[Heuristic] Episode {episodes_done}: reward={ep_reward:.2f}, cleared={clear_pct:.1f}% ({logs_cleared}/{starting_logs} logs)")
+                    # Capture knocked-off count before env resets it
+                    ep_knocked_off = int(env._logs_knocked_off[i].item()) if hasattr(env, '_logs_knocked_off') else 0
+                    total_knocked_off += ep_knocked_off
+                    knocked_off_per_episode.append(ep_knocked_off)
+                    logs_cleared_per_episode.append(logs_cleared)
+
+                    # Per-episode grasp metrics
+                    n_success = int(ep_successful_grasps[i].item())
+                    n_fail = int(ep_failed_grasps[i].item())
+                    n_total = n_success + n_fail
+                    per_ep_success_rates.append(n_success / max(1, n_total) * 100)
+                    per_ep_throughputs.append(logs_cleared / max(1, n_success))
+                    per_ep_alignments.append(float(ep_alignment_sum[i].item()) / max(1, logs_cleared))
+                    per_ep_stabilities.append(float(ep_stability_sum[i].item()) / max(1, logs_cleared))
+
+                    print(f"[Heuristic] Episode {episodes_done}: reward={ep_reward:.2f}, cleared={clear_pct:.1f}% ({logs_cleared}/{starting_logs} logs), knocked_off={ep_knocked_off}")
 
                     # Reset per-episode tracking
                     episode_rewards[i] = 0.0
                     episode_logs_cleared[i] = 0
+                    ep_successful_grasps[i] = 0
+                    ep_failed_grasps[i] = 0
+                    ep_alignment_sum[i] = 0.0
+                    ep_stability_sum[i] = 0.0
                     # Update starting logs for next episode
                     if has_variable_logs:
                         episode_starting_logs[i] = int(env._per_env_log_counts[i].item())
@@ -159,32 +195,45 @@ def main():
                     if episodes_done >= args_cli.num_episodes:
                         break
 
-    # Compute summary metrics
-    avg_clear_pct = sum(clearing_percentages) / max(1, len(clearing_percentages))
-    grasp_success_rate = successful_grasps / max(1, total_grasps) * 100
-    avg_throughput = total_logs_grasped / max(1, successful_grasps)
-    avg_alignment = total_alignment / max(1, successful_grasps)
-    avg_stability = total_stability / max(1, successful_grasps)
+    # Helper: mean and sample std dev
+    def _mean(vals):
+        return sum(vals) / len(vals) if vals else 0.0
+
+    def _std(vals, mean_val):
+        return (sum((v - mean_val) ** 2 for v in vals) / (len(vals) - 1)) ** 0.5 if len(vals) > 1 else 0.0
+
+    # All metrics are per-episode averages (each episode weighted equally)
+    avg_reward = _mean(episode_rewards_list)
+    avg_clear_pct = _mean(clearing_percentages)
+    avg_success_rate = _mean(per_ep_success_rates)
+    avg_throughput = _mean(per_ep_throughputs)
+    avg_alignment = _mean(per_ep_alignments)
+    avg_stability = _mean(per_ep_stabilities)
     full_clear_rate = piles_fully_cleared / max(1, episodes_done) * 100
-    avg_reward = total_reward / max(1, episodes_done)
+    knocked_off_pcts = [knocked_off_per_episode[j] / max(1, logs_per_episode[j]) * 100
+                        for j in range(len(knocked_off_per_episode))]
+    avg_knocked_off_pct = _mean(knocked_off_pcts)
 
-    # Track knocked-off logs (same as RL evaluation for fair comparison)
-    knocked_off_logs = env._logs_knocked_off.sum().item() if hasattr(env, '_logs_knocked_off') else 0
-    knocked_off_per_episode = knocked_off_logs / max(1, episodes_done)
+    std_reward = _std(episode_rewards_list, avg_reward)
+    std_clear_pct = _std(clearing_percentages, avg_clear_pct)
+    std_success_rate = _std(per_ep_success_rates, avg_success_rate)
+    std_throughput = _std(per_ep_throughputs, avg_throughput)
+    std_alignment = _std(per_ep_alignments, avg_alignment)
+    std_stability = _std(per_ep_stabilities, avg_stability)
+    std_knocked_off_pct = _std(knocked_off_pcts, avg_knocked_off_pct)
 
-    # Print summary
+    # Print summary (all values are mean ± std across episodes)
     print("=" * 60)
-    print(f"\n[Heuristic] ====== RESULTS ======")
-    print(f"[Heuristic] Episodes: {episodes_done}")
-    print(f"[Heuristic] Avg Episode Reward: {avg_reward:.2f}")
-    print(f"[Heuristic] Avg Pile Cleared: {avg_clear_pct:.1f}%")
-    print(f"[Heuristic] Full Clear Rate: {full_clear_rate:.1f}% ({piles_fully_cleared}/{episodes_done})")
-    print(f"[Heuristic] Grasp Success Rate: {grasp_success_rate:.1f}%")
-    print(f"[Heuristic] Avg Throughput: {avg_throughput:.2f} logs/grasp")
-    print(f"[Heuristic] Avg Alignment: {avg_alignment:.3f}")
-    print(f"[Heuristic] Avg Stability: {avg_stability:.3f}")
-    print(f"[Heuristic] Total Logs Grasped: {total_logs_grasped}")
-    print(f"[Heuristic] Knocked Off Logs: {knocked_off_logs} ({knocked_off_per_episode:.2f}/episode)")
+    print(f"\n[Heuristic] ====== RESULTS ({episodes_done} episodes) ======")
+    print(f"[Heuristic] Episode Reward:      {avg_reward:.2f} ± {std_reward:.2f}")
+    print(f"[Heuristic] Pile Cleared:        {avg_clear_pct:.1f} ± {std_clear_pct:.1f}%")
+    print(f"[Heuristic] Full Clear Rate:     {full_clear_rate:.1f}% ({piles_fully_cleared}/{episodes_done})")
+    print(f"[Heuristic] Grasp Success Rate:  {avg_success_rate:.1f} ± {std_success_rate:.1f}%")
+    print(f"[Heuristic] Throughput:          {avg_throughput:.2f} ± {std_throughput:.2f} logs/grasp")
+    print(f"[Heuristic] Alignment:           {avg_alignment:.3f} ± {std_alignment:.3f}")
+    print(f"[Heuristic] Stability:           {avg_stability:.3f} ± {std_stability:.3f}")
+    print(f"[Heuristic] Knocked Off:         {avg_knocked_off_pct:.1f} ± {std_knocked_off_pct:.1f}%")
+    print(f"[Heuristic] Total Logs Grasped:  {total_logs_grasped}")
     print(f"[Heuristic] ======================")
 
     # Save metrics if requested
@@ -199,38 +248,42 @@ def main():
             "eval_config": {
                 "method": "heuristic_baseline",
                 "num_envs": args_cli.num_envs,
-                "num_episodes": args_cli.num_episodes,
+                "num_episodes": episodes_done,
                 "domain_randomization": args_cli.domain_randomization,
                 "timestamp": timestamp,
             },
             "episodes": {
                 "total": episodes_done,
-                "logs_per_pile_avg": float(sum(logs_per_episode) / max(1, len(logs_per_episode))),
+                "logs_per_pile_avg": float(_mean(logs_per_episode)),
                 "logs_per_pile_min": int(min(logs_per_episode)) if logs_per_episode else 0,
                 "logs_per_pile_max": int(max(logs_per_episode)) if logs_per_episode else 0,
             },
-            "grasp": {
-                "success_rate": grasp_success_rate,
-                "successful": successful_grasps,
-                "failed": failed_grasps,
-                "total": total_grasps,
-            },
-            "pile_clearing": {
-                "avg_cleared_pct": avg_clear_pct,
-                "full_clear_rate": full_clear_rate,
-                "full_clears": piles_fully_cleared,
-            },
-            "performance": {
-                "avg_episode_reward": avg_reward,
-                "avg_throughput": avg_throughput,
-                "avg_alignment": avg_alignment,
-                "avg_stability": avg_stability,
+            "summary": {
+                "reward":            {"mean": avg_reward, "std": std_reward},
+                "pile_cleared_pct":  {"mean": avg_clear_pct, "std": std_clear_pct},
+                "full_clear_rate":   full_clear_rate,
+                "grasp_success_pct": {"mean": avg_success_rate, "std": std_success_rate},
+                "throughput":        {"mean": avg_throughput, "std": std_throughput},
+                "alignment":         {"mean": avg_alignment, "std": std_alignment},
+                "stability":         {"mean": avg_stability, "std": std_stability},
+                "knocked_off_pct":   {"mean": avg_knocked_off_pct, "std": std_knocked_off_pct},
                 "total_logs_grasped": total_logs_grasped,
-                "knocked_off_logs": knocked_off_logs,
-                "knocked_off_per_episode": knocked_off_per_episode,
+                "total_grasps": total_grasps,
+                "total_successful_grasps": successful_grasps,
+                "total_failed_grasps": failed_grasps,
             },
-            "episode_rewards": episode_rewards_list,
-            "clearing_percentages": clearing_percentages,
+            "per_episode": {
+                "rewards": episode_rewards_list,
+                "clearing_pcts": clearing_percentages,
+                "success_rates": per_ep_success_rates,
+                "throughputs": per_ep_throughputs,
+                "alignments": per_ep_alignments,
+                "stabilities": per_ep_stabilities,
+                "knocked_off_counts": knocked_off_per_episode,
+                "knocked_off_pcts": knocked_off_pcts,
+                "logs_cleared": logs_cleared_per_episode,
+                "logs_per_pile": logs_per_episode,
+            },
         }
 
         with open(metrics_file, "w") as f:

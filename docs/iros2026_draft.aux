@@ -1,0 +1,85 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{lindroos2015forestry}
+\citation{mittal2023orbit}
+\citation{qi2017pointnet}
+\citation{morrison2018closing}
+\citation{kumra2017robotic}
+\citation{mahler2017dexnet,zeng2018learning}
+\citation{qi2017pointnet}
+\@writefile{toc}{\contentsline {section}{\numberline {I}Introduction}{1}{section.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {II}Related Work}{1}{section.2}\protected@file@percent }
+\citation{andrychowicz2020learning}
+\citation{lee2020making}
+\citation{egli2022towards}
+\citation{la2023autonomous}
+\citation{pomerleau1988alvinn}
+\citation{ross2011dagger}
+\citation{ross2011dagger}
+\citation{rajeswaran2018learning,nair2018overcoming}
+\citation{mittal2023orbit}
+\citation{rudin2022learning}
+\citation{schulman2017ppo}
+\citation{fortin2022instance}
+\citation{morrison2018closing}
+\@writefile{toc}{\contentsline {section}{\numberline {III}Task Formulation}{2}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-A}}Grasp-and-Remove MDP}{2}{subsection.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-B}}Observations}{2}{subsection.3.2}\protected@file@percent }
+\newlabel{sec:obs}{{\mbox  {III-B}}{2}{Observations}{subsection.3.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-C}}Actions and Workspace Scaling}{2}{subsection.3.3}\protected@file@percent }
+\newlabel{sec:actions}{{\mbox  {III-C}}{2}{Actions and Workspace Scaling}{subsection.3.3}{}}
+\citation{mittal2023orbit}
+\citation{qi2017pointnet}
+\citation{clevert2015elu}
+\newlabel{eq:cossin}{{2}{3}{Actions and Workspace Scaling}{equation.2}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {IV}Environment and Controller}{3}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-A}}Low-level Execution FSM}{3}{subsection.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-B}}Outcome Evaluation and Log Removal}{3}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-C}}Reward}{3}{subsection.4.3}\protected@file@percent }
+\newlabel{sec:reward}{{\mbox  {IV-C}}{3}{Reward}{subsection.4.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-D}}Simulation Notes}{3}{subsection.4.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {V}Learning and Baselines}{3}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-A}}Heuristic Expert}{3}{subsection.5.1}\protected@file@percent }
+\newlabel{sec:expert}{{\mbox  {V-A}}{3}{Heuristic Expert}{subsection.5.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-B}}Behavior Cloning}{3}{subsection.5.2}\protected@file@percent }
+\newlabel{sec:bc}{{\mbox  {V-B}}{3}{Behavior Cloning}{subsection.5.2}{}}
+\citation{loshchilov2019adamw}
+\citation{schulman2017ppo}
+\citation{rudin2022learning}
+\citation{schulman2017ppo}
+\@writefile{lot}{\contentsline {table}{\numberline {I}{\ignorespaces Network architectures for point cloud (PCD) and privileged pose observation types. All hidden layers use ELU activations. The PointNet encoder uses batch normalization.}}{4}{table.caption.1}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{tab:architecture}{{I}{4}{Network architectures for point cloud (PCD) and privileged pose observation types. All hidden layers use ELU activations. The PointNet encoder uses batch normalization}{table.caption.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-C}}Reinforcement Learning (RL)}{4}{subsection.5.3}\protected@file@percent }
+\newlabel{sec:rl}{{\mbox  {V-C}}{4}{Reinforcement Learning (RL)}{subsection.5.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-D}}BC+RL Fine-Tuning}{4}{subsection.5.4}\protected@file@percent }
+\newlabel{sec:bcrl}{{\mbox  {V-D}}{4}{BC+RL Fine-Tuning}{subsection.5.4}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces The grasp-and-remove crane environment. A log loader crane is positioned above a rack containing up to 200 cylindrical logs. At each step, the policy selects a grasp target and a fixed FSM controller executes the pick sequence.}}{4}{figure.caption.2}\protected@file@percent }
+\newlabel{fig:environment}{{1}{4}{The grasp-and-remove crane environment. A log loader crane is positioned above a rack containing up to 200 cylindrical logs. At each step, the policy selects a grasp target and a fixed FSM controller executes the pick sequence}{figure.caption.2}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Observation pipeline. A crane-mounted depth camera renders the scene (a), a semantic mask isolates log pixels (b), the masked depth is back-projected to 3D (c), and farthest point sampling produces the fixed-size $(1024 \times 3)$ input (d).}}{4}{figure.caption.3}\protected@file@percent }
+\newlabel{fig:pcd_pipeline}{{2}{4}{Observation pipeline. A crane-mounted depth camera renders the scene (a), a semantic mask isolates log pixels (b), the masked depth is back-projected to 3D (c), and farthest point sampling produces the fixed-size $(1024 \times 3)$ input (d)}{figure.caption.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {VI}Experiments}{4}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-A}}Setup}{4}{subsection.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-B}}Metrics}{4}{subsection.6.2}\protected@file@percent }
+\newlabel{sec:metrics}{{\mbox  {VI-B}}{4}{Metrics}{subsection.6.2}{}}
+\citation{ross2011dagger}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Clearing progression. Each curve shows the fraction of the 200-log pile cleared as a function of grasp attempt number (mean $\pm $ std over \textcolor {red}{\textbf  {TODO:} $N$} episodes). \textcolor {red}{\textbf  {TODO:} Describe key observations: where methods diverge, RL plateau, BC+RL endgame.}}}{5}{figure.caption.5}\protected@file@percent }
+\newlabel{fig:clearing_curves}{{3}{5}{Clearing progression. Each curve shows the fraction of the 200-log pile cleared as a function of grasp attempt number (mean $\pm $ std over \TODO {$N$} episodes). \TODO {Describe key observations: where methods diverge, RL plateau, BC+RL endgame.}}{figure.caption.5}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {VII}Results}{5}{section.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VII-A}}Overall Performance}{5}{subsection.7.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VII-B}}Local Optima and Endgame Failure}{5}{subsection.7.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Training dynamics. (a) Episode reward: RL plateaus at a local optimum; BC+RL starts at BC performance and improves. (b) Clearing percentage: RL never reaches high clearing rates; BC+RL maintains the expert's clearing ability.}}{5}{figure.caption.6}\protected@file@percent }
+\newlabel{fig:training_curves}{{4}{5}{Training dynamics. (a) Episode reward: RL plateaus at a local optimum; BC+RL starts at BC performance and improves. (b) Clearing percentage: RL never reaches high clearing rates; BC+RL maintains the expert's clearing ability}{figure.caption.6}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Per-grasp throughput as a function of remaining logs. As the pile thins, from-scratch RL throughput degrades sharply, while BC+RL maintains effective targeting into the endgame.}}{5}{figure.caption.7}\protected@file@percent }
+\newlabel{fig:remaining_logs}{{5}{5}{Per-grasp throughput as a function of remaining logs. As the pile thins, from-scratch RL throughput degrades sharply, while BC+RL maintains effective targeting into the endgame}{figure.caption.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VII-C}}Training Dynamics}{5}{subsection.7.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VII-D}}Endgame Failure Analysis}{5}{subsection.7.4}\protected@file@percent }
+\bibstyle{IEEEtran}
+\bibdata{references}
+\@writefile{lot}{\contentsline {table}{\numberline {II}{\ignorespaces Evaluation results across \textcolor {red}{\textbf  {TODO:} $N$} fixed pile configurations. All values are per-episode mean $\pm $ std. Grasps to 50\%/90\% are computed over episodes reaching each threshold.}}{6}{table.caption.4}\protected@file@percent }
+\newlabel{tab:results}{{II}{6}{Evaluation results across \TODO {$N$} fixed pile configurations. All values are per-episode mean $\pm $ std. Grasps to 50\%/90\% are computed over episodes reaching each threshold}{table.caption.4}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {VIII}Discussion and Limitations}{6}{section.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {IX}Conclusion}{6}{section.9}\protected@file@percent }
+\gdef \@abspage@last{6}
