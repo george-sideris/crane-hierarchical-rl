@@ -165,7 +165,12 @@ def main():
                         piles_fully_cleared += 1
 
                     # Capture knocked-off count before env resets it
-                    ep_knocked_off = int(env._logs_knocked_off[i].item()) if hasattr(env, '_logs_knocked_off') else 0
+                    if hasattr(env, '_final_episode_knocked_off'):
+                        ep_knocked_off = int(env._final_episode_knocked_off[i].item())
+                    elif hasattr(env, '_logs_knocked_off'):
+                        ep_knocked_off = int(env._logs_knocked_off[i].item())
+                    else:
+                        ep_knocked_off = 0
                     total_knocked_off += ep_knocked_off
                     knocked_off_per_episode.append(ep_knocked_off)
                     logs_cleared_per_episode.append(logs_cleared)

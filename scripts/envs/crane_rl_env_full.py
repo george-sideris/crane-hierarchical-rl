@@ -873,6 +873,11 @@ class CraneDirectEnvCfgFull(DirectRLEnvCfg):
     use_stability_reward: bool = True
     debug_reward: bool = False  # Print debug info for reward computation
 
+    # Curriculum: gradually increase active logs. None = disabled (default).
+    # List of (episode_threshold, num_active_logs) tuples, e.g.:
+    # [(0, 15), (200, 50), (500, 100), (1000, 200)]
+    curriculum_schedule: list[tuple[int, int]] | None = None
+
     # Camera configuration (ZED X style RGBD camera)
     enable_camera: bool = False  # Set True to enable camera sensor
     camera_cfg: TiledCameraCfg = TiledCameraCfg(
@@ -886,9 +891,9 @@ class CraneDirectEnvCfgFull(DirectRLEnvCfg):
         ),
         data_types=["rgb", "depth", "semantic_segmentation"],
         spawn=sim_utils.PinholeCameraCfg(
-            focal_length=2.12,  # ZED X focal length (mm) - wide angle
+            focal_length=2.2,  # ZED X wide-angle focal length (mm)
             focus_distance=5.0,
-            horizontal_aperture=5.76,  # ZED X sensor width (mm)
+            horizontal_aperture=5.8,  # ZED X global shutter sensor width (mm)
             clipping_range=(0.3, 20.0)  # ZED X depth range
         ),
         width=640,  # Start with lower res for performance (can increase to 1280 or 1920)
@@ -1061,6 +1066,11 @@ class CraneDirectEnvFull(DirectRLEnv):
         self._log_quat = self._log_quat.to(self.device)
         self._bootstrap_done = False
 
+        # Curriculum state
+        self._total_episodes_completed = 0
+        self._curriculum_active_logs = self.cfg.num_logs  # default: all logs
+        self._curriculum_stage_idx = 0  # index into curriculum_schedule
+
         # Heuristic per-env state
         self._phase = torch.full((self.num_envs,), self.PH_HOVER_UP, dtype=torch.int64, device=self.device)
         self._has_log = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
@@ -1214,6 +1224,13 @@ class CraneDirectEnvFull(DirectRLEnv):
         self._logs_out_of_bounds_penalty = 0.0  # Tracked for metrics but not penalized
         self._initial_settling_complete = False  # Track if initial settling has finished
 
+        # Per-cycle knocked-off tracking via remaining-count delta
+        # (more accurate than _logs_knocked_off which only catches OOB despawns)
+        self._prev_logs_remaining = torch.zeros(self.num_envs, device=self.device, dtype=torch.int32)
+        self._prev_cycle_knocked_off = torch.zeros(self.num_envs, device=self.device, dtype=torch.int32)
+        # Snapshot of _logs_knocked_off at episode end (survives _reset_idx)
+        self._final_episode_knocked_off = torch.zeros(self.num_envs, device=self.device, dtype=torch.int32)
+
         # Cache drop goals to avoid repeated calculations and debug prints
         self._cached_drop_goals = torch.zeros(self.num_envs, 3, device=self.device, dtype=torch.float32)
         self._drop_goal_calculated = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
@@ -1244,6 +1261,10 @@ class CraneDirectEnvFull(DirectRLEnv):
         # No-deposition version always uses hierarchical mode
         # 1. Process action (target selection) at HOVER_UP
         action = action.to(self.device)
+
+        # Snapshot remaining count before the cycle for knocked-off calculation
+        for i in range(self.num_envs):
+            self._prev_logs_remaining[i] = self._count_logs_in_rack(i)
 
         # Suppress debug prints during internal loop to avoid terminal spam (set BEFORE _pre_physics_step)
         self._in_hierarchical_loop = True
@@ -1288,6 +1309,18 @@ class CraneDirectEnvFull(DirectRLEnv):
 
         # Re-enable debug prints
         self._in_hierarchical_loop = False
+
+        # Compute per-cycle knocked-off from remaining-count delta.
+        # This captures ALL lost logs (OOB despawns + rolled off + any other
+        # losses) and is more accurate than the OOB-only check inside
+        # _heuristic_step.  Accumulate into _logs_knocked_off for episode totals.
+        for i in range(self.num_envs):
+            remaining_now = self._count_logs_in_rack(i)
+            grasped = int(self._prev_logs_grasped[i].item())
+            expected = int(self._prev_logs_remaining[i].item()) - grasped
+            delta_knocked = max(0, expected - remaining_now)
+            self._prev_cycle_knocked_off[i] = delta_knocked
+            self._logs_knocked_off[i] += delta_knocked
 
         # 4. Compute observations, rewards, dones
         self.obs_buf = self._get_observations()
@@ -2228,8 +2261,10 @@ class CraneDirectEnvFull(DirectRLEnv):
             env_o = self.scene.env_origins[env_id]
             rack_world_x = env_o[0] + self.cfg.rack_x
 
-            # Log count: fixed at default unless DR is on
-            if self.cfg.enable_domain_randomization:
+            # Log count: curriculum > DR > default
+            if self.cfg.curriculum_schedule is not None:
+                per_env_target = int(min(per_env_cap, self._curriculum_active_logs))
+            elif self.cfg.enable_domain_randomization:
                 import random
                 per_env_target = random.randint(20, 200)
             else:
@@ -2616,6 +2651,12 @@ class CraneDirectEnvFull(DirectRLEnv):
                 "reward/per_cycle": (self._episode_return / cycles_per_env.clamp(min=1)).mean().item(),
             }
 
+            # Curriculum metrics (only when curriculum is active)
+            if self.cfg.curriculum_schedule is not None:
+                extras["episode"]["curriculum/active_logs"] = float(self._curriculum_active_logs)
+                extras["episode"]["curriculum/episodes_completed"] = float(self._total_episodes_completed)
+                extras["episode"]["curriculum/stage"] = float(self._curriculum_stage_idx)
+
         return extras
 
     # ---------------- Camera methods ----------------
@@ -2833,6 +2874,19 @@ class CraneDirectEnvFull(DirectRLEnv):
             env_ids = self.crane._ALL_INDICES
         super()._reset_idx(env_ids)
 
+        # Curriculum: advance stage based on total episodes completed
+        if self.cfg.curriculum_schedule is not None:
+            self._total_episodes_completed += len(env_ids)
+            schedule = self.cfg.curriculum_schedule
+            while (self._curriculum_stage_idx < len(schedule) - 1
+                   and self._total_episodes_completed >= schedule[self._curriculum_stage_idx + 1][0]):
+                self._curriculum_stage_idx += 1
+                new_active = schedule[self._curriculum_stage_idx][1]
+                if new_active != self._curriculum_active_logs:
+                    self._curriculum_active_logs = new_active
+                    print(f"[Curriculum] Stage {self._curriculum_stage_idx}: "
+                          f"{new_active} active logs at episode {self._total_episodes_completed}")
+
         # Always randomize pile arrangement (spacing, jitter, center shift) on reset.
         # Log count is only randomized when domain randomization is enabled.
         if self._log_origins_world.numel() == 0:
@@ -2922,8 +2976,11 @@ class CraneDirectEnvFull(DirectRLEnv):
 
                 # Reset grasp outcome tracking for hierarchical RL
                 self._grasp_reward_buf[i] = 0.0
-                self._prev_logs_grasped[i] = 0.0
-                self._prev_grasp_alignment[i] = 0.0
+                # NOTE: Do NOT reset _prev_logs_grasped, _prev_grasp_alignment,
+                # _prev_grasp_stability, _prev_logs_remaining, or _prev_cycle_knocked_off
+                # here. They are read by play scripts AFTER step() returns, and _reset_idx
+                # runs INSIDE step(). They get overwritten by the next step()/cycle call.
+                self._final_episode_knocked_off[i] = self._logs_knocked_off[i]
                 self._logs_knocked_off[i] = 0  # Reset out-of-bounds counter
 
                 # Reset episode-level metrics for TensorBoard
@@ -2933,7 +2990,6 @@ class CraneDirectEnvFull(DirectRLEnv):
                 self._episode_total_logs_grasped[i] = 0
                 self._episode_alignment_sum_weighted[i] = 0.0
                 self._episode_stability_sum_weighted[i] = 0.0
-                self._prev_grasp_stability[i] = 1.0
 
         # Initialize EE goal to home position over trailer to avoid commanding basemast (0,0,0)
         for i in range(self.num_envs):
@@ -4528,9 +4584,10 @@ class CraneDirectEnvFull(DirectRLEnv):
           - Caller should check OOB BEFORE counting grasped logs to avoid double-counting.
         """
         # Only attribute "knocked off" to the policy after initial settling.
-        if getattr(self, "_initial_settling_complete", True):
-            self._logs_knocked_off[env_i] += knocked_off
-        else:
+        # Note: _logs_knocked_off is now updated at the end of step() using the
+        # more accurate remaining-count delta (_prev_cycle_knocked_off).
+        # The OOB count here is still used for the per-cycle penalty.
+        if not getattr(self, "_initial_settling_complete", True):
             knocked_off = 0
 
         knocked_off_penalty = float(getattr(self, "_logs_out_of_bounds_penalty", 0.0)) * float(knocked_off)

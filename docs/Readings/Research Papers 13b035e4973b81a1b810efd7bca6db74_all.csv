@@ -1,0 +1,54 @@
+﻿Name,Author,Link,Notes,Release Date,Status
+A Framework for Force and Visual Control of Robot Manipulators,Vincenzo Lippiello Bruno Siciliano & Luigi Villani,https://link.springer.com/chapter/10.1007/978-3-642-14743-2_31,,2010,Shelved
+"A Survey on Deep Reinforcement Learning Algorithms for
+Robotic Manipulation",Han D.; Mulyana B.; Stankovic V.; Cheng S.,https:// doi.org/10.3390/s23073762,,2023,Shelved
+Grasp Planning with CNN for Log-loading Forestry Machine,Elie Ayoub Patrick Levesque and Inna Sharf,https://ieeexplore.ieee.org/document/10161562,AML,2023,Finished
+"Assisting Operators of Articulated Machinery with
+Optimal Planning and Goal Inference",Ehsan Yousefi; Dylan P. Losey; Inna Sharf,https://ieeexplore.ieee.org/document/9811864,AML,2022,Finished
+Hierarchical Planning and Policy Shaping Shared Autonomy for Articulated Robots,Ehsan Yousefi; Mo Chen; Inna Sharf,http://dx.doi.org/10.48550/arXiv.2307.01943,AML,2023,Finished
+SARA-RT: Scaling up Robotics Transformers with Self-Adaptive Robust Attention,Isabel Leal Krzysztof Choromanski Deepali Jain Avinava Dubey Jake Varley Michael Ryoo Yao Lu Frederick Liu Vikas Sindhwani Quan Vuong Tamas Sarlos Ken Oslund Karol Hausman Kanishka Rao,https://arxiv.org/abs/2312.01990,ICRA24 Best Paper in Robotic Manipulation,2024,To-do
+End-to-End Affordance Learning for Robotic Manipulation,Yiran Geng Boshi An Haoran Geng Yuanpei Chen Yaodong Yang Hao Dong,https://arxiv.org/abs/2209.12941,,2022,Finished
+"End-to-End Robotic Reinforcement Learning
+without Reward Engineering",Avi Singh Larry Yang Kristian Hartikainen Chelsea Finn Sergey Levine,https://arxiv.org/abs/1904.07854,,2019,To-do
+Deep reinforcement learning for robotic manipulation with asynchronous off-policy updates,Shixiang Gu; Ethan Holly; Timothy Lillicrap; Sergey Levine,https://ieeexplore.ieee.org/document/7989385,,2017,Finished
+Prediction Horizon-Varying Model Predictive Control (MPC) for Autonomous Vehicle Control,Zhenbin Chen Jiaqin Lai Peixin Li * Omar I. Awad and Yubing Zhu,https://www.mdpi.com/2079-9292/13/8/1442,,2024,Shelved
+"End-to-end Reinforcement Learning of Robotic
+Manipulation with Robust Keypoints Representation",Tianying Wang; En Yen Puang; Marcus Lee; Wei Jing; Yan Wu,https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=9980136,,2022,Finished
+Dojo: A Differentiable Physics Engine for Robotics,Taylor A. Howell Simon Le Cleac’h Jan Brudigam J. Zico Kolter  Mac Schwager  and Zachary Manchester,https://arxiv.org/pdf/2203.00806,,2023,Finished
+Reinforcement Learning-Based Model Predictive Control for Discrete-Time System,Min Lin Zhongqi Sun Yuanqing Xia Jinhui Zhang,https://ieeexplore.ieee.org/document/10129251,,2024,Finished
+"Continuous MDP Homomorphisms and
+Homomorphic Policy Gradient",Sahand Rezaei-Shoshtari Rosie Zhao Prakash Panangaden David Meger Doina Precup,https://arxiv.org/abs/2209.07364,MRL,2022,To-do
+Hypernetworks for Zero-Shot Transfer in Reinforcement Learning,Sahand Rezaei-Shoshtari Charlotte Morissette Francois Robert Hogan Gregory Dudek David Meger,https://arxiv.org/abs/2211.15457,MRL,2022,To-do
+"Learning the Latent Space of Robot Dynamics
+for Cutting Interaction Inference",Sahand Rezaei-Shoshtari David Meger Inna Sharf,https://arxiv.org/abs/2007.11167,AML,2020,To-do
+Globally Stable Neural Imitation Policies,Amin Abyaneh Mariana Sosa Guzmán Hsiu-Chin Lin,https://arxiv.org/abs/2403.04118,MRL,2024,To-do
+"Modeling and Control of Multi-Arm and Multi-Leg Robots:
+Compensating for Object Dynamics during Grasping",Niels Dehio; Joshua Smith; Dennis Leroy Wigand; Guiyang Xin; Hsiu-Chin Lin; Jochen J. Steil,https://ieeexplore.ieee.org/abstract/document/8462872,McGill Affiliated,2018,Shelved
+"A Projected Inverse Dynamics Approach for Multi-arm Cartesian
+Impedance Control",Hsiu-Chin Lin; Joshua Smith; Keyhan Kouhkiloui Babarahmati; Niels Dehio; Michael Mistry,https://ieeexplore.ieee.org/document/8461202,McGill Affiliated,2018,To-do
+Between MDPs and semi-MDPs: A framework for temporal abstraction in reinforcement learning,Richard S. Sutton   Doina Precup   Satinder Singh,https://www.sciencedirect.com/science/article/pii/S0004370299000521,Foundational,1999,Shelved
+Learning to Move with Affordance Maps,William Qi Ravi Teja Mullapudi Saurabh Gupta Deva Ramanan,https://doi.org/10.48550/arXiv.2001.02364,,2020,Shelved
+Synthesizing multi-log grasp poses,Arvid Fälldin Erik Wallin Tommy Löfstedt Martin Servin,https://arxiv.org/abs/2403.11623,Log Grasping,2024,Finished
+Multi-Log Grasping Using Reinforcement Learning and Virtual Visual Servoing,Erik Wallin  Viktor Wiberg and Martin Servin,https://www.mdpi.com/2218-6581/13/1/3,Log Grasping,2024,Finished
+Towards Autonomous Wood-Log Grasping with a Forestry Crane: Simulator and Benchmarking,Minh Nhat Vu Alexander Wachter Gerald Ebmer Marc-Philip Ecker Tobias Glück Anh Nguyen Wolfgang Kemmetmueller Andreas Kugi,https://doi.org/10.48550/arXiv.2502.01304,Log Grasping,2025,Finished
+GKNet: grasp keypoint network for grasp candidates detection,Ruinian Xu Fu-Jen Chu Patricio A. Vela,https://arxiv.org/abs/2106.08497,4-DoF Pose Synthesis,2021,Finished
+Learning ambidextrous robot grasping policies,Jeffrey Mahler12* Matthew Matl1 Vishal Satish1 Michael Danielczuk1 Bill DeRose2 Stephen McKinley2 Ken Goldberg,https://www.science.org/doi/10.1126/scirobotics.aau4984,Bin Picking,2019,To-do
+6-DOF Grasping for Target-driven Object Manipulation in Clutter,Adithyavairavan Murali; Arsalan Mousavian; Clemens Eppner; Chris Paxton; Dieter Fox,https://ieeexplore.ieee.org/abstract/document/9197318,6-DoF Pose Synthesis,2020,Finished
+Learning Deep Policies for Robot Bin Picking by Simulating Robust Grasping Sequences,Jeffrey Mahler Ken Goldberg,https://proceedings.mlr.press/v78/mahler17a.html,Sequential Grasping,2017,Finished
+Rethinking 6-Dof Grasp Detection: A Flexible Framework for High-Quality Grasping,Wei Tang 1  †  Siang Chen 2  3  †  Pengwei Xie 2  †  Dingchang Hu 2  Wenming Yang 1  Guijin Wang 2,https://arxiv.org/html/2403.15054v1,6-DoF Pose Synthesis,2024,Finished
+"DexGraspNet 2.0: Learning Generative Dexterous
+Grasping in Large-scale Synthetic Cluttered Scenes
+",Jialiang Zhang Haoran Liu Danshi Li Xinqiang Yu Haoran Geng Yufei Ding Jiayi Chen He Wang,https://arxiv.org/abs/2410.23004,6-DoF Pose Synthesis,2024,Finished
+Graspness Discovery in Clutters for Fast and Accurate Grasp Detection,Chenxi Wang∗ Hao-Shu Fang∗ Minghao Gou Hongjie Fang Jin Gao Cewu Lu†,https://arxiv.org/html/2406.11142v1,,2024,Reading
+,,,,,
+Learning to Detect Multi-Modal Grasps for Dexterous Grasping in Dense Clutter,Matt Corsaro Stefanie Tellex George Konidaris,https://arxiv.org/abs/2106.03919,Dense Clutter,2021,Finished
+,,,,,
+GE-Grasp: Efficient Target-Oriented Grasping in Dense Clutter,Zhan Liu Ziwei Wang Sichao Huang Jie Zhou Jiwen Lu,https://arxiv.org/abs/2207.11941,Dense Clutter,https://arxiv.org/abs/2207.11941022,Finished
+High precision grasp pose detection in dense clutter,Marcus Gualtieri Andreas ten Pas Kate Saenko Robert Platt,https://arxiv.org/abs/1603.01564,Dense Clutter,2016,Finished
+,,,,,
+MVGrasp: Real-time multi-view 3D object grasping in highly cluttered environments,Hamidreza Kasaei a   Mohammadreza Kasaei b,https://www.sciencedirect.com/science/article/pii/S0921889022002020,Dense Clutter,2023,Finished
+Grasp Multiple Objects with One Hand,Yuyang Li Bo Liu Yiran Geng Puhao Li Yaodong Yang Yixin Zhu Tengyu Liu Siyuan Huang,https://arxiv.org/abs/2310.15599,MOG,2024,Reading
+"Robotic Multi-Object Grasping from a Pile: Techniques and Robotic Multi-Object Grasping from a Pile: Techniques and Algorithms for Enhanced Dexterity ",Tianze Chen,https://digitalcommons.usf.edu/etd/10607/,MOG,2024,Finished
+Efficient push-grasping for multiple target objects in clutter environments,Liangdong Wu1Yurou ChenYurou Chen2Zhengwei LiZhengwei Li1Zhiyong Liu Zhiyong Liu123*,https://www.frontiersin.org/journals/neurorobotics/articles/10.3389/fnbot.2023.1188468/full,Push-Grasping,2023,Reading
+Learning Robot Grasping from a Random Pile with Deep Q-Learning,Bin Chen12 Jianhua Su12(B) Lili Wang12 and Qipeng Gu12,https://link.springer.com/chapter/10.1007/978-3-030-89098-8_14,Dense Clutter,2021,Finished
+Learning Push-Grasping in Dense Clutter,Marios Kiatos; Iason Sarantopoulos; Leonidas Koutras; Sotiris Malassiotis; Zoe Doulgeri,https://ieeexplore.ieee.org/document/9815129,Dense Clutter,2022,Finished

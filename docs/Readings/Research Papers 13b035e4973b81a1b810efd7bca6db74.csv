@@ -1,0 +1,54 @@
+﻿Notes,Name,Link,Status,Author,Release Date
+Dense Clutter,Learning Push-Grasping in Dense Clutter,https://ieeexplore.ieee.org/document/9815129,Finished,Marios Kiatos; Iason Sarantopoulos; Leonidas Koutras; Sotiris Malassiotis; Zoe Doulgeri,2022
+Dense Clutter,Learning Robot Grasping from a Random Pile with Deep Q-Learning,https://link.springer.com/chapter/10.1007/978-3-030-89098-8_14,Finished,Bin Chen12 Jianhua Su12(B) Lili Wang12 and Qipeng Gu12,2021
+Dense Clutter,MVGrasp: Real-time multi-view 3D object grasping in highly cluttered environments,https://www.sciencedirect.com/science/article/pii/S0921889022002020,Finished,Hamidreza Kasaei a   Mohammadreza Kasaei b,2023
+Dense Clutter,High precision grasp pose detection in dense clutter,https://arxiv.org/abs/1603.01564,Finished,Marcus Gualtieri Andreas ten Pas Kate Saenko Robert Platt,2016
+Dense Clutter,GE-Grasp: Efficient Target-Oriented Grasping in Dense Clutter,https://arxiv.org/abs/2207.11941,Finished,Zhan Liu Ziwei Wang Sichao Huang Jie Zhou Jiwen Lu,https://arxiv.org/abs/2207.11941022
+Dense Clutter,Learning to Detect Multi-Modal Grasps for Dexterous Grasping in Dense Clutter,https://arxiv.org/abs/2106.03919,Finished,Matt Corsaro Stefanie Tellex George Konidaris,2021
+MOG,"Robotic Multi-Object Grasping from a Pile: Techniques and Robotic Multi-Object Grasping from a Pile: Techniques and Algorithms for Enhanced Dexterity ",https://digitalcommons.usf.edu/etd/10607/,Finished,Tianze Chen,2024
+MOG,Grasp Multiple Objects with One Hand,https://arxiv.org/abs/2310.15599,Reading,Yuyang Li Bo Liu Yiran Geng Puhao Li Yaodong Yang Yixin Zhu Tengyu Liu Siyuan Huang,2024
+Log Grasping,Multi-Log Grasping Using Reinforcement Learning and Virtual Visual Servoing,https://www.mdpi.com/2218-6581/13/1/3,Finished,Erik Wallin  Viktor Wiberg and Martin Servin,2024
+Sequential Grasping,Learning Deep Policies for Robot Bin Picking by Simulating Robust Grasping Sequences,https://proceedings.mlr.press/v78/mahler17a.html,Finished,Jeffrey Mahler Ken Goldberg,2017
+Push-Grasping,Efficient push-grasping for multiple target objects in clutter environments,https://www.frontiersin.org/journals/neurorobotics/articles/10.3389/fnbot.2023.1188468/full,Reading,Liangdong Wu1Yurou ChenYurou Chen2Zhengwei LiZhengwei Li1Zhiyong Liu Zhiyong Liu123*,2023
+,Graspness Discovery in Clutters for Fast and Accurate Grasp Detection,https://arxiv.org/html/2406.11142v1,Reading,Chenxi Wang∗ Hao-Shu Fang∗ Minghao Gou Hongjie Fang Jin Gao Cewu Lu†,2024
+6-DoF Pose Synthesis,"DexGraspNet 2.0: Learning Generative Dexterous
+Grasping in Large-scale Synthetic Cluttered Scenes
+",https://arxiv.org/abs/2410.23004,Finished,Jialiang Zhang Haoran Liu Danshi Li Xinqiang Yu Haoran Geng Yufei Ding Jiayi Chen He Wang,2024
+6-DoF Pose Synthesis,Rethinking 6-Dof Grasp Detection: A Flexible Framework for High-Quality Grasping,https://arxiv.org/html/2403.15054v1,Finished,Wei Tang 1  †  Siang Chen 2  3  †  Pengwei Xie 2  †  Dingchang Hu 2  Wenming Yang 1  Guijin Wang 2,2024
+6-DoF Pose Synthesis,6-DOF Grasping for Target-driven Object Manipulation in Clutter,https://ieeexplore.ieee.org/abstract/document/9197318,Finished,Adithyavairavan Murali; Arsalan Mousavian; Clemens Eppner; Chris Paxton; Dieter Fox,2020
+Bin Picking,Learning ambidextrous robot grasping policies,https://www.science.org/doi/10.1126/scirobotics.aau4984,To-do,Jeffrey Mahler12* Matthew Matl1 Vishal Satish1 Michael Danielczuk1 Bill DeRose2 Stephen McKinley2 Ken Goldberg,2019
+4-DoF Pose Synthesis,GKNet: grasp keypoint network for grasp candidates detection,https://arxiv.org/abs/2106.08497,Finished,Ruinian Xu Fu-Jen Chu Patricio A. Vela,2021
+Log Grasping,Towards Autonomous Wood-Log Grasping with a Forestry Crane: Simulator and Benchmarking,https://doi.org/10.48550/arXiv.2502.01304,Finished,Minh Nhat Vu Alexander Wachter Gerald Ebmer Marc-Philip Ecker Tobias Glück Anh Nguyen Wolfgang Kemmetmueller Andreas Kugi,2025
+Log Grasping,Synthesizing multi-log grasp poses,https://arxiv.org/abs/2403.11623,Finished,Arvid Fälldin Erik Wallin Tommy Löfstedt Martin Servin,2024
+,Learning to Move with Affordance Maps,https://doi.org/10.48550/arXiv.2001.02364,Shelved,William Qi Ravi Teja Mullapudi Saurabh Gupta Deva Ramanan,2020
+Foundational,Between MDPs and semi-MDPs: A framework for temporal abstraction in reinforcement learning,https://www.sciencedirect.com/science/article/pii/S0004370299000521,Shelved,Richard S. Sutton   Doina Precup   Satinder Singh,1999
+McGill Affiliated,"A Projected Inverse Dynamics Approach for Multi-arm Cartesian
+Impedance Control",https://ieeexplore.ieee.org/document/8461202,To-do,Hsiu-Chin Lin; Joshua Smith; Keyhan Kouhkiloui Babarahmati; Niels Dehio; Michael Mistry,2018
+McGill Affiliated,"Modeling and Control of Multi-Arm and Multi-Leg Robots:
+Compensating for Object Dynamics during Grasping",https://ieeexplore.ieee.org/abstract/document/8462872,Shelved,Niels Dehio; Joshua Smith; Dennis Leroy Wigand; Guiyang Xin; Hsiu-Chin Lin; Jochen J. Steil,2018
+MRL,Globally Stable Neural Imitation Policies,https://arxiv.org/abs/2403.04118,To-do,Amin Abyaneh Mariana Sosa Guzmán Hsiu-Chin Lin,2024
+AML,"Learning the Latent Space of Robot Dynamics
+for Cutting Interaction Inference",https://arxiv.org/abs/2007.11167,To-do,Sahand Rezaei-Shoshtari David Meger Inna Sharf,2020
+MRL,Hypernetworks for Zero-Shot Transfer in Reinforcement Learning,https://arxiv.org/abs/2211.15457,To-do,Sahand Rezaei-Shoshtari Charlotte Morissette Francois Robert Hogan Gregory Dudek David Meger,2022
+MRL,"Continuous MDP Homomorphisms and
+Homomorphic Policy Gradient",https://arxiv.org/abs/2209.07364,To-do,Sahand Rezaei-Shoshtari Rosie Zhao Prakash Panangaden David Meger Doina Precup,2022
+,Reinforcement Learning-Based Model Predictive Control for Discrete-Time System,https://ieeexplore.ieee.org/document/10129251,Finished,Min Lin Zhongqi Sun Yuanqing Xia Jinhui Zhang,2024
+,Dojo: A Differentiable Physics Engine for Robotics,https://arxiv.org/pdf/2203.00806,Finished,Taylor A. Howell Simon Le Cleac’h Jan Brudigam J. Zico Kolter  Mac Schwager  and Zachary Manchester,2023
+,Prediction Horizon-Varying Model Predictive Control (MPC) for Autonomous Vehicle Control,https://www.mdpi.com/2079-9292/13/8/1442,Shelved,Zhenbin Chen Jiaqin Lai Peixin Li * Omar I. Awad and Yubing Zhu,2024
+ICRA24 Best Paper in Robotic Manipulation,SARA-RT: Scaling up Robotics Transformers with Self-Adaptive Robust Attention,https://arxiv.org/abs/2312.01990,To-do,Isabel Leal Krzysztof Choromanski Deepali Jain Avinava Dubey Jake Varley Michael Ryoo Yao Lu Frederick Liu Vikas Sindhwani Quan Vuong Tamas Sarlos Ken Oslund Karol Hausman Kanishka Rao,2024
+,"End-to-end Reinforcement Learning of Robotic
+Manipulation with Robust Keypoints Representation",https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=9980136,Finished,Tianying Wang; En Yen Puang; Marcus Lee; Wei Jing; Yan Wu,2022
+,Deep reinforcement learning for robotic manipulation with asynchronous off-policy updates,https://ieeexplore.ieee.org/document/7989385,Finished,Shixiang Gu; Ethan Holly; Timothy Lillicrap; Sergey Levine,2017
+,"End-to-End Robotic Reinforcement Learning
+without Reward Engineering",https://arxiv.org/abs/1904.07854,To-do,Avi Singh Larry Yang Kristian Hartikainen Chelsea Finn Sergey Levine,2019
+,End-to-End Affordance Learning for Robotic Manipulation,https://arxiv.org/abs/2209.12941,Finished,Yiran Geng Boshi An Haoran Geng Yuanpei Chen Yaodong Yang Hao Dong,2022
+AML,Hierarchical Planning and Policy Shaping Shared Autonomy for Articulated Robots,http://dx.doi.org/10.48550/arXiv.2307.01943,Finished,Ehsan Yousefi; Mo Chen; Inna Sharf,2023
+AML,"Assisting Operators of Articulated Machinery with
+Optimal Planning and Goal Inference",https://ieeexplore.ieee.org/document/9811864,Finished,Ehsan Yousefi; Dylan P. Losey; Inna Sharf,2022
+AML,Grasp Planning with CNN for Log-loading Forestry Machine,https://ieeexplore.ieee.org/document/10161562,Finished,Elie Ayoub Patrick Levesque and Inna Sharf,2023
+,"A Survey on Deep Reinforcement Learning Algorithms for
+Robotic Manipulation",https:// doi.org/10.3390/s23073762,Shelved,Han D.; Mulyana B.; Stankovic V.; Cheng S.,2023
+,A Framework for Force and Visual Control of Robot Manipulators,https://link.springer.com/chapter/10.1007/978-3-642-14743-2_31,Shelved,Vincenzo Lippiello Bruno Siciliano & Luigi Villani,2010
+,,,,,
+,,,,,
+,,,,,

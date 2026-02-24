@@ -1,0 +1,710 @@
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%2345678901234567890123456789012345678901234567890123456789012345678901234567890
+%        1         2         3         4         5         6         7         8
+
+\documentclass[letterpaper, 10 pt, conference]{IEEEtran}  % Comment this line out if you need a4paper
+
+%\documentclass[a4paper, 10pt, conference]{ieeeconf}      % Use this line for a4 paper
+\usepackage{hyperref}
+\IEEEoverridecommandlockouts                              % This command is only needed if 
+\usepackage{xcolor} % for \textcolor command                                                         % you want to use the \thanks command
+
+\overrideIEEEmargins                                      % Needed to meet printer requirements.
+
+%In case you encounter the following error:
+%Error 1010 The PDF file may be corrupt (unable to open PDF file) OR
+%Error 1000 An error occurred while parsing a contents stream. Unable to analyze the PDF file.
+%This is a known problem with pdfLaTeX conversion filter. The file cannot be opened with acrobat reader
+%Please use one of the alternatives below to circumvent this error by uncommenting one or the other
+%\pdfobjcompresslevel=0
+%\pdfminorversion=4
+
+% See the \addtolength command later in the file to balance the column lengths
+% on the last page of the document
+
+% The following packages can be found on http:\\www.ctan.org
+\usepackage{graphicx} % for including graphics
+%\usepackage{epsfig} % for postscript graphics files
+\usepackage{multirow} % for \multirow command
+%\usepackage{epsfig} % for postscript graphics files
+%\usepackage{mathptmx} % assumes new font selection scheme installed
+%\usepackage{times} % assumes new font selection scheme installed
+%\usepackage{amsmath} % assumes amsmath package installed
+\usepackage{amssymb}  % assumes amsmath package installed
+\usepackage{caption}
+\usepackage{booktabs} % for \toprule, \midrule, \bottomrule
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{amsmath}
+\title{\LARGE \bf
+Vision-Based Semantic SLAM for
+Autonomous Navigation in Mill Yard
+}
+
+
+\author{
+\IEEEauthorblockN{1\textsuperscript{st} Junrui Huang}
+\IEEEauthorblockA{\textit{Department of Mechanical Engineering} \\
+\textit{McGill University} \\
+Montreal, Canada \\
+junrui.huang@mail.mcgill.ca}
+\and
+\IEEEauthorblockN{2\textsuperscript{nd} Inna Sharf}
+\IEEEauthorblockA{\textit{Department of Mechanical Engineering} \\
+\textit{McGill University} \\
+Montreal, Canada \\
+inna.sharf@mcgill.ca}
+\and
+\IEEEauthorblockN{3\textsuperscript{rd} Elie Ayoub}
+\IEEEauthorblockA{\textit{FPInnovations} \\
+Pointe-Claire, Canada \\
+elie.ayoub@fpinnovations.ca}
+\and
+\IEEEauthorblockN{4\textsuperscript{th} Nicolas Lemieux}
+\IEEEauthorblockA{\textit{FPInnovations} \\
+Pointe-Claire, Canada \\
+nicolas.lemieux@fpinnovations.ca}
+\and
+\IEEEauthorblockN{5\textsuperscript{th} Heshan Fernando}
+\IEEEauthorblockA{\textit{FPInnovations} \\
+Pointe-Claire, Canada \\
+heshan.fernando@fpinnovations.ca}
+}
+
+
+
+
+\begin{document}
+
+
+\maketitle
+ \thispagestyle{empty}
+\pagestyle{empty}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{abstract}
+Log-loading machines are essential in mill-yard operations for unloading logs from incoming transport trucks onto mill infeed deck, as well as managing log inventory in stockpiles. This paper focuses on the log-loading operation in the vicinity of the infeed deck, with the goal of enabling higher levels of autonomy in this task. Near the infeed deck, the machine must localize reliably relative to the infeed deck and adjacent buffer piles, while also detecting and localizing arriving trucks and trailers; this is a highly dynamic outdoor environment. We present a vision-based semantic SLAM system that uses a stereo camera mounted on the log-loading machine as the sole perception sensor. The proposed pipeline is based on stereo ORB-SLAM2 for real-time pose estimation and mapping. It integrates a parallel semantic thread that converts stereo depth into pseudo-LiDAR point clouds and predicts oriented 3D bounding boxes for key objects, including the infeed deck, log piles, and log trucks. The estimated 3D bounding boxes are used to remove features on potentially dynamic objects during SLAM tracking for improving robustness, and to construct a persistent object-level semantic map by transforming 3D bounding boxes into the global SLAM frame. We evaluated the system in a virtual NVIDIA Isaac Sim infeed-deck environment using synthetic stereo image sequences. The evaluation reports camera trajectory accuracy, semantic object localization accuracy, and runtime performance, and includes ablations to isolate the impact of dynamic-feature removal and object-level semantic mapping. The results indicate that incorporating object-level 3D detections improves the robustness and accuracy of stereo SLAM in dynamic infeed-deck scenes while producing a globally consistent semantic map in practical runtime.
+\end{abstract}
+\begin{IEEEkeywords}
+forestry industry, computer vision, SLAM, deep learning
+\end{IEEEkeywords}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Introduction}
+\label{sec:intro}
+
+Autonomous operation of log-loading machines in a mill yard is increasingly attractive for improving productivity and addressing operator shortages \cite{c1}. A particularly demanding part of the workflow occurs in the \emph{infeed-deck environment}, the area surrounding the mill’s infeed deck where logs are received, aligned, and fed into the processing line, as shown in Fig. \ref{figure1}. The scene near the deck is highly dynamic: trucks arrive and depart, and log piles are continuously picked and placed using the crane of a log-loading machine. To act safely and efficiently, an autonomous log-loading machine must: (i) accurately localize and estimate its pose during its approach to the infeed deck and (ii) estimate the 3D locations and sizes of objects of interest, including the infeed deck, log transport trucks, and log piles.
+
+A key problem is the transition from yard-scale navigation to deck-scale precision. While GPS-based navigation is practical for coarse-accuracy driving in the mill yard,  it cannot provide the sub-meter accuracy required for reliable operation within 10--20\,m of the infeed deck. Moreover, autonomous operation near the deck requires semantic understanding of the scene: for example, decision logic can be expressed through conditions such as whether a truck is present, whether logs remain on the truck, and whether the infeed deck or buffer piles can accommodate additional logs. These requirements motivate a localization and mapping system that provides both precise pose estimation and persistent object-level understanding in a common global frame.
+
+This paper investigates whether a minimal vision-only sensor setting can meet these needs in the infeed deck environment. We consider a stereo camera mounted on the log loader (e.g., a ZED~2i stereo camera), which provides synchronized stereo imagery without additional ranging sensors. With this setup, we propose a stereo-vision semantic SLAM pipeline that couples a geometric SLAM backbone with a deep-learning 3D object detection model. ORB-SLAM2 \cite{orbslam2} provides real-time stereo SLAM, while a parallel semantic thread converts stereo depth into pseudo-LiDAR point clouds and estimates oriented 3D bounding boxes for objects of interest. The estimated bounding boxes support two complementary functions: (1) improving the robustness of feature-based tracking by removing features associated with potentially dynamic objects, and (2) constructing an object-level semantic map by transforming detections into the global SLAM frame and associating them over time.
+\begin{figure}[thpb]
+      \centering
+      \includegraphics[scale=0.17]{Figure/indeed_deck_side.png}
+      \caption{Drone view of real infeed deck environment}
+      \label{figure1}
+   \end{figure}
+We evaluate the proposed approach using the synthetic stereo sequences generated in a simulated infeed-deck environment in NVIDIA Isaac Sim \footnote{https://developer.nvidia.com/isaac/sim}, and stereo data collected at a real infeed deck is used for constructing the dataset to train the 3D object detection model. Experiments measure camera trajectory accuracy, semantic object localization accuracy, and runtime performance, and include ablation studies that isolate the effects of dynamic-feature removal and object-level mapping. Overall, the results indicate that incorporating 3D object detections into a stereo SLAM pipeline increases robustness in dynamic infeed-deck scenes while producing globally consistent 3D semantic object estimates at practical runtimes.
+
+\vspace{0.25em}
+The specific contributions made in this paper are:
+\begin{itemize}\setlength\itemsep{0.15em}
+    \item An infeed-deck semantic SLAM formulation built on stereo-only sensing, combining ORB-SLAM2 with pseudo-LiDAR 3D object detection to output both ego-motion and object-level semantic maps.
+    \item A 3D-box-driven strategy for removing features on dynamic objects and generating persistent global 3D bounding boxes for infeed-deck objects of interest.
+    \item A reproducible evaluation setup for the infeed-deck scenario, including Isaac Sim stereo image sequence generation and complementary real stereo data, with metrics and ablations for pose, object localization, and runtime.
+\end{itemize}
+
+
+
+\section{Related Work}
+\label{sec:related}
+
+\subsection{Visual and Stereo SLAM in Dynamic Environments}
+Visual SLAM estimates camera motion while building a map from image observations, typically combining a front end (tracking) with a back end (optimization) and loop closing to reduce drift \cite{cadena_slam_survey}. Feature-based methods extract and match keypoints (e.g., ORB) and remain popular in outdoor settings; ORB-SLAM and its stereo variant are widely used in real-time systems that integrate tracking, mapping, and loop closure \cite{orbslam,orbslam2}. Direct methods instead optimize photometric consistency (e.g., LSD-SLAM, DSO), but can be sensitive to illumination changes common in outdoor work sites \cite{lsdslam,dso}. Dynamic scenes remain challenging because moving objects corrupt correspondences and map points \cite{dsslam,dynseg}; in our setting, incoming and departing trucks create dynamic regions that must be handled explicitly in the SLAM front end.
+
+\subsection{Semantic SLAM and Object-Level Mapping}
+While conventional SLAM produces geometric maps, semantic SLAM augments mapping with labels from semantic segmentation, object detection, or instance segmentation to support higher-level reasoning \cite{semanticfusion}. Representative systems fuse CNN semantics into dense maps (SemanticFusion \cite{semanticfusion}) or track multiple moving instances (MaskFusion \cite{maskfusion}), and other approaches incorporate learned detectors to improve robustness in dynamic environments \cite{dsslam}. For industrial autonomy, object-level representations are often preferred due to their compactness and task relevance; accordingly, we represent infeed-deck objects as oriented 3D bounding boxes that can be associated over time and expressed in a global frame \cite{semanticfusion,maskfusion}.
+
+\subsection{3D Object Detection on Point Clouds and Pseudo-LiDAR}
+3D object detection estimates 3D bounding boxes (position, size, orientation) and is a core component of semantic mapping \cite{c3}. Although LiDAR point clouds are a standard input, stereo cameras can provide a lower-cost alternative by generating dense depth and point clouds \cite{c17}. The pseudo-LiDAR paradigm converts stereo depth maps into LiDAR-like point clouds, enabling the reuse of established point-cloud detectors \cite{c17}. Following this direction, we use stereo pseudo-LiDAR to train and evaluate a LiDAR-style 3D object detection model (PointPillars) for infeed-deck objects; and use the resulting 3D bounding boxes as semantic inputs to SLAM for dynamic feature removal and object-level mapping \cite{c19,cXX,c7}.
+
+
+
+\section{Problem Setting and System Overview}
+\label{sec:problem_system}
+
+\subsection{Infeed-Deck Environment}
+We consider autonomous operation of a log loader in the infeed-deck environment, defined as the immediate vicinity of the mill’s infeed deck where most loading and unloading activity occurs. The infeed deck is a fixed conveyor platform that receives incoming logs, aligns them, and feeds them into the mill’s processing line.
+This workspace is inherently dynamic: log transport trucks arrive and depart, buffer log piles are created and reshaped, and occlusions around the deck structure vary over time.
+Following the task requirements, we focus on three object categories that govern deck-side decision making: (i) the infeed deck structure, (ii) log piles (on-deck, on-truck, and buffer piles on both sides of the deck), and (iii) log transport trucks.
+
+\subsection{Sensor Setup and Assumptions}
+We adopt a minimal sensing configuration in which a single stereo camera (e.g., ZED~2i) is mounted on the log loader and provides synchronized left/right image streams.
+We assume that  the log-loading machine can reach the vicinity of the infeed deck using coarse global navigation (e.g., using GPS), and then switches to vision-based localization and semantic perception for operation near the infeed deck.
+The SLAM module maintains a global reference frame (GF) initialized at startup (set by the camera’s initial pose), and all persistent map outputs are expressed in this frame.
+
+\subsection{Semantic SLAM Pipeline Overview}
+\begin{figure*}[!tbh]
+  \vspace*{5pt}
+  \centering
+        \includegraphics[height=0.4\textwidth]{Figure/pipeline.png}
+        \caption{Structure of the proposed semantic SLAM pipeline.}
+        \label{fig:pipeline_overview}
+\end{figure*}
+Figure~\ref{fig:pipeline_overview} summarizes the proposed pipeline, which runs two coupled threads. The first thread is a stereo ORB-SLAM2 backbone that estimates the camera pose and maintains a geometric map in GF. The second thread performs semantic perception by computing stereo depth, generating a pseudo-LiDAR point cloud, and predicting oriented 3D bounding boxes for objects of interest (infeed decks, buffer log piles, and log trucks).
+The object detector outputs bounding boxes in the left camera frame (LCamF); using the current SLAM pose, these boxes are transformed into GF and fused over time to form a persistent object-level semantic map.
+Boxes corresponding to movable classes (e.g., trucks) are fed back to the SLAM front end to remove features inside those regions prior to tracking, thus improving robustness and localization accuracy in dynamic infeed-deck scenes.
+Overall, globally referenced camera poses and geometric landmarks from ORB-SLAM2 are combined with globally referenced 3D detections to produce a coherent semantic map suitable for deck-side navigation and interaction.
+
+
+\section{Semantic SLAM Method}
+\label{sec:method}
+
+\subsection{Baseline Stereo SLAM (ORB-SLAM2)}
+We use ORB-SLAM2 as the geometric backbone because stereo provides metric scale and the system includes local bundle adjustment and loop-closure correction for global consistency.
+ORB-SLAM2 maintains the camera pose in the global frame (GF) as
+$\mathbf{T}_{\mathrm{GF}\leftarrow\mathrm{C}}=
+\begin{bmatrix}\mathbf{R}_{\mathrm{GF}\leftarrow\mathrm{LCamF}} & \mathbf{t}_{\mathrm{GF}\leftarrow\mathrm{LCamF}}\\ \mathbf{0}^\top & 1\end{bmatrix}\in SE(3)$
+and a sparse map of 3D landmarks.
+
+Given rectified stereo images, ORB-SLAM2 matches ORB keypoints between the left/right images and computes disparity
+$d = u_L - u_R$. Assuming rectified stereo and square pixels, we use a single focal length $f$ (i.e., $f_x=f_y=f$), yielding depth:
+
+\begin{equation}
+Z=\frac{f\,b}{d}
+\label{eq:stereo_depth}
+\end{equation}
+where $f$ is the focal length (pixels) and $b$ is the stereo baseline.
+Back-projection from image coordinates $\mathbf{u}=(u,v)$ to 3D coordinates in the left camera frame (LCamF) assumes the principal point is at the image center $(w/2,\;h/2)$:
+
+\begin{equation}
+\mathbf{x}^{\mathrm{LCamF}}=
+\pi^{-1}(\mathbf{u},d)=
+\begin{bmatrix}
+(u-\tfrac{w}{2})\,Z/f\\
+(v-\tfrac{h}{2})\,Z/f\\
+Z
+\end{bmatrix},
+\quad Z=\frac{f\,b}{d}
+\label{eq:backproj}
+\end{equation}
+
+Motion is estimated by minimizing a robust reprojection error (tracking), while mapping and loop closure refine the trajectory and landmarks; after confirming a loop, ORB-SLAM2 applies an $SE(3)$ correction and propagates it through the map’s spanning tree to keep the full trajectory globally consistent.
+
+\subsection{Stereo Pseudo-LiDAR and 3D Object Detection}
+A parallel semantic thread converts each rectified stereo pair into a 3D point cloud (pseudo-LiDAR) that is used for 3D object detection and semantic mapping. Starting from rectified left/right images at time $t$, we estimate a disparity map $d_t(\mathbf{u})$ for pixels $\mathbf{u}=(u,v)$ in the left image, and recover depth via the standard pinhole stereo model. All reconstructed 3D points are initially expressed in the left-camera frame (LCamF).
+
+Let $\pi^{-1}(\mathbf{u},d)$ denote stereo back-projection from pixel coordinates and disparity to a 3D point in LCamF. The pseudo-LiDAR point cloud at time $t$ is
+\begin{equation}
+\mathcal{P}_t=\left\{\mathbf{p}^{\mathrm{LCamF}}_{t,i}\right\}_{i=1}^{N_t},
+\qquad
+\mathbf{p}^{\mathrm{LCamF}}_{t,i}=\pi^{-1}\!\left(\mathbf{u}_{t,i},\, d_t(\mathbf{u}_{t,i})\right),
+\label{eq:pseudolidar}
+\end{equation}
+where $N_t$ is the number of valid reconstructed points. Points are filtered using standard stereo-quality gates, including a left--right consistency check (threshold $\tau_{\mathrm{LR}}$), confidence/validity checks, positive depth, and near/far range clipping; we further reduce noise and runtime using voxel-grid downsampling with leaf size $\ell$ (and optional outlier removal when runtime permits).
+
+To express the point cloud in the global frame (GF), we use the current SLAM pose estimate $\mathbf{T}_{\mathrm{GF}\leftarrow\mathrm{LCamF}}(t)$ and transform each point from LCamF to GF.
+We use the ZED~2i SDK\footnote{https://github.com/stereolabs/zed-sdk.git} as the stereo back-end in our experiments, which provides hardware-accelerated depth and per-pixel confidence for generating pseudo-LiDAR point clouds.
+
+We then apply a point-cloud 3D detector to $\mathcal{P}_t$ and predict a set of oriented 3D bounding boxes in LCamF:
+\begin{equation}
+\begin{aligned}
+\mathcal{B}_t &= \left\{(\mathbf{b}_{t,k},\, c_{t,k})\right\}_{k=1}^{M_t},\\
+\mathbf{b}_{t,k} &= \left[x_{t,k},y_{t,k},z_{t,k},l_{t,k},w_{t,k},h_{t,k},\psi_{t,k}\right]^\top .
+\end{aligned}
+\label{eq:box_state}
+\end{equation}
+where $M_t$ is the number of detections, $(x,y,z)$ is the box center, $(l,w,h)$ are box dimensions, $\psi$ is the rotation angle about the vertical axis (yaw), and $c$ is the semantic class label.
+
+We use PointPillars as our default 3D detector because it provides a strong accuracy–efficiency trade-off for pseudo-LiDAR point clouds in our infeed-deck domain. PointPillars is a BEV detector that discretizes the ground plane into vertical pillars, encodes points in each pillar using a Pillar Feature Net (PFN), and processes the resulting pseudo-image with a lightweight 2D CNN backbone and a single-stage detection head for classification and oriented 3D box regression. We train the detector using stereo pseudo-LiDAR generated from our Isaac Sim data pipeline, and adopt a mixed synthetic/real training set (800 synthetic + 68 real for training, 200 synthetic + 32 real for validation) to improve robustness under limited real annotations. At inference time we restrict detection to a deck-centered BEV window of $[-30,30]\times[-6,5]$ m to cover the working area while reducing distant clutter and false positives. Pillarization uses $[0.25,0.25,11]$ m bins (a single tall bin along $z$) with up to 32 points per pillar, and we use geometry-only input $(x,y,z)$ because adding an RGB-derived intensity channel consistently reduced AP in our experiments. With this configuration (IoU $=0.7$), PointPillars achieves 3D AP of 44.8\% for trucks, 78.4\% for log piles, and 64.7\% for the infeed deck; this is sufficient for our downstream SLAM modules that rely on stable object bounding boxes for dynamic feature removal and semantic mapping. Finally, PointPillars meets real-time constraints on our evaluation machine (RTX 3070 Laptop, 8GB), with an average inference time of 18.4 ms per frame, making it practical to run alongside stereo SLAM in the full pipeline.
+
+
+\subsection{Dynamic Feature Removal}
+ORB-SLAM2 assumes that tracked image features arise from static structure. In the infeed-deck scene, however, log trucks (and sometimes logs) can move, so their features may violate the static-scene assumption and degrade pose estimation. To improve robustness, we add a dynamic feature removal module immediately after ORB keypoint/descriptor extraction. The module removes features that are likely to belong to movable objects in two stages, as detailed next.  
+
+\noindent {\bf Stage 1} {\it 3D box containment test in left-camera frame (LCamF)}:
+At time $t$, the 3D detector outputs a set of oriented 3D bounding boxes in the left-camera frame (LCamF). When stereo disparity is available for a keypoint $\mathbf{u}_i=(u_i,v_i)$, we back-project it into 3D using \eqref{eq:backproj} to obtain $\mathbf{x}^{\mathrm{LCamF}}_i$. Each detection yields an oriented bounding box $B_k$ parameterized by its rotation $\mathbf{R}_k\in SO(3)$, center translation $\mathbf{t}_k\in\mathbb{R}^3$, and half-sizes $\mathbf{h}_k=(h_x,h_y,h_z)$. To test whether a feature lies inside the $k$-th box, we express the point in the box-local coordinate frame:
+\begin{equation}
+\mathbf{y}_{i,k}=\mathbf{R}_k^\top\left(\mathbf{x}^{\mathrm{LCamF}}_i-\mathbf{t}_k\right),
+\end{equation}
+and declare it inside if the coordinates satisfy the axis-aligned bounds:
+\begin{equation}
+\mathrm{inside}(B_k)\Longleftrightarrow
+|y_{i,x}|\le h_x \ \wedge\ |y_{i,y}|\le h_y\ \wedge\ |y_{i,z}|\le h_z.
+\label{eq:inside}
+\end{equation}
+If $\mathbf{x}^{\mathrm{LCamF}}_i$ falls inside any box whose class is considered movable (in our application, the truck class), then the corresponding ORB feature is removed from the tracking set. This stage operates directly in 3D and therefore does not require projecting boxes back to the image plane. If a keypoint has no valid disparity (no reliable depth), it is not removed in Stage~1 and is deferred to Stage~2.
+
+\noindent {\bf Stage 2} {\it Windowed epipolar-consistency test (Sampson error)}:
+Stage~1 may miss dynamic features when detections are absent or boxes are imprecise. Therefore, we additionally validate the remaining feature tracks over a short temporal window of $L$ frames using epipolar geometry. Let $\mathbf{E}_{t-1,t}$ be the essential matrix implied by the current estimated motion between frames $t-1$ and $t$. For a static correspondence, the normalized image coordinates $\tilde{\mathbf{u}}_{t-1}$ and $\tilde{\mathbf{u}}_{t}$ should satisfy $\tilde{\mathbf{u}}_t^\top \mathbf{E}_{t-1,t}\tilde{\mathbf{u}}_{t-1}\approx 0$. We quantify this with the Sampson error,
+\begin{equation}
+e_{\mathrm{epi}}=
+\frac{\left(\tilde{\mathbf{u}}_t^\top \mathbf{E}_{t-1,t}\tilde{\mathbf{u}}_{t-1}\right)^2}
+{\left\|(\mathbf{E}_{t-1,t}\tilde{\mathbf{u}}_{t-1})_{1:2}\right\|_2^2+\left\|(\mathbf{E}_{t-1,t}^\top\tilde{\mathbf{u}}_t)_{1:2}\right\|_2^2}.
+\label{eq:sampson}
+\end{equation}
+A tracked feature is accepted only if it satisfies $e_{\mathrm{epi}}<\tau_{\mathrm{epi}}$ for at least $m$ of the last $L$ consecutive frame pairs. Because this check is purely 2D--2D, it remains applicable even when disparity is missing.
+\subsection{Semantic Map Generation}
+In addition to the sparse landmark map produced by ORB-SLAM2, we maintain an object-level semantic map in the global frame (GF).
+The map stores a set of persistent object entries as tuples $(\mathbf{s}_j, c_j)$, where $c_j$ is the semantic class label and $\mathbf{s}_j$ is the 3D bounding box state defined as:
+\begin{equation}
+\mathbf{s}_j=[x_j,y_j,z_j,l_j,w_j,h_j,\psi_j]^\top,
+\label{eq:obj_state}
+\end{equation}
+In the above, $(x_j,y_j,z_j)$ is the object center in GF, $(l_j,w_j,h_j)$ are its dimensions, and $\psi_j$ is its yaw angle. Optionally, we maintain an age or confidence score to remove objects that have not been observed for a long time.
+
+For each frame, the detector outputs boxes in LCamF. Using the current SLAM pose $\mathbf{T}_{\mathrm{GF}\leftarrow\mathrm{LCamF}}=[\mathbf{R}_{\mathrm{GF}\leftarrow\mathrm{LCamf}},\mathbf{t}_{\mathrm{GF}\leftarrow\mathrm{LCamF}}]$, we transform the detection center into GF:
+\begin{equation}
+\mathbf{p}^{\mathrm{GF}}_k=\mathbf{R}_{\mathrm{GF}\leftarrow\mathrm{LCamF}}\mathbf{p}^{\mathrm{LCamF}}_k+\mathbf{t}_{\mathrm{GF}\leftarrow\mathrm{LCamF}}.
+\label{eq:tf_center}
+\end{equation}
+The same rigid transform is applied consistently to the full 3D box parameters whenever fusion is performed in GF.
+
+A transformed detection $k$ is matched to an existing map object $j$ if (i) the class labels match and
+(ii) the Euclidean distance between their centers is below a position threshold $\tau_{\mathrm{pos}}>0$:
+\begin{equation}
+c_k=c_j \ \ \text{and}\ \ \|\mathbf{p}_k-\mathbf{p}_j\|_2\le \tau_{\mathrm{pos}}.
+\label{eq:assoc}
+\end{equation}
+If multiple objects satisfy the criterion, the nearest one is selected; otherwise, a new object is initialized with $\mathbf{s}_{\text{new}}=\mathbf{z}_k$.
+
+\textbf{Fusion update.} For a matched object, we use exponential averaging to smooth center position and yaw:
+\begin{align}
+\mathbf{p}_j &\leftarrow (1-\alpha)\mathbf{p}_j+\alpha \mathbf{p}_k, \label{eq:pos_ema}\\
+\psi_j &\leftarrow \mathrm{wrap}\!\left(\psi_j+\alpha\,\mathrm{wrap}(\psi_k-\psi_j)\right),
+\label{eq:yaw_ema}
+\end{align}
+where $\alpha$ is a small gain (e.g., $\alpha=0.2$). For the box dimensions, we avoid aggressive shrinkage under partial visibility. We either keep a running maximum
+\begin{equation}
+[l_j,w_j,h_j]\leftarrow \max([l_j,w_j,h_j],[l_k,w_k,h_k]),
+\label{eq:size_max}
+\end{equation}
+or apply asymmetric gains that allow growth faster than shrinkage:
+\begin{equation}
+\mathbf{d}_j \leftarrow
+\begin{cases}
+(1-\beta)\mathbf{d}_j+\beta\,\mathbf{d}_k, & \mathbf{d}_k \ge \mathbf{d}_j\ \text{(per axis)}\\
+(1-\beta_\downarrow)\mathbf{d}_j+\beta_\downarrow\,\mathbf{d}_k, & \text{otherwise},
+\end{cases}
+\label{eq:size_asym}
+\end{equation}
+where $\mathbf{d}=[l,w,h]^\top$ and $\beta_\downarrow\ll \beta$ (e.g., $\beta=0.4$, $\beta_\downarrow=0.05$). This produces stable, persistent 3D boxes in GF while remaining lightweight enough for real-time operation.
+
+
+\subsection{ROS Implementation}
+\begin{figure*}[!tbh]
+    \centering
+    \includegraphics[scale=0.6]{Figure/rosnode.png}
+    \caption{ROS node graph for the semantic SLAM pipeline. Rectangles denote nodes
+    (processes), and arrows denote topics (message streams) between them.}
+    \label{fig:rosgraph}
+\end{figure*}
+As shown in Fig.~\ref{fig:rosgraph}, we implement the proposed semantic SLAM pipeline in ROS1, where computation is split into nodes (processes) that exchange typed messages over named topics. The ORB-SLAM2 backbone and the 3D detection module run as independent nodes and communicate using standard ROS message types: \texttt{sensor\_msgs/Image} for rectified stereo imagery, \texttt{sensor\_msgs/PointCloud2} for per-frame pseudo-LiDAR point clouds, \texttt{visualization\_msgs/MarkerArray} for oriented 3D bounding boxes, and \texttt{geometry\_msgs/PoseStamped} for camera poses.
+
+Stereo pairs are time-synchronized with \texttt{message\_filters::ApproximateTime}, which matches left/right images with nearly identical timestamps. All publishers stamp messages in the left-camera time frame, and the ROS TF system maintains a time-stamped transform chain (e.g., $\texttt{map}$ (GF) $\rightarrow$ $\texttt{left\_camera}$ $\rightarrow$ $\texttt{imu}$). Queue sizes are kept small (3--5 messages) to bound latency. Both the detector and SLAM nodes query TF as needed to convert boxes and points between the left camera frame (LCamF) and the global frame (GF). When detections arrive in LCamF, the SLAM node transforms them to GF using the current pose/TF before semantic fusion; if detections are already expressed in GF, only consistency checks and fusion are applied. All nodes share a common calibration package (intrinsics, baseline, and rectification), and the full graph can be driven offline by replaying recorded ROS bags.
+
+\begin{table*}[t]
+\centering
+\caption{Key ROS1 nodes and topics used in our implementation (matching Fig.~\ref{fig:rosgraph}).}
+\label{tab:ros_topics}
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.02}
+\scriptsize
+\begin{tabular}{p{0.20\textwidth} p{0.55\textwidth} p{0.15\textwidth}}
+\toprule
+\textbf{Node} & \textbf{Topic} & \textbf{Msg. type} \\
+\midrule
+\path{/zed2i/zed_node} &
+\path{/zed2i/zed_node/left/image_rect_color} &
+\path{sensor_msgs/Image} \\
+
+\path{/zed2i/zed_node} &
+\path{/zed2i/zed_node/right/image_rect_color} &
+\path{sensor_msgs/Image} \\
+
+\path{/left_pcl_transform} &
+\path{/left_pcl_transform} &
+\path{sensor_msgs/PointCloud2} \\
+
+\path{/object_3d_detector_node} &
+\path{/detect_3dbox} &
+\path{visualization_msgs/MarkerArray} \\
+
+\path{/slam} &
+\path{/slam/pose} &
+\path{geometry_msgs/PoseStamped} \\
+
+\path{/slam} &
+\path{/tf} &
+\path{tf2_msgs/TFMessage} \\
+
+\path{/slam} &
+\path{/detect_3dbox} &
+\path{visualization_msgs/MarkerArray} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+
+
+
+
+
+\section{Experimental Setup}
+\label{sec:experiments}
+
+\subsection{Isaac Sim Virtual Infeed-Deck Environment}
+\begin{figure}[thpb]
+  \vspace*{5pt} % only safe if this float really lands at the top
+  \centering
+  \includegraphics[scale=0.16]{Figure/virtual_environment.png}
+  \caption{Virtual infeed deck environment in Isaac Sim}
+  \label{virtualdeck}
+\end{figure}
+To evaluate semantic SLAM in a controlled and realistic scenario, we built a virtual infeed-deck scene in NVIDIA Isaac Sim as shown in Fig. \ref{virtualdeck}. The environment includes (i) a custom infeed-deck CAD model (created in SolidWorks and imported into Isaac Sim), (ii) three types of logging trucks sourced from public 3D repositories, and (iii) a realistic log pile model generated from drone scans of a real mill yard; additional props (e.g., log-loading crane and trailer) are included to increase realism. 
+
+A virtual StereoLabs ZED~2i stereo camera is placed in the scene and configured to match the real ZED~2i parameters (e.g., focal length and baseline), improving consistency between simulation and future real deployment. Camera motion is controlled via an Isaac Sim action graph with keyboard bindings that command translation along $x/y/z$ and yaw rotation, enabling data capture from a viewpoint similar to a camera mounted on a log loader. 
+
+
+\subsection{Synthetic Image Sequences Generation}
+\begin{table}[h]
+\centering
+\caption{Synthetic SLAM sequences and motion patterns (Isaac Sim ROS bags).}
+\label{tab:slam_sequences}
+\setlength{\tabcolsep}{6pt}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Motion pattern} & \textbf{Translation range} & \textbf{Yaw range} \\
+\midrule
+T (Translation-only) & $\sim 20\,\mathrm{m}$ & $\sim 0^\circ$ \\
+R (Rotation-on-the-spot) & $\sim 0\,\mathrm{m}$ & $\sim 360^\circ$ \\
+TR (Translation+Rotation) & $\sim 15\,\mathrm{m}$ & $\sim 120^\circ$ \\
+\bottomrule
+\end{tabular}
+\vspace{0.3em}
+\end{table}
+
+Synthetic sequences are generated using an Isaac Sim Replicator script that performs scene randomization and per-frame recording. For each frame, we record rectified left/right stereo RGB images together with the camera calibration (intrinsics and baseline), the ground-truth camera pose, and ground-truth 3D bounding boxes for the target object classes (truck, infeed deck, and log piles). For SLAM evaluation, we use three stereo sequences recorded as ROS bag files. Each sequence contains one truck moving around the infeed deck at approximately $2\,\mathrm{m/s}$ and keyboard-controlled camera motion. During each sequence, the camera alternates among three motion patterns---Translation (T), Rotation-on-the-spot (R), and combined Translation+Rotation (TR). The translation and yaw ranges for these camera motions are summarized in Table~\ref{tab:slam_sequences}.
+
+
+\subsection{Evaluation Metrics}
+We evaluate camera pose accuracy and semantic object localization accuracy. For both, errors are summarized using root-mean-square error (RMSE). 
+
+\noindent\textbf{Pose accuracy}
+
+Let $\mathbf{T}_i\in SE(3)$ denote the ground-truth camera pose at time step $i$ (in the simulator/global reference frame) and let $\hat{\mathbf{T}}_i\in SE(3)$ denote the corresponding estimated pose in the ORB-SLAM2 map frame. Because these poses are expressed in different frames, we align the estimated trajectory by anchoring the first pose:
+\begin{equation}
+\mathbf{S}=\mathbf{T}_1\hat{\mathbf{T}}_1^{-1}, \qquad
+\hat{\mathbf{T}}^{\mathrm{aligned}}_i=\mathbf{S}\hat{\mathbf{T}}_i.
+\label{eq:traj_align}
+\end{equation}
+This ensures $\hat{\mathbf{T}}^{\mathrm{aligned}}_1=\mathbf{T}_1$, and subsequent errors reflect drift relative to the common starting frame.
+
+Using  $\mathbf{T}_i=\begin{bmatrix}\mathbf{R}_i & \mathbf{p}_i\\ \mathbf{0}^\top & 1\end{bmatrix}$ and $\hat{\mathbf{T}}^{\mathrm{aligned}}_i=\begin{bmatrix}\hat{\mathbf{R}}_i & \hat{\mathbf{p}}_i\\ \mathbf{0}^\top & 1\end{bmatrix}$, where $\mathbf{p}_i,\hat{\mathbf{p}}_i\in\mathbb{R}^3$ and $\mathbf{R}_i,\hat{\mathbf{R}}_i\in SO(3)$, the translational error of the camera pose is computed with: 
+\begin{equation}
+\mathbf{e}_{\mathrm{trans},i}=\mathbf{p}_i-\hat{\mathbf{p}}_i,
+\label{eq:etrans}
+\end{equation}
+and the rotation error is computed from:
+\begin{equation}
+\mathbf{R}_{\mathrm{err},i}=\mathbf{R}_i\hat{\mathbf{R}}_i^\top,
+\qquad
+\theta_i=\cos^{-1}\!\left(\frac{\mathrm{trace}(\mathbf{R}_{\mathrm{err},i})-1}{2}\right).
+\label{eq:rot_err}
+\end{equation}
+The RMSE is reported over $N$ poses in the evaluation set:
+\begin{equation}
+\begin{aligned}
+\mathrm{RMSE}_{\mathrm{trans}} &= \sqrt{\frac{1}{N}\sum_{i=1}^{N}\left\lVert\mathbf{e}_{\mathrm{trans},i}\right\rVert_2^2},\\
+\mathrm{RMSE}_{\mathrm{rot}}   &= \sqrt{\frac{1}{N}\sum_{i=1}^{N}\theta_i^2}.
+\end{aligned}
+\label{eq:rmse_pose}
+\end{equation}
+We evaluate all eligible frames at the recorded frame rate, and \(N\) is the total number of such frames included in the metric. In our experiments, RMSE values for each motion type (T, R, TR) are computed based on all frames of that type across the three Isaac Sim bag files.
+
+\noindent\textbf{Semantic object localization accuracy}
+For each object instance $j$, let $\mathbf{c}_j\in\mathbb{R}^3$ be the ground-truth 3D box center (in the global frame) and let $\hat{\mathbf{c}}_j\in\mathbb{R}^3$ be the estimated center produced by Semantic-SLAM. The position error of the detected bounding box is
+\begin{equation}
+e^{(j)}_{\mathrm{pos}}=\left\lVert \mathbf{c}_j-\hat{\mathbf{c}}_j \right\rVert_2.
+\label{eq:obj_pos_err}
+\end{equation}
+Let $\psi_j$ and $\hat{\psi}_j$ be the ground-truth and estimated yaw angles. The yaw error is defined as the wrapped angular difference
+\begin{equation}
+e^{(j)}_{\mathrm{yaw}}=\mathrm{wrap}_{[-\pi,\pi)}\!\left(\hat{\psi}_j-\psi_j\right),
+\label{eq:obj_yaw_err}
+\end{equation}
+where $\mathrm{wrap}_{[-\pi,\pi)}(\cdot)$ maps angles into $[-\pi,\pi)$.
+
+Given $M$ objects of a given class, we report per-class RMSE:
+\begin{equation}
+\begin{aligned}
+\mathrm{RMSE}_{\mathrm{pos}} &= \sqrt{\frac{1}{M}\sum_{j=1}^{M}\left(e^{(j)}_{\mathrm{pos}}\right)^2},\\
+\mathrm{RMSE}_{\mathrm{yaw}} &= \sqrt{\frac{1}{M}\sum_{j=1}^{M}\left(e^{(j)}_{\mathrm{yaw}}\right)^2}.
+\end{aligned}
+\label{eq:rmse_obj}
+\end{equation}
+
+
+
+\section{Results}
+\label{sec:results}
+
+\subsection{Camera Trajectory Accuracy}
+Table~\ref{tab:pose_rmse} reports the translational and rotational RMSE for Baseline-SLAM (ORB-SLAM2) and Semantic-SLAM for the three motion types (T, R, TR) across the three simulated Isaac Sim sequences. On all motion types, the Baseline-SLAM configuration shows large translational errors, with RMSE values close to or above one metre despite the modest camera path lengths. This behaviour is consistent with the static-world assumption of ORB-SLAM2 being violated: features on the moving truck are treated as if they were static landmarks and are added to the map. When the truck moves, these “landmarks” are seen in different places, which introduces inconsistent constraints into the optimization and bends the estimated trajectory. The effect is particularly visible in the pure-rotation (R) case, where limited parallax already makes depth poorly constrained; small errors in feature tracking and mapping then appear as spurious translation around the nominally fixed camera position.
+
+In contrast, Semantic-SLAM significantly reduces both translational and rotational RMSE for all motion types. By masking features on the moving truck before they enter the map, the semantic pipeline avoids many of the false constraints that distort the baseline trajectory. In addition, object-based constraints associated with the infeed deck and log piles act as strong, static landmarks that pull the estimated trajectory toward the true geometry of the yard. The improvement is most pronounced for the rotation (R) and combined translation+rotation (TR) motions, where the truck often lies between the camera and the deck or log piles, occupying a substantial fraction of the image, and repeatedly occludes these static structures. Overall, Semantic-SLAM improves trajectory accuracy relative to the ORB-SLAM2 baseline across all three evaluated motion patterns (T, R, and TR), reducing both translational and rotational RMSE. The improvement is most significant for the rotation-only scenario (R), while translation-only (T) and combined motion (TR) also show consistent gains. Qualitatively, the Semantic-SLAM trajectories track the ground-truth paths more closely than the baseline in all three sequences.
+
+\begin{table}[t]
+\centering
+\caption{Camera pose RMSE on Isaac Sim sequences (pooled over three bags per motion type).}
+\label{tab:pose_rmse}
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabular}{llcc}
+\toprule
+\textbf{Motion} & \textbf{Method} & $\mathbf{RMSE_{trans}}$ \textbf{[m]} & $\mathbf{RMSE_{rot}}$ \textbf{[deg]} \\
+\midrule
+\multirow{2}{*}{T}  & Baseline-SLAM & 0.93 & 0.77 \\
+                   & Semantic-SLAM & 0.16 & 0.21 \\
+\midrule
+\multirow{2}{*}{R}  & Baseline-SLAM & 1.35 & 0.74 \\
+                   & Semantic-SLAM & 0.09 & 0.23 \\
+\midrule
+\multirow{2}{*}{TR} & Baseline-SLAM & 1.23 & 0.86 \\
+                   & Semantic-SLAM & 0.43 & 0.66 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Semantic Map Quality and Accuracy}
+Beyond pose accuracy, a key motivation for semantic SLAM is to provide object-level information that is directly useful for log-loading automation. Table~\ref{tab:obj_rmse} summarizes the localization accuracy achieved by Semantic-SLAM across all three simulated sequences and all motion types. For each semantic class (infeed deck, log piles, trucks), we report the RMSE of the box center position and yaw angle.
+
+As observed from Table~\ref{tab:obj_rmse}, static structures such as the infeed deck are localized most accurately. They are seen many times from different viewpoints and have relatively simple geometry, which helps the system refine their poses over time. Log piles show slightly larger errors, which is expected given their more irregular shapes and frequent partial occlusions. Truck poses are less accurate in both position and heading. This is mainly because the trucks move during the sequence, are visible for shorter periods, and are often partially occluded while approaching or leaving the infeed deck. Even so, the typical position error remains below one metre, and the estimated orientations are sufficiently accurate for high-level tasks such as checking whether a truck is in a reasonable unloading configuration, as well as, for avoiding collisions in the simulated yard.
+
+\begin{table}[t]
+\centering
+\caption{Semantic object localization RMSE in the global frame (Semantic-SLAM).}
+\label{tab:obj_rmse}
+\setlength{\tabcolsep}{6pt}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Class} & $\mathbf{RMSE_{pos}}$ \textbf{[m]} & $\mathbf{RMSE_{yaw}}$ \textbf{[deg]} & \textbf{\# Inst.} \\
+\midrule
+Infeed deck & 0.23 & 2.58 & 1 \\
+Log pile    & 0.33 & 3.36 & 2 \\
+Truck       & 0.68 & 10.37 & 3 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Effect of Dynamic Feature Removal}
+The improvement over Baseline-SLAM results in Table~\ref{tab:pose_rmse} can be explained by mitigating violations of the static-world assumption: in the baseline system, features on the moving truck are treated as static landmarks and are added to the map, then re-observed at inconsistent locations as the truck moves. This injects contradictory constraints into the optimization and bends the estimated trajectory. In the rotation-only case, this can also manifest itself as apparent translation around a nominally fixed camera position. Semantic-SLAM reduces this failure mode by masking features on detected trucks prior to tracking and mapping. Together with object-based constraints from static structures (infeed deck and log piles), this yields trajectories that remain close to the true path, especially near the infeed deck and buffer piles where semantic constraints are the strongest.
+
+\subsection{Runtime Performance}
+All experiments reported here were executed  on a computer equipped with an Intel Core i7-11800H CPU and an NVIDIA RTX 3070 Laptop GPU (8\,GB VRAM). To characterize the computational load, we measure the approximate per-frame runtime of the main processing threads in the semantic SLAM pipeline on the evaluation hardware. Table~\ref{tab:runtime} reports the average processing time per frame and the corresponding effective standalone processing rate for each component, averaged over the three Isaac Sim bag files.
+
+In the full semantic SLAM system, the modules do not run at these standalone rates. The pipeline is driven by the stereo camera at 30\,Hz and the processing threads run asynchronously: ORB-SLAM2 tracking usually processes every stereo frame (up to 30\,Hz), FoundationStereo is run at a slightly lower rate to stay within the GPU budget, and PointPillars is typically called on every $k$th point cloud (at $\approx$ 10--15\,Hz). Thus, Table~\ref{tab:runtime} should be read as a summary of the per-frame cost and maximum achievable rate of each component on its own. Combined with the camera frame rate, these numbers indicate that the pipeline can operate close to real time on the evaluation hardware, assuming optimized thread scheduling.
+
+\begin{table}[t]
+\centering
+\caption{Approximate per-frame runtime of the main processing threads in the semantic SLAM pipeline (standalone).}
+\label{tab:runtime}
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.05}
+\footnotesize
+\begin{tabular}{p{0.44\columnwidth}cc}
+\toprule
+\textbf{Component} & \textbf{Time [ms]} & \textbf{Rate [Hz]} \\
+\midrule
+ORB-SLAM2 tracking \& mapping & 22.0 & 45 \\
+Point cloud from stereo  & 31.3 & 32 \\
+PointPillars 3D detection     & 18.4 & 54 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+
+
+
+\section{Discussion}
+\label{sec:discussion}
+Across all motion types, Semantic-SLAM improves camera trajectory accuracy compared to Baseline-SLAM, especially for rotation-dominant motion where limited parallax makes pose estimation more sensitive to corrupted correspondences. The key mechanism is preventing moving-truck features from entering the map, thereby avoiding inconsistent constraints, while adding stable object-level anchors from static yard structures. The semantic map provides compact, task-relevant state in a global frame: the infeed deck, log piles, and trucks are represented as oriented 3D boxes whose spatial relationships can directly support deck-side behaviors (e.g., approach corridors, no-go zones, and unloading-status logic). Static objects achieve sub-metre localization accuracy, while trucks show larger uncertainty due to motion and occlusion but remain useful for high-level reasoning. Pseudo-LiDAR generation and 3D detection dominate GPU cost. However, near-real-time operation is feasible by running SLAM at the camera rate and updating semantics at a lower rate, since semantic objects evolve more slowly than frame-to-frame pose.
+
+On the other hand, the present evaluation is largely simulation-driven; validating under real mill-yard conditions (sensor noise, weather/lighting changes, and operational variability) is an important next step. Extending the object vocabulary (e.g., additional machinery, fences, workers) and incorporating uncertainty-aware data association/constraints could further improve robustness when detections are noisy or partially occluded.
+
+
+\section{Conclusion and Future Work}
+\label{sec:conclusion}
+
+This paper addressed localization and task-relevant scene understanding for autonomous log-loading in the mill-yard infeed-deck environment. We presented a vision-only semantic SLAM pipeline that couples a stereo ORB-SLAM2 backbone with a parallel semantic thread that reconstructs stereo pseudo-LiDAR and estimates oriented 3D bounding boxes for key infeed-deck objects (infeed deck, log piles, and trucks). The resulting 3D detections are used to: (i) remove features on potentially dynamic objects during tracking and (ii) build a persistent object-level semantic map by transforming and associating detections in the global SLAM frame. Experiments in a realistic Isaac Sim infeed-deck scenario showed that integrating object-level 3D detections reduces pose error relative to the ORB-SLAM2 baseline while producing globally consistent semantic object estimates at practical runtimes.
+
+Despite these results, limitations remain. The real dataset is currently small with limited diversity in deck layouts and truck geometries, and the semantic SLAM evaluation in this work is primarily simulation-driven. In addition, we considered a single sensing modality (stereo) and a fixed backbone/detector configuration (ORB-SLAM2 + PointPillars), leaving alternative sensor combinations and backbones unexplored.
+
+Future work will focus on real-world deployment and broader validation at an operational infeed deck, as discussed in Section \ref{sec:discussion}. To narrow the sim-to-real gap with limited labels, we will further investigate strategies such as domain adaptation and active learning for pseudo-LiDAR detection. Finally, we will explore improved object association and fusion strategies (e.g., uncertainty-aware updates) and extend the semantic map beyond the three object classes studied here to better support decision making under occlusion and intermittent detections.
+
+
+\section*{ACKNOWLEDGMENT}
+
+This work was supported by the National Sciences and
+Engineering Research Council (NSERC) Alliance Grants Program under the project "Development of
+Autonomy for Log-loading Machines in Canadian Mill Yards", with
+financial support from Mitacs and FPInnovations.  All data from the real mill yard was collected and made available by FPInnovations.
+% \end{thebibliography}
+\begin{thebibliography}{99}
+% --- Intro motivation ---
+\bibitem{c1}
+F.~Huq,
+\emph{Skills Shortages in Canada's Forest Sector}.
+Canadian Forest Service, Natural Resources Canada, 2007.
+
+\bibitem{c2}
+S.~Kollarova,
+``Innovation and advanced technology use in the Canadian forest sector,''
+Ph.D. dissertation, Université d’Ottawa / University of Ottawa, 2014.
+
+% --- Your work (needed to support infeed-deck setting + system + evaluation claims) ---
+
+% --- SLAM background ---
+\bibitem{cadena_slam_survey}
+C.~Cadena, L.~Carlone, H.~Carrillo, Y.~Latif, D.~Scaramuzza, J.~Neira, I.~Reid, and J.~J. Leonard,
+``Past, present, and future of simultaneous localization and mapping: Toward the robust-perception age,''
+\emph{IEEE Transactions on Robotics}, vol.~32, no.~6, pp.~1309--1332, Dec. 2016.
+
+\bibitem{orbslam}
+R.~Mur-Artal, J.~M.~M. Montiel, and J.~D. Tardós,
+``ORB-SLAM: A versatile and accurate monocular SLAM system,''
+\emph{IEEE Transactions on Robotics}, vol.~31, no.~5, pp.~1147--1163, 2015.
+
+\bibitem{orbslam2}
+R.~Mur-Artal and J.~D. Tardós,
+``ORB-SLAM2: An open-source SLAM system for monocular, stereo, and RGB-D cameras,''
+\emph{IEEE Transactions on Robotics}, vol.~33, no.~5, pp.~1255--1262, 2017.
+
+\bibitem{lsdslam}
+J.~Engel, T.~Schöps, and D.~Cremers,
+``LSD-SLAM: Large-scale direct monocular SLAM,''
+in \emph{Proc. European Conf. on Computer Vision (ECCV)}, 2014, pp.~834--849.
+
+\bibitem{dso}
+J.~Engel, V.~Koltun, and D.~Cremers,
+``Direct sparse odometry,''
+\emph{IEEE Transactions on Pattern Analysis and Machine Intelligence}, vol.~40, no.~3, pp.~611--625, 2018.
+
+% --- Semantic SLAM in dynamic scenes ---
+\bibitem{semanticfusion}
+J.~McCormac, A.~Handa, A.~Davison, and S.~Leutenegger,
+``SemanticFusion: Dense 3D semantic mapping with convolutional neural networks,''
+in \emph{Proc. IEEE Int. Conf. on Robotics and Automation (ICRA)}, 2017, pp.~4628--4635.
+
+\bibitem{maskfusion}
+M.~Runz, M.~Buffier, and L.~Agapito,
+``MaskFusion: Real-time recognition, tracking and reconstruction of multiple moving objects,''
+in \emph{Proc. IEEE Int. Symp. on Mixed and Augmented Reality (ISMAR)}, 2018, pp.~10--20.
+
+\bibitem{dsslam}
+C.~Yu, Z.~Liu, X.~Liu, F.~Xiang, Z.~Fang, and Q.~Zhu,
+``DS-SLAM: A semantic visual SLAM towards dynamic environments,''
+in \emph{Proc. IEEE/RSJ Int. Conf. on Intelligent Robots and Systems (IROS)}, 2018, pp.~1168--1174.
+
+\bibitem{dynseg}
+B.~Bescos, J.~M. Fácil, J.~Civera, and J.~Neira,
+``DynaSLAM: Tracking, mapping, and inpainting in dynamic scenes,''
+\emph{IEEE Robotics and Automation Letters}, vol.~3, no.~4, pp.~4076--4083, 2018.
+
+% --- 3D detection + pseudo-LiDAR ---
+\bibitem{c3}
+J.~Mao, S.~Shi, X.~Wang, and H.~Li,
+``3D object detection for autonomous driving: A comprehensive survey,''
+\emph{International Journal of Computer Vision}, vol.~131, no.~8, pp.~1909--1963, Apr. 2023.
+
+\bibitem{c17}
+Y.~Wang \emph{et al.},
+``Pseudo-LiDAR from visual depth estimation: Bridging the gap in 3D object detection for autonomous driving,''
+in \emph{Proc. IEEE/CVF Conf. on Computer Vision and Pattern Recognition (CVPR)}, 2019.
+
+\bibitem{c19}
+A.~H. Lang, S.~Vora, H.~Caesar, L.~Zhou, J.~Yang, and O.~Beijbom,
+``PointPillars: Fast encoders for object detection from point clouds,''
+in \emph{Proc. IEEE/CVF Conf. on Computer Vision and Pattern Recognition (CVPR)},
+2019, pp.~12697--12705.
+
+\bibitem{cXX}
+S.~Shi, X.~Wang, and H.~Li,
+``PointRCNN: 3D object proposal generation and detection from point cloud,''
+in \emph{Proc. IEEE/CVF Conf. on Computer Vision and Pattern Recognition (CVPR)},
+2019, pp.~770--779.
+
+\bibitem{c7}
+S.~Shi \emph{et al.},
+``PV-RCNN: Point-voxel feature set abstraction for 3D object detection,''
+in \emph{Proc. IEEE/CVF Conf. on Computer Vision and Pattern Recognition (CVPR)},
+2020, pp.~10526--10535.
+
+% \bibitem{c1} F. Huq and I. Branch, ``Skills shortages in Canada’s forest sector,'' \emph{Canadian Forest Service}, 2007.
+
+
+% \bibitem{c2} S. Kollarova, ``Innovation and advanced technology use in the Canadian forest sector,'' Ph.D. dissertation, Université d’Ottawa / University of Ottawa, 2014.
+
+% \bibitem{c3} J. Mao, S. Shi, X. Wang, and H. Li, “3D object detection for autonomous driving: A comprehensive survey,” \emph{International Journal of Computer Vision}, vol. 131, no. 8, pp. 1909–1963, Apr. 2023.
+
+% \bibitem{c4} N. H. Aung, P. Sangwongngam, R. Jintamethasawat, S. Shah, and L. Wuttisittikulkij, “A review of LIDAR-based 3D object detection via deep learning approaches towards robust connected and autonomous vehicles,” \emph{IEEE Transactions on Intelligent Vehicles}, vol. 10, no. 1, pp. 526–547, Jan. 2025. 
+
+% \bibitem{c5} Y. Zhou and O. Tuzel, “VoxelNet: End-to-end learning for point cloud based 3D object detection,” \emph{2018 IEEE/CVF Conference on Computer Vision and Pattern Recognition}, pp. 4490–4499, Jun. 2018.
+
+% \bibitem{c6} Y. Yan, Y. Mao, and B. Li, “Second: Sparsely embedded convolutional detection,” \emph{Sensors}, vol. 18, no. 10, p. 3337, Oct. 2018.
+
+% \bibitem{c7} S. Shi et al., “PV-RCNN: Point-voxel feature set abstraction for 3D object detection,” \emph{2020 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)}, pp. 10526–10535, Jun. 2020. 
+
+% \bibitem{c8} T. Yin, X. Zhou, and P. Krahenbuhl, “Center-based 3D object detection and tracking,” \emph{2021 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)}, pp. 11779–11788, Jun. 2021. 
+
+% \bibitem{c9} R. Q. Charles, H. Su, M. Kaichun, and L. J. Guibas, “PointNet: Deep Learning on point sets for 3D classification and segmentation,” \emph{2017 IEEE Conference on Computer Vision and Pattern Recognition (CVPR)}, pp. 77–85, Jul. 2017. 
+
+% \bibitem{c10} C. R. Qi, L. Yi, H. Su, and L. J. Guibas, ``PointNet++: Deep hierarchical feature learning on point sets in a metric space,'' in \emph{Proc. NeurIPS},  pp. 5099--5108, 2017.
+
+% \bibitem{c11} X. Pan, Z. Xia, S. Song, L. E. Li, and G. Huang, “3D object detection with pointformer,” \emph{2021 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)}, pp. 7459–7468, Jun. 2021. 
+
+
+% \bibitem{c12} I. Misra, R. Girdhar, and A. Joulin, “An end-to-end transformer model for 3D object detection,” \emph{2021 IEEE/CVF International Conference on Computer Vision (ICCV)}, pp. 2886–2897, Oct. 2021. 
+
+% \bibitem{c13} J. Mao \emph{et al.}, ``Voxel Transformer for 3D Object Detection,'' in \emph{Proc. IEEE/CVF Int. Conf. Comput. Vis. (ICCV)}, pp. 3166--3175, 2021.
+
+% \bibitem{c14} X. Chen, K. Kundu, Y. Zhu, H. Ma, S. Fidler, and R. Urtasun, ``3D object proposals using stereo imagery for accurate object class detection,'' \emph{IEEE Transactions on Pattern Analysis and Machine Intelligence}, vol. 40, no. 5, pp. 1259--1272, 2018.
+
+% \bibitem{c15} A. Mousavian, D. Anguelov, J. Flynn, and J. Kosecka, “3D bounding box estimation using deep learning and Geometry,” \emph{2017 IEEE Conference on Computer Vision and Pattern Recognition (CVPR)}, pp. 5632–5640, Jul. 2017. 
+
+% \bibitem{c16} X. Chen et al., “Monocular 3D object detection for autonomous driving,” \emph{2016 IEEE Conference on Computer Vision and Pattern Recognition (CVPR)}, Jun. 2016.
+
+% \bibitem{c17} Y. Wang et al., “Pseudo-lidar from visual depth estimation: Bridging the gap in 3D object detection for autonomous driving,” \emph{2019 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)}, Jun. 2019.
+
+% \bibitem{c18} Y. Ding and X. Luo, “A virtual construction vehicles and workers dataset with three-dimensional annotations,” \emph{Engineering Applications of Artificial Intelligence}, vol. 133, p. 107964, Jul. 2024. 
+
+% \bibitem{c19} A. H. Lang et al., “Pointpillars: Fast encoders for object detection from point clouds,” \emph{2019 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)}, Jun. 2019.
+
+% \bibitem{cXX} S. Shi, X. Wang, and H. Li, “PointRCNN: 3D object proposal generation and detection from Point Cloud,” \emph{2019 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)}, pp. 770–779, Jun. 2019.
+
+% \bibitem{cXXX} E. Arkin, N. Yadikar, X. Xu, A. Aysa, and K. Ubul, “A survey: Object detection methods from CNN to Transformer,” \emph{Multimedia Tools and Applications}, vol. 82, no. 14, pp. 21353–21383, Oct. 2022.
+
+% \bibitem{c20} B. Wen et al., “Foundationstereo: Zero-shot stereo matching,” \emph{2025 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)}, pp. 5249–5260, Jun. 2025.
+
+% \bibitem{c21} N. Rout and J. Jean Jenifer Nesam, “Optimizing RGB to grayscale, gaussian blur and Sobel-filter operations on fpgas for reduced dynamic power consumption,” \emph{2024 3rd International Conference on Artificial Intelligence For Internet of Things (AIIoT)}, pp. 1–6, May 2024.
+
+% \bibitem{c22} A. Geiger, P. Lenz, and R. Urtasun, “Are we ready for autonomous driving? The Kitti Vision Benchmark Suite,” \emph{2012 IEEE Conference on Computer Vision and Pattern Recognition}, pp. 3354–3361, Jun. 2012.
+
+% \bibitem{c25} J. Deng et al., “Voxel R-CNN: Towards high performance voxel-based 3D object detection,” \emph{Proceedings of the AAAI Conference on Artificial Intelligence}, vol. 35, no. 2, pp. 1201–1209, May 2021. 
+
+\end{thebibliography}
+
+
+
+
+\end{document}

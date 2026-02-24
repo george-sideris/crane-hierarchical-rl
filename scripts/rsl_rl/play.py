@@ -53,6 +53,10 @@ if args_cli.task and ("Depth" in args_cli.task or "PointCloud" in args_cli.task)
     args_cli.enable_cameras = True
 
 # clear out sys.argv for Hydra
+# Filter out empty/whitespace-only args that cause Hydra LexerNoViableAltException
+hydra_args = [a for a in hydra_args if a.strip()]
+if hydra_args:
+    print(f"[DEBUG] Unrecognized args passed to Hydra: {hydra_args}")
 sys.argv = [sys.argv[0]] + hydra_args
 
 # launch omniverse app
@@ -312,7 +316,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         piles_fully_cleared += 1
 
                     # Capture knocked-off count before env resets it
-                    ep_knocked_off = int(underlying_env._logs_knocked_off[i].item()) if hasattr(underlying_env, '_logs_knocked_off') else 0
+                    if hasattr(underlying_env, '_final_episode_knocked_off'):
+                        ep_knocked_off = int(underlying_env._final_episode_knocked_off[i].item())
+                    elif hasattr(underlying_env, '_logs_knocked_off'):
+                        ep_knocked_off = int(underlying_env._logs_knocked_off[i].item())
+                    else:
+                        ep_knocked_off = 0
                     total_knocked_off += ep_knocked_off
                     knocked_off_per_episode.append(ep_knocked_off)
                     logs_cleared_per_episode.append(logs_cleared)

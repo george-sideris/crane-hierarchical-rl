@@ -34,6 +34,7 @@ parser.add_argument("--save_metrics", action="store_true", help="Save metrics to
 parser.add_argument("--output_dir", type=str, default=None, help="Output directory for metrics")
 parser.add_argument("--visualize", action="store_true", help="Save per-step visualization PNGs")
 parser.add_argument("--viz_dir", type=str, default=None, help="Directory for viz PNGs (default: checkpoint dir / viz)")
+parser.add_argument("--paper_viz", action="store_true", help="Save paper-quality pipeline and progression figures")
 args_cli, _ = parser.parse_known_args()
 
 # IsaacLab imports
@@ -295,6 +296,592 @@ def save_step_viz(points_np, x, y, z, yaw, step_idx, viz_dir,
     plt.close(fig)
 
 
+def draw_grapple_footprint(ax, x, y, yaw, width=1.5, length=0.5,
+                           success=True, alpha=0.3):
+    """Draw a rotated rectangle representing the grapple footprint.
+
+    Args:
+        ax: Matplotlib axes to draw on.
+        x, y: Target position (center of grapple).
+        yaw: Grapple rotation angle in radians.
+        width: Grapple opening width (meters).
+        length: Grapple depth (meters).
+        success: If True, green fill; if False, red fill.
+        alpha: Fill transparency.
+    """
+    color = '#2ecc71' if success else '#e74c3c'
+    edge_color = '#27ae60' if success else '#c0392b'
+
+    # Rectangle corners centered at origin.
+    # The grapple opening (width = long side) spans ALONG the yaw direction,
+    # and the grapple depth (length = short side) is perpendicular.
+    # Before rotation: long side along X (yaw dir), short side along Y.
+    hw = width / 2   # long half  (along yaw = opening)
+    hl = length / 2  # short half (perpendicular to yaw)
+    corners = np.array([
+        [-hw, -hl],
+        [ hw, -hl],
+        [ hw,  hl],
+        [-hw,  hl],
+        [-hw, -hl],  # close
+    ])
+
+    # Rotate by yaw so the arrow direction stays along the short side
+    cos_a, sin_a = np.cos(yaw), np.sin(yaw)
+    R = np.array([[cos_a, -sin_a], [sin_a, cos_a]])
+    rotated = corners @ R.T
+
+    # Translate to (x, y)
+    rotated[:, 0] += x
+    rotated[:, 1] += y
+
+    # Draw filled polygon
+    from matplotlib.patches import Polygon
+    poly = Polygon(rotated[:-1], closed=True,
+                   facecolor=color, edgecolor=edge_color,
+                   alpha=alpha, linewidth=1.5, zorder=5)
+    ax.add_patch(poly)
+
+    # Draw yaw direction arrow from center (perpendicular to opening)
+    arrow_len = length * 0.8
+    dx = arrow_len * np.cos(yaw)
+    dy = arrow_len * np.sin(yaw)
+    ax.annotate('', xy=(x + dx, y + dy), xytext=(x, y),
+                arrowprops=dict(arrowstyle='->', color=edge_color, lw=2),
+                zorder=6)
+
+
+def get_pipeline_data(env, env_idx, num_points, depth_range=(1.0, 10.0)):
+    """Collect all vision pipeline stage data for one environment.
+
+    Returns:
+        dict with keys:
+            - rgb: (H, W, 3) uint8 numpy array (or None if not available)
+            - depth: (H, W) float32 numpy array
+            - semantic_ids: (H, W) int numpy array
+            - log_mask: (H, W) bool numpy array
+            - masked_depth: (H, W) float32 numpy (non-log pixels = NaN)
+            - world_points: (N, 3) numpy array — log points in world frame
+            - base_points: (M, 3) numpy array — log points in base frame (pre-FPS)
+            - fps_points: (num_points, 3) numpy array — FPS-sampled in base frame
+    """
+    data = {}
+
+    # --- (a) RGB ---
+    if "rgb" in env.cfg.camera_cfg.data_types:
+        rgb_tensor = env._camera.data.output["rgb"][env_idx]  # (H, W, 4) RGBA
+        data["rgb"] = rgb_tensor[:, :, :3].cpu().numpy().astype(np.uint8)
+    else:
+        data["rgb"] = None
+
+    # --- (b) Raw depth ---
+    depth_tensor = env._camera.data.output["depth"][env_idx].squeeze(-1)  # (H, W)
+    depth_np = depth_tensor.cpu().numpy().copy()
+    data["depth"] = depth_np
+
+    # --- (c) Semantic mask + masked depth ---
+    sem_seg = env._camera.data.output["semantic_segmentation"][env_idx]
+    if sem_seg.dim() == 3:
+        semantic_ids = sem_seg[..., 0]
+    else:
+        semantic_ids = sem_seg
+    semantic_ids_np = semantic_ids.cpu().numpy().astype(np.int32)
+    data["semantic_ids"] = semantic_ids_np
+
+    min_d, max_d = depth_range
+    log_mask = (semantic_ids_np > 0) & ~np.isinf(depth_np) & (depth_np >= min_d) & (depth_np <= max_d)
+    data["log_mask"] = log_mask
+
+    masked_depth = depth_np.copy()
+    masked_depth[~log_mask] = np.nan
+    data["masked_depth"] = masked_depth
+
+    # --- (d) 3D points in world frame (all log points, before FPS) ---
+    world_pts = env.get_log_pointcloud_world(env_idx, max_points=5000, depth_range=depth_range)
+    data["world_points"] = world_pts.cpu().numpy()
+
+    # --- Transform to base frame ---
+    if world_pts.shape[0] > 0:
+        base_pos_w = env.crane.data.root_pos_w[env_idx]
+        base_quat_w = env.crane.data.root_quat_w[env_idx]
+        pc_translated = world_pts - base_pos_w
+        w, bx, by, bz = base_quat_w[0], base_quat_w[1], base_quat_w[2], base_quat_w[3]
+        R = torch.stack([
+            torch.stack([1 - 2*by*by - 2*bz*bz, 2*bx*by - 2*w*bz, 2*bx*bz + 2*w*by]),
+            torch.stack([2*bx*by + 2*w*bz, 1 - 2*bx*bx - 2*bz*bz, 2*by*bz - 2*w*bx]),
+            torch.stack([2*bx*bz - 2*w*by, 2*by*bz + 2*w*bx, 1 - 2*bx*bx - 2*by*by]),
+        ])
+        base_pts = (pc_translated @ R).cpu().numpy()
+    else:
+        base_pts = np.zeros((0, 3))
+    data["base_points"] = base_pts
+
+    # --- (e) FPS-sampled points ---
+    fps_pts = get_log_pointcloud_base_frame(env, env_idx, num_points, depth_range=depth_range)
+    data["fps_points"] = fps_pts.cpu().numpy()
+
+    return data
+
+
+def save_pipeline_viz(pipeline_data, x, y, z, yaw, step_idx, viz_dir,
+                      logs_grasped=None, alignment=None, stability=None,
+                      depth_range=(1.0, 10.0),
+                      bounds_min=None, bounds_max=None):
+    """Save a 5-panel pipeline figure for one grasp step.
+
+    Panels: (a) RGB, (b) raw depth, (c) segmented depth, (d) 3D PCD, (e) FPS PCD + prediction.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import matplotlib.gridspec as gridspec
+
+    fig = plt.figure(figsize=(22, 4.2))
+    gs = gridspec.GridSpec(1, 5, figure=fig, wspace=0.28)
+
+    success = logs_grasped is not None and logs_grasped > 0
+    panel_labels = ['(a)', '(b)', '(c)', '(d)', '(e)']
+
+    # --- (a) RGB ---
+    ax_rgb = fig.add_subplot(gs[0, 0])
+    if pipeline_data["rgb"] is not None:
+        ax_rgb.imshow(pipeline_data["rgb"])
+    else:
+        ax_rgb.text(0.5, 0.5, 'RGB\nnot available', ha='center', va='center',
+                    transform=ax_rgb.transAxes, fontsize=10, color='gray')
+    ax_rgb.set_title(f'{panel_labels[0]} Camera RGB', fontsize=9, fontweight='bold')
+    ax_rgb.set_xticks([])
+    ax_rgb.set_yticks([])
+
+    # --- (b) Raw depth ---
+    ax_depth = fig.add_subplot(gs[0, 1])
+    depth_img = pipeline_data["depth"].copy()
+    depth_clipped = np.clip(depth_img, depth_range[0], depth_range[1])
+    depth_clipped[np.isinf(depth_img)] = np.nan
+    im_d = ax_depth.imshow(depth_clipped, cmap='viridis', vmin=depth_range[0], vmax=depth_range[1])
+    cb = plt.colorbar(im_d, ax=ax_depth, fraction=0.046, pad=0.04)
+    cb.ax.tick_params(labelsize=5)
+    cb.set_label('depth (m)', fontsize=6)
+    ax_depth.set_title(f'{panel_labels[1]} Raw depth', fontsize=9, fontweight='bold')
+    ax_depth.set_xticks([])
+    ax_depth.set_yticks([])
+
+    # --- (c) Segmented depth (log-only) ---
+    ax_seg = fig.add_subplot(gs[0, 2])
+    masked = pipeline_data["masked_depth"].copy()
+    im_s = ax_seg.imshow(masked, cmap='viridis', vmin=depth_range[0], vmax=depth_range[1])
+    # Set background (NaN) to light gray
+    ax_seg.set_facecolor('#e0e0e0')
+    cb = plt.colorbar(im_s, ax=ax_seg, fraction=0.046, pad=0.04)
+    cb.ax.tick_params(labelsize=5)
+    cb.set_label('depth (m)', fontsize=6)
+    ax_seg.set_title(f'{panel_labels[2]} Log depth (masked)', fontsize=9, fontweight='bold')
+    ax_seg.set_xticks([])
+    ax_seg.set_yticks([])
+
+    # --- (d) 3D point cloud in base frame (top-down, all log points) ---
+    # Axes swapped (Y horizontal, X vertical) and vertical inverted to match camera view.
+    ax_pcd = fig.add_subplot(gs[0, 3])
+    base_pts = pipeline_data["base_points"]
+    if len(base_pts) > 0:
+        mask = np.any(base_pts != 0.0, axis=1)
+        pts = base_pts[mask] if mask.any() else base_pts
+        if len(pts) > 0:
+            sc = ax_pcd.scatter(pts[:, 1], pts[:, 0], c=pts[:, 2], cmap='viridis',
+                                s=0.5, alpha=0.6, rasterized=True)
+            cb = plt.colorbar(sc, ax=ax_pcd, fraction=0.046, pad=0.04)
+            cb.ax.tick_params(labelsize=5)
+            cb.set_label('Z (m)', fontsize=6)
+    if bounds_min is not None and bounds_max is not None:
+        ax_pcd.set_xlim(bounds_min[1] - 0.5, bounds_max[1] + 0.5)
+        ax_pcd.set_ylim(bounds_max[0] + 0.5, bounds_min[0] - 0.5)  # inverted
+    ax_pcd.set_xlabel('Y (m)', fontsize=7)
+    ax_pcd.set_ylabel('X (m)', fontsize=7)
+    ax_pcd.set_title(f'{panel_labels[3]} 3D points (base frame)', fontsize=9, fontweight='bold')
+    ax_pcd.set_aspect('equal')
+    ax_pcd.tick_params(labelsize=6)
+
+    # --- (e) FPS PCD + grapple prediction ---
+    # Axes swapped (Y horizontal, X vertical) to match landscape camera panels.
+    ax_fps = fig.add_subplot(gs[0, 4])
+    fps_pts = pipeline_data["fps_points"]
+    mask = np.any(fps_pts != 0.0, axis=1)
+    pts = fps_pts[mask] if mask.any() else fps_pts
+    if len(pts) > 0:
+        sc = ax_fps.scatter(pts[:, 1], pts[:, 0], c=pts[:, 2], cmap='viridis',
+                            s=1.0, alpha=0.6, rasterized=True)
+        cb = plt.colorbar(sc, ax=ax_fps, fraction=0.046, pad=0.04)
+        cb.ax.tick_params(labelsize=5)
+        cb.set_label('Z (m)', fontsize=6)
+
+    # Draw grapple footprint (swap x↔y, adjust yaw for display axes)
+    draw_grapple_footprint(ax_fps, y, x, np.pi / 2 - yaw, width=1.5, length=0.5,
+                           success=success, alpha=0.25)
+
+    # Draw action bounds if available (vertical axis inverted)
+    if bounds_min is not None and bounds_max is not None:
+        from matplotlib.patches import Rectangle
+        bw = bounds_max[1] - bounds_min[1]
+        bh = bounds_max[0] - bounds_min[0]
+        ax_fps.add_patch(Rectangle(
+            (bounds_min[1], bounds_max[0]), bw, -bh,
+            linewidth=0.8, edgecolor='#e67e22', facecolor='none',
+            linestyle='--', alpha=0.6, zorder=3))
+
+    # Annotate result (one item per line to keep legend compact)
+    result_lines = [f"{'HIT' if success else 'MISS'}"]
+    if logs_grasped is not None and logs_grasped > 0:
+        result_lines[0] += f" ({logs_grasped} logs)"
+        if alignment is not None:
+            result_lines.append(f"align={alignment:.2f}")
+        if stability is not None:
+            result_lines.append(f"stab={stability:.2f}")
+    knocked = pipeline_data.get("knocked_off")
+    if knocked and knocked > 0:
+        result_lines.append(f"knocked={knocked}")
+    result_str = "\n".join(result_lines)
+    result_color = '#27ae60' if success else '#c0392b'
+    ax_fps.text(0.02, 0.98, result_str, transform=ax_fps.transAxes,
+                fontsize=7, verticalalignment='top', color=result_color,
+                fontweight='bold',
+                bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8))
+
+    if bounds_min is not None and bounds_max is not None:
+        ax_fps.set_xlim(bounds_min[1] - 0.5, bounds_max[1] + 0.5)
+        ax_fps.set_ylim(bounds_max[0] + 0.5, bounds_min[0] - 0.5)  # inverted
+    ax_fps.set_xlabel('Y (m)', fontsize=7)
+    ax_fps.set_ylabel('X (m)', fontsize=7)
+    ax_fps.set_title(f'{panel_labels[4]} FPS ({fps_pts.shape[0]} pts) + prediction',
+                     fontsize=9, fontweight='bold')
+    ax_fps.set_aspect('equal')
+    ax_fps.tick_params(labelsize=6)
+
+    # Suptitle (1-indexed)
+    title = f'Grasp {step_idx + 1}'
+    if logs_grasped is not None:
+        title += f'  |  target=({x:.2f}, {y:.2f}, {z:.2f})  yaw={np.degrees(yaw):.0f}\u00b0'
+        title += f'  |  {"SUCCESS" if success else "MISS"}'
+    fig.suptitle(title, fontsize=10, fontweight='bold', y=1.02)
+
+    out_path = os.path.join(viz_dir, f"pipeline_step_{step_idx:04d}.png")
+    fig.savefig(out_path, dpi=180, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+    print(f"[PaperViz] Saved pipeline: {out_path}")
+
+
+def save_stacked_pipeline_viz(grasp_data_list, episode_idx, viz_dir,
+                              depth_range=(1.0, 10.0),
+                              bounds_min=None, bounds_max=None,
+                              suffix=""):
+    """Save a vertically stacked pipeline figure with one row per grasp.
+
+    Each row has 5 panels: (a) RGB, (b) raw depth, (c) segmented depth,
+    (d) 3D PCD, (e) FPS PCD + prediction.
+
+    Args:
+        grasp_data_list: list of pipeline data dicts (one per selected grasp).
+        episode_idx: episode number for filename.
+        viz_dir: output directory.
+        depth_range: clipping range for depth images.
+        bounds_min, bounds_max: action bounds for overlaying on FPS panel.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import matplotlib.gridspec as gridspec
+
+    n_grasps = len(grasp_data_list)
+    if n_grasps == 0:
+        return
+
+    row_height = 3.2
+    fig = plt.figure(figsize=(22, row_height * n_grasps + 0.3))
+    gs = gridspec.GridSpec(n_grasps, 5, figure=fig, wspace=0.25, hspace=0.25)
+
+    panel_labels = ['(a)', '(b)', '(c)', '(d)', '(e)']
+
+    for row, d in enumerate(grasp_data_list):
+        x, y, z, yaw = d["x"], d["y"], d["z"], d["yaw"]
+        step_idx = d["step_idx"]
+        logs_grasped = d.get("logs_grasped")
+        alignment = d.get("alignment")
+        success = logs_grasped is not None and logs_grasped > 0
+
+        # Row label on the left side
+        result_tag = "HIT" if success else "MISS"
+        n_grabbed = logs_grasped if logs_grasped else 0
+        remaining = d.get("logs_remaining")
+        knocked = d.get("knocked_off")
+        row_label = f"Grasp {step_idx + 1}"
+        if remaining is not None:
+            row_label += f" | {remaining} left"
+        row_label += f" | {result_tag} ({n_grabbed})"
+        if knocked and knocked > 0:
+            row_label += f" | {knocked} KO"
+
+        # --- (a) RGB ---
+        ax_rgb = fig.add_subplot(gs[row, 0])
+        if d["rgb"] is not None:
+            ax_rgb.imshow(d["rgb"])
+        else:
+            ax_rgb.text(0.5, 0.5, 'N/A', ha='center', va='center',
+                        transform=ax_rgb.transAxes, fontsize=10, color='gray')
+        if row == 0:
+            ax_rgb.set_title(f'{panel_labels[0]} RGB', fontsize=9, fontweight='bold')
+        ax_rgb.set_xticks([])
+        ax_rgb.set_yticks([])
+        ax_rgb.set_ylabel(row_label, fontsize=8, fontweight='bold', rotation=90, labelpad=8)
+
+        # --- (b) Raw depth ---
+        ax_depth = fig.add_subplot(gs[row, 1])
+        depth_img = d["depth"].copy()
+        depth_clipped = np.clip(depth_img, depth_range[0], depth_range[1])
+        depth_clipped[np.isinf(depth_img)] = np.nan
+        im_d = ax_depth.imshow(depth_clipped, cmap='viridis',
+                               vmin=depth_range[0], vmax=depth_range[1])
+        cb_d = plt.colorbar(im_d, ax=ax_depth, fraction=0.046, pad=0.04, label='depth (m)')
+        cb_d.ax.tick_params(labelsize=5)
+        cb_d.set_label('depth (m)', fontsize=6)
+        if row == 0:
+            ax_depth.set_title(f'{panel_labels[1]} Raw depth', fontsize=9, fontweight='bold')
+        ax_depth.set_xticks([])
+        ax_depth.set_yticks([])
+
+        # --- (c) Segmented depth ---
+        ax_seg = fig.add_subplot(gs[row, 2])
+        masked = d["masked_depth"].copy()
+        im_s = ax_seg.imshow(masked, cmap='viridis',
+                             vmin=depth_range[0], vmax=depth_range[1])
+        ax_seg.set_facecolor('#e0e0e0')
+        cb_s = plt.colorbar(im_s, ax=ax_seg, fraction=0.046, pad=0.04, label='depth (m)')
+        cb_s.ax.tick_params(labelsize=5)
+        cb_s.set_label('depth (m)', fontsize=6)
+        if row == 0:
+            ax_seg.set_title(f'{panel_labels[2]} Log depth', fontsize=9, fontweight='bold')
+        ax_seg.set_xticks([])
+        ax_seg.set_yticks([])
+
+        # --- (d) 3D PCD (base frame, top-down) ---
+        # Axes swapped (Y horizontal, X vertical), vertical inverted to match camera.
+        ax_pcd = fig.add_subplot(gs[row, 3])
+        base_pts = d["base_points"]
+        sc_pcd = None
+        if len(base_pts) > 0:
+            mask = np.any(base_pts != 0.0, axis=1)
+            pts = base_pts[mask] if mask.any() else base_pts
+            if len(pts) > 0:
+                sc_pcd = ax_pcd.scatter(pts[:, 1], pts[:, 0], c=pts[:, 2], cmap='viridis',
+                                        s=0.5, alpha=0.6, rasterized=True)
+        if bounds_min is not None and bounds_max is not None:
+            ax_pcd.set_xlim(bounds_min[1] - 0.5, bounds_max[1] + 0.5)
+            ax_pcd.set_ylim(bounds_max[0] + 0.5, bounds_min[0] - 0.5)  # inverted
+        if row == 0:
+            ax_pcd.set_title(f'{panel_labels[3]} 3D points', fontsize=9, fontweight='bold')
+        if sc_pcd is not None:
+            cb_pcd = plt.colorbar(sc_pcd, ax=ax_pcd, fraction=0.046, pad=0.04)
+            cb_pcd.ax.tick_params(labelsize=5)
+            cb_pcd.set_label('Z (m)', fontsize=6)
+        ax_pcd.set_aspect('equal')
+        ax_pcd.tick_params(labelsize=5)
+
+        # --- (e) FPS PCD + grapple prediction ---
+        # Axes swapped (Y horizontal, X vertical), vertical inverted to match camera.
+        ax_fps = fig.add_subplot(gs[row, 4])
+        fps_pts = d["fps_points"]
+        mask = np.any(fps_pts != 0.0, axis=1)
+        pts = fps_pts[mask] if mask.any() else fps_pts
+        sc_fps = None
+        if len(pts) > 0:
+            sc_fps = ax_fps.scatter(pts[:, 1], pts[:, 0], c=pts[:, 2], cmap='viridis',
+                                    s=1.0, alpha=0.6, rasterized=True)
+
+        draw_grapple_footprint(ax_fps, y, x, np.pi / 2 - yaw, width=1.5, length=0.5,
+                               success=success, alpha=0.25)
+
+        if bounds_min is not None and bounds_max is not None:
+            from matplotlib.patches import Rectangle
+            bw = bounds_max[1] - bounds_min[1]
+            bh = bounds_max[0] - bounds_min[0]
+            ax_fps.add_patch(Rectangle(
+                (bounds_min[1], bounds_max[0]), bw, -bh,
+                linewidth=0.8, edgecolor='#e67e22', facecolor='none',
+                linestyle='--', alpha=0.6, zorder=3))
+
+        # Result annotation (one item per line)
+        stab = d.get("stability")
+        knocked = d.get("knocked_off")
+        result_lines = [f"{'HIT' if success else 'MISS'}"]
+        if logs_grasped and logs_grasped > 0:
+            result_lines[0] += f" ({logs_grasped})"
+            if alignment is not None:
+                result_lines.append(f"align={alignment:.2f}")
+            if stab is not None:
+                result_lines.append(f"stab={stab:.2f}")
+        if knocked and knocked > 0:
+            result_lines.append(f"knocked={knocked}")
+        result_str = "\n".join(result_lines)
+        result_color = '#27ae60' if success else '#c0392b'
+        ax_fps.text(0.02, 0.98, result_str, transform=ax_fps.transAxes,
+                    fontsize=6, verticalalignment='top', color=result_color,
+                    fontweight='bold',
+                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8))
+
+        if bounds_min is not None and bounds_max is not None:
+            ax_fps.set_xlim(bounds_min[1] - 0.5, bounds_max[1] + 0.5)
+            ax_fps.set_ylim(bounds_max[0] + 0.5, bounds_min[0] - 0.5)  # inverted
+        if row == 0:
+            ax_fps.set_title(f'{panel_labels[4]} FPS + prediction', fontsize=9, fontweight='bold')
+        if sc_fps is not None:
+            cb_fps = plt.colorbar(sc_fps, ax=ax_fps, fraction=0.046, pad=0.04)
+            cb_fps.ax.tick_params(labelsize=5)
+            cb_fps.set_label('Z (m)', fontsize=6)
+        ax_fps.set_aspect('equal')
+        ax_fps.tick_params(labelsize=5)
+
+    out_path = os.path.join(viz_dir, f"episode_{episode_idx:03d}_pipeline{suffix}.png")
+    fig.savefig(out_path, dpi=180, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+    print(f"[PaperViz] Saved stacked pipeline: {out_path}")
+
+
+def save_episode_progression(episode_data, episode_idx, viz_dir, bounds_min=None, bounds_max=None):
+    """Save a 3x5 grid showing grasp predictions across an episode.
+
+    Args:
+        episode_data: list of dicts, one per grasp step. Each dict has:
+            fps_points, x, y, z, yaw, step_idx, logs_grasped, alignment, logs_remaining
+        episode_idx: episode number for filename.
+        viz_dir: output directory.
+        bounds_min, bounds_max: (3,) arrays for consistent axis limits.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    n_total = len(episode_data)
+    if n_total == 0:
+        return
+
+    # Select grasps for beginning, middle, end (up to 5 each)
+    n_per_row = 5
+
+    # Beginning: first 5 grasps
+    early_indices = list(range(min(n_per_row, n_total)))
+
+    # Middle: 5 grasps around midpoint
+    mid_center = n_total // 2
+    mid_start = max(0, mid_center - n_per_row // 2)
+    mid_indices = list(range(mid_start, min(mid_start + n_per_row, n_total)))
+
+    # End: last 5 grasps
+    end_start = max(0, n_total - n_per_row)
+    end_indices = list(range(end_start, n_total))
+
+    rows = [
+        ("Early", early_indices),
+        ("Mid", mid_indices),
+        ("Late", end_indices),
+    ]
+
+    # Compute consistent axis limits from bounds or from all data.
+    # Axes are swapped (Y horizontal, X vertical) for landscape ratio,
+    # so x_lim (plot horizontal) uses Y bounds, y_lim (plot vertical) uses X bounds.
+    # Vertical axis inverted (high→low) so front of scene matches camera bottom.
+    if bounds_min is not None and bounds_max is not None:
+        x_lim = (bounds_min[1] - 0.5, bounds_max[1] + 0.5)
+        y_lim = (bounds_max[0] + 0.5, bounds_min[0] - 0.5)  # inverted
+    else:
+        all_pts = np.concatenate([d["fps_points"] for d in episode_data], axis=0)
+        mask = np.any(all_pts != 0.0, axis=1)
+        valid = all_pts[mask] if mask.any() else all_pts
+        if len(valid) > 0:
+            margin = 0.5
+            x_lim = (valid[:, 1].min() - margin, valid[:, 1].max() + margin)
+            y_lim = (valid[:, 0].max() + margin, valid[:, 0].min() - margin)  # inverted
+        else:
+            x_lim = (-5, 5)
+            y_lim = (5, -5)
+
+    n_rows = len(rows)
+    max_cols = max(len(idx) for _, idx in rows)
+    fig, axes = plt.subplots(n_rows, max_cols, figsize=(4 * max_cols, 3.2 * n_rows))
+    if n_rows == 1:
+        axes = axes[np.newaxis, :]
+    if max_cols == 1:
+        axes = axes[:, np.newaxis]
+
+    for row_i, (row_label, indices) in enumerate(rows):
+        for col_j in range(max_cols):
+            ax = axes[row_i, col_j]
+            if col_j >= len(indices):
+                ax.axis('off')
+                continue
+
+            d = episode_data[indices[col_j]]
+            fps_pts = d["fps_points"]
+            mask = np.any(fps_pts != 0.0, axis=1)
+            pts = fps_pts[mask] if mask.any() else fps_pts
+
+            success = d["logs_grasped"] is not None and d["logs_grasped"] > 0
+
+            # Axes swapped (Y horizontal, X vertical) for landscape ratio.
+            if len(pts) > 0:
+                ax.scatter(pts[:, 1], pts[:, 0], c=pts[:, 2], cmap='viridis',
+                           s=1.0, alpha=0.6, rasterized=True)
+
+            # Draw grapple footprint (swap x↔y, adjust yaw)
+            draw_grapple_footprint(ax, d["y"], d["x"], np.pi / 2 - d["yaw"],
+                                   width=1.5, length=0.5,
+                                   success=success, alpha=0.3)
+
+            # Draw action bounds (vertical axis inverted)
+            if bounds_min is not None and bounds_max is not None:
+                from matplotlib.patches import Rectangle
+                bw = bounds_max[1] - bounds_min[1]
+                bh = bounds_max[0] - bounds_min[0]
+                ax.add_patch(Rectangle(
+                    (bounds_min[1], bounds_max[0]), bw, -bh,
+                    linewidth=0.5, edgecolor='#e67e22', facecolor='none',
+                    linestyle='--', alpha=0.4, zorder=3))
+
+            ax.set_xlim(x_lim)
+            ax.set_ylim(y_lim)
+            ax.tick_params(labelsize=5)
+
+            # Column header (1-indexed)
+            result_tag = "HIT" if success else "MISS"
+            n_grasped = d["logs_grasped"] if d["logs_grasped"] else 0
+            col_title = f"grasp {d['step_idx'] + 1}"
+            if d.get("logs_remaining") is not None:
+                col_title += f"\n{d['logs_remaining']} left"
+            col_title += f"\n{result_tag} ({n_grasped})"
+            knocked = d.get("knocked_off")
+            if knocked and knocked > 0:
+                col_title += f" / {knocked} KO"
+            ax.set_title(col_title, fontsize=7, pad=3)
+
+            if col_j == 0:
+                first_g = episode_data[indices[0]]["step_idx"] + 1
+                last_g = episode_data[indices[-1]]["step_idx"] + 1
+                grasp_range = f"{first_g}\u2013{last_g}" if len(indices) > 1 else str(first_g)
+                ax.set_ylabel(f'{row_label}\n(grasps {grasp_range})',
+                              fontsize=8, fontweight='bold')
+            else:
+                ax.set_yticklabels([])
+
+            if row_i < n_rows - 1:
+                ax.set_xticklabels([])
+
+    fig.suptitle(f'Episode {episode_idx} \u2014 Grasp Progression ({n_total} total grasps)',
+                 fontsize=12, fontweight='bold', y=1.01)
+    fig.tight_layout()
+
+    out_path = os.path.join(viz_dir, f"episode_{episode_idx:03d}_progression.png")
+    fig.savefig(out_path, dpi=150, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+    print(f"[PaperViz] Saved progression: {out_path}")
+
+
 def main():
     # Load policy
     policy, num_points, metadata = load_bc_policy(args_cli.checkpoint, args_cli.device)
@@ -311,7 +898,10 @@ def main():
     cfg.use_hierarchical_rl = True
     cfg.action_space = action_dim  # Match policy output (4D or 5D)
     cfg.enable_camera = True
-    cfg.camera_cfg.data_types = ["depth", "semantic_segmentation"]
+    if args_cli.paper_viz:
+        cfg.camera_cfg.data_types = ["rgb", "depth", "semantic_segmentation"]
+    else:
+        cfg.camera_cfg.data_types = ["depth", "semantic_segmentation"]
     cfg.enable_domain_randomization = args_cli.domain_randomization
     cfg.sim.physx.solver_type = 1
     cfg.sim.physx.enable_stabilization = True
@@ -325,6 +915,14 @@ def main():
         viz_dir = args_cli.viz_dir or os.path.join(os.path.dirname(args_cli.checkpoint), "viz")
         os.makedirs(viz_dir, exist_ok=True)
         print(f"[Play] Saving visualizations to: {viz_dir}")
+
+    # Set up paper viz directory
+    if args_cli.paper_viz:
+        paper_viz_dir = args_cli.viz_dir or os.path.join(os.path.dirname(args_cli.checkpoint), "paper_viz")
+        os.makedirs(paper_viz_dir, exist_ok=True)
+        print(f"[Play] Saving paper visualizations to: {paper_viz_dir}")
+        # Per-episode data collection: list of per-step dicts
+        paper_episode_data = []
 
     # Reset and initialize camera
     env.reset()
@@ -412,6 +1010,23 @@ def main():
                 print(f"[Debug] Grasp {total_grasps}: points={obs.shape}, "
                       f"action=[{actions.min():.2f},{actions.max():.2f}]")
 
+            # Pre-step: collect pipeline data for paper viz (before env.step modifies state)
+            if args_cli.paper_viz:
+                paper_pre_step = []
+                for i in range(env.num_envs):
+                    min_b = env._action_bounds_min[i].cpu().numpy()
+                    max_b = env._action_bounds_max[i].cpu().numpy()
+                    x, y, z, yaw = decode_action(actions[i], min_b, max_b)
+                    pdata = get_pipeline_data(env, i, num_points)
+                    pdata["x"] = x
+                    pdata["y"] = y
+                    pdata["z"] = z
+                    pdata["yaw"] = yaw
+                    pdata["bounds_min"] = min_b.copy()
+                    pdata["bounds_max"] = max_b.copy()
+                    pdata["step_idx"] = total_grasps + i
+                    paper_pre_step.append(pdata)
+
             # Pre-step: decode actions for visualization (before env.step modifies state)
             if args_cli.visualize:
                 viz_decoded = []
@@ -469,6 +1084,24 @@ def main():
                                   alignment=alignment,
                                   bounds_min=vmin_b, bounds_max=vmax_b)
 
+                # Collect paper viz data (post-step: now we know the grasp result)
+                if args_cli.paper_viz:
+                    pdata = paper_pre_step[i]
+                    pdata["logs_grasped"] = logs_grasped
+                    pdata["alignment"] = alignment
+                    pdata["stability"] = stability
+                    # Compute remaining from pre-step snapshot (env may have
+                    # already reset if episode terminated inside step()).
+                    knocked_off = int(env._prev_cycle_knocked_off[i].item()) if hasattr(env, '_prev_cycle_knocked_off') else 0
+                    if hasattr(env, '_prev_logs_remaining'):
+                        pre_remaining = int(env._prev_logs_remaining[i].item())
+                        logs_remaining = pre_remaining - logs_grasped - knocked_off
+                    else:
+                        logs_remaining = None
+                    pdata["logs_remaining"] = logs_remaining
+                    pdata["knocked_off"] = knocked_off
+                    paper_episode_data.append(pdata)
+
                 total_grasps += 1
                 total_logs_grasped += logs_grasped
                 episode_logs_cleared[i] += logs_grasped
@@ -502,7 +1135,13 @@ def main():
                         piles_fully_cleared += 1
 
                     # Capture knocked-off count before env resets it
-                    ep_knocked_off = int(env._logs_knocked_off[i].item()) if hasattr(env, '_logs_knocked_off') else 0
+                    # Read episode knocked-off from snapshot (survives _reset_idx)
+                    if hasattr(env, '_final_episode_knocked_off'):
+                        ep_knocked_off = int(env._final_episode_knocked_off[i].item())
+                    elif hasattr(env, '_logs_knocked_off'):
+                        ep_knocked_off = int(env._logs_knocked_off[i].item())
+                    else:
+                        ep_knocked_off = 0
                     total_knocked_off += ep_knocked_off
                     knocked_off_per_episode.append(ep_knocked_off)
                     logs_cleared_per_episode.append(logs_cleared)
@@ -518,6 +1157,84 @@ def main():
 
                     print(f"[Play] Episode {episodes_done}: reward={ep_reward:.2f}, "
                           f"cleared={clear_pct:.1f}% ({logs_cleared}/{starting_logs}), knocked_off={ep_knocked_off}")
+
+                    # Generate paper viz figures for this episode
+                    if args_cli.paper_viz and len(paper_episode_data) > 0:
+                        # Trim stuck tail: consecutive misses at the end with
+                        # the same remaining count are redundant (policy stuck).
+                        # Keep none of the stuck repeats — the last successful
+                        # or first-miss grasp is more informative.
+                        trimmed = list(paper_episode_data)
+                        if len(trimmed) >= 2:
+                            last_remaining = trimmed[-1].get("logs_remaining")
+                            if last_remaining is not None:
+                                # Walk backward to find where the stuck run starts
+                                stuck_start = len(trimmed)
+                                for si in range(len(trimmed) - 1, -1, -1):
+                                    d = trimmed[si]
+                                    if (d.get("logs_remaining") == last_remaining
+                                            and (d.get("logs_grasped") or 0) == 0):
+                                        stuck_start = si
+                                    else:
+                                        break
+                                # Remove ALL stuck repeats
+                                if stuck_start < len(trimmed):
+                                    trimmed = trimmed[:stuck_start]
+                                    n_removed = len(paper_episode_data) - len(trimmed)
+                                    if n_removed > 0:
+                                        print(f"[PaperViz] Trimmed {n_removed} "
+                                              f"stuck repeated grasps (remaining={last_remaining})")
+                        # Safety: keep at least 1 entry
+                        if len(trimmed) == 0:
+                            trimmed = [paper_episode_data[0]]
+
+                        # Get bounds for consistent axes
+                        ep_bounds_min = trimmed[0].get("bounds_min")
+                        ep_bounds_max = trimmed[0].get("bounds_max")
+
+                        # Save stacked pipeline figure for representative grasps
+                        # (one from beginning, middle, end)
+                        n_ep = len(trimmed)
+                        representative = [0]
+                        if n_ep > 2:
+                            representative.append(n_ep // 2)
+                        if n_ep > 1:
+                            representative.append(n_ep - 1)
+                        rep_data = [trimmed[idx] for idx in representative]
+                        save_stacked_pipeline_viz(
+                            rep_data, episodes_done, paper_viz_dir,
+                            bounds_min=ep_bounds_min,
+                            bounds_max=ep_bounds_max,
+                        )
+
+                        # Save a second stacked pipeline with 3 consecutive
+                        # grasps from beginning, middle, and end
+                        if n_ep >= 6:
+                            consec = []
+                            # Beginning: grasps 0,1,2
+                            consec.extend(trimmed[0:3])
+                            # Middle: 3 around midpoint
+                            mid = n_ep // 2
+                            mid_start = max(0, mid - 1)
+                            consec.extend(trimmed[mid_start:mid_start + 3])
+                            # End: last 3
+                            consec.extend(trimmed[max(0, n_ep - 3):n_ep])
+                            save_stacked_pipeline_viz(
+                                consec, episodes_done, paper_viz_dir,
+                                bounds_min=ep_bounds_min,
+                                bounds_max=ep_bounds_max,
+                                suffix="_consecutive",
+                            )
+
+                        # Save episode progression grid
+                        save_episode_progression(
+                            trimmed, episodes_done, paper_viz_dir,
+                            bounds_min=ep_bounds_min,
+                            bounds_max=ep_bounds_max,
+                        )
+
+                        # Reset for next episode
+                        paper_episode_data = []
 
                     episode_rewards[i] = 0.0
                     episode_logs_cleared[i] = 0

@@ -430,7 +430,12 @@ def collect_demonstrations(env, num_episodes: int, output_dir: str,
                     logs_per_episode.append(total_logs_this_env)
 
                     # Track knocked-off logs and cycles for this episode
-                    knocked_off = int(env._logs_knocked_off[env_i].item()) if hasattr(env, '_logs_knocked_off') else 0
+                    if hasattr(env, '_final_episode_knocked_off'):
+                        knocked_off = int(env._final_episode_knocked_off[env_i].item())
+                    elif hasattr(env, '_logs_knocked_off'):
+                        knocked_off = int(env._logs_knocked_off[env_i].item())
+                    else:
+                        knocked_off = 0
                     cycles = int(env._cycle_count[env_i].item()) if hasattr(env, '_cycle_count') else 0
                     knocked_off_per_episode.append(knocked_off)
                     cycles_per_episode.append(cycles)
@@ -665,8 +670,8 @@ def save_policy(policy: BCPointNetPolicy, output_dir: str, num_points: int, meta
             else:
                 rsl_state[new_name] = torch.randn_like(param.cpu())
 
-    # Add std for action noise
-    rsl_state["std"] = torch.ones(5) * 0.3
+    # Add std for action noise (0.1 preserves BC mean during RL fine-tuning)
+    rsl_state["std"] = torch.ones(5) * 0.1
 
     torch.save({
         'model_state_dict': rsl_state,

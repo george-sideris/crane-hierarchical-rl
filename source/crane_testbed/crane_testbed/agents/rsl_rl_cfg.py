@@ -306,6 +306,53 @@ class CranePPORunnerCfg_PointCloud(RslRlOnPolicyRunnerCfg):
 
 
 @configclass
+class CranePPORunnerCfg_PointCloud_Curriculum(RslRlOnPolicyRunnerCfg):
+    """PPO configuration for crane RL with pile-size curriculum.
+
+    Longer rollouts (num_steps_per_env=15) to collect enough data from
+    short early-curriculum episodes. Higher max_iterations for curriculum ramp.
+    """
+
+    num_steps_per_env = 15
+    max_iterations = 3000
+    save_interval = 10
+    experiment_name = "crane_pointcloud_curriculum"
+    empirical_normalization = False
+
+    # Logging
+    logger = "tensorboard"
+    neptune_project = None
+    wandb_project = None
+    resume = False
+    load_run = None
+    load_checkpoint = None
+
+    policy = PointNetActorCriticCfg(
+        class_name="rsl_rl.modules.PointNetActorCritic",
+        init_noise_std=1.0,
+        actor_hidden_dims=[128, 64],
+        critic_hidden_dims=[128, 64],
+        activation="elu",
+        norm_type="batchnorm",
+    )
+
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.01,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=3e-4,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+    )
+
+
+@configclass
 class CranePPORunnerCfg_PointCloud_v2(RslRlOnPolicyRunnerCfg):
     """PPO configuration for crane RL with point cloud observations (v2).
 

@@ -33,6 +33,7 @@ parser.add_argument(
 )
 parser.add_argument("--export_io_descriptors", action="store_true", default=False, help="Export IO descriptors.")
 parser.add_argument("--bc_checkpoint", type=str, default=None, help="Path to BC checkpoint for fine-tuning (loads actor weights only, skips optimizer).")
+parser.add_argument("--freeze_encoder", action="store_true", default=False, help="Freeze PointNet encoder weights (use with --bc_checkpoint).")
 parser.add_argument("--save_debug_pointclouds", action="store_true", default=False, help="Save debug point cloud .npy and plots on first observation.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -297,6 +298,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             if unexpected:
                 print(f"[INFO]: Unexpected keys (ignored): {unexpected}")
         print("[INFO]: BC actor weights loaded. Optimizer starting fresh.")
+        if args_cli.freeze_encoder:
+            if hasattr(actor_critic, 'encoder'):
+                frozen_params = 0
+                for param in actor_critic.encoder.parameters():
+                    param.requires_grad = False
+                    frozen_params += param.numel()
+                print(f"[INFO]: Encoder frozen ({frozen_params} params)")
+            else:
+                print("[WARN]: --freeze_encoder set but model has no 'encoder' attribute")
     elif agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model

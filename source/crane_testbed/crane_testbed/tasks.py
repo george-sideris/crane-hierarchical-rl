@@ -1034,6 +1034,27 @@ class CranePointCloudEnvCfg_CosSin_AN(CraneDirectEnvCfgFull):
 
 
 ##
+# Point Cloud CosSin Curriculum variants (pile-size curriculum for exploration)
+##
+
+@configclass
+class CranePointCloudEnvCfg_CosSin_MR_Curriculum(CraneDirectEnvCfgFull):
+    """PCD-CosSin-MR with pile-size curriculum (from scratch)."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    observation_space = 3072
+    enable_domain_randomization: bool = False
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = False
+    curriculum_schedule = [(0, 10), (100, 30), (250, 80), (500, 200)]
+
+
+##
 # Point Cloud CosSin reward variants (with DR)
 ##
 
@@ -1229,6 +1250,17 @@ gym.register(
     },
 )
 
+
+# Curriculum variants (pile-size curriculum)
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-Curriculum-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_MR_Curriculum,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud_Curriculum",
+    },
+)
 
 ##
 # Point Cloud v2: LayerNorm + Asymmetric Actor-Critic
