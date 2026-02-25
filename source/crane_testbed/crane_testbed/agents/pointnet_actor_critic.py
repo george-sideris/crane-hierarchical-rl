@@ -132,26 +132,36 @@ class PointNetActorCritic(nn.Module):
         super().__init__()
 
         # Handle TensorDict obs specs from newer RSL-RL (extract integer sizes)
-        if not isinstance(num_actor_obs, (int, float)):
-            if hasattr(num_actor_obs, 'shape'):
-                num_actor_obs = num_actor_obs.shape[-1]
-            elif isinstance(num_actor_obs, dict) or hasattr(num_actor_obs, 'get'):
+        def _extract_obs_size(obs_spec, key='policy'):
+            """Extract integer obs size from int, Tensor, or TensorDict."""
+            if isinstance(obs_spec, (int, float)):
+                return int(obs_spec)
+            # Direct tensor with shape
+            if hasattr(obs_spec, 'shape') and len(obs_spec.shape) >= 1:
                 try:
-                    pol = num_actor_obs.get('policy', num_actor_obs)
-                    num_actor_obs = pol.shape[-1] if hasattr(pol, 'shape') else int(pol)
+                    return int(obs_spec.shape[-1])
                 except Exception:
-                    num_actor_obs = int(num_actor_obs)
-        if not isinstance(num_critic_obs, (int, float)):
-            if hasattr(num_critic_obs, 'shape'):
-                num_critic_obs = num_critic_obs.shape[-1]
-            elif isinstance(num_critic_obs, dict) or hasattr(num_critic_obs, 'get'):
-                try:
-                    crt = num_critic_obs.get('critic', num_critic_obs.get('policy', num_critic_obs))
-                    num_critic_obs = crt.shape[-1] if hasattr(crt, 'shape') else int(crt)
-                except Exception:
-                    num_critic_obs = int(num_critic_obs)
-        num_actor_obs = int(num_actor_obs)
-        num_critic_obs = int(num_critic_obs)
+                    pass
+            # Dict-like (TensorDict): look for a tensor-valued key
+            if hasattr(obs_spec, 'get') or isinstance(obs_spec, dict):
+                for k in [key, 'policy']:
+                    try:
+                        val = obs_spec[k] if isinstance(obs_spec, dict) else obs_spec.get(k)
+                        if val is not None and hasattr(val, 'shape') and len(val.shape) >= 1:
+                            return int(val.shape[-1])
+                    except Exception:
+                        continue
+            return None
+
+        actor_size = _extract_obs_size(num_actor_obs, 'policy')
+        critic_size = _extract_obs_size(num_critic_obs, 'critic')
+        # Fallback: critic uses same size as actor (symmetric case)
+        if actor_size is None:
+            raise ValueError(f"Cannot extract obs size from num_actor_obs: {type(num_actor_obs)}")
+        if critic_size is None:
+            critic_size = actor_size
+        num_actor_obs = actor_size
+        num_critic_obs = critic_size
 
         self.num_points = num_points
         self.encoder_lr_scale = encoder_lr_scale
