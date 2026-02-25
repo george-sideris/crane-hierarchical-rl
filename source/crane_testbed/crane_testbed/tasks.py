@@ -791,8 +791,8 @@ class CraneDirectEnvCfg_Full_CosSin_ClearBonus_Ablation(CraneDirectEnvCfgFull):
     enable_domain_randomization: bool = False
     reward_formula: str = "multiplicative"
     normalize_reward: bool = True              # equalize throughput
-    use_alignment_reward: bool = False         # remove alignment gate
-    use_stability_reward: bool = False         # remove stability gate
+    use_alignment_reward: bool = True
+    use_stability_reward: bool = True
     clearing_bonus_scale: float = 100.0        # end-of-episode clearing bonus
     curriculum_schedule = [(0, 20), (300, 60), (600, 120), (1000, 200)]
 

@@ -33,7 +33,7 @@ Anonymous Authors
 
 \begin{abstract}
 Clearing dense log piles is a contact-rich manipulation problem with a large, evolving state space and a difficult exploration landscape.
-In this paper, we study grasp target selection for a forestry log loader in simulation, focusing on the decision of where and how to orient a grapple to clear piles of up to 200 rigid-body logs in frictional contact.
+In this paper, we study grasp target selection for a forestry log loader in simulation, focusing on the decision of where and how to orient a grapple to clear dense piles of rigid-body logs in frictional contact.
 We introduce a grasp-and-remove formulation in which each environment step corresponds to a complete pick attempt: a policy selects a grasp target $(x,y,z,\psi)$ in the crane base frame, a fixed finite-state machine (FSM) executes the approach and lift, and grasped logs are removed.
 This design isolates high-level targeting from low-level execution.
 Policies observe depth-derived point clouds of the segmented log pile, processed by a PointNet encoder.
@@ -50,50 +50,51 @@ robot learning, multi-object grasping from dense clutter, behavior cloning, rein
 \section{Introduction}
 Forestry operations increasingly seek autonomy for heavy machinery to improve safety and productivity~\cite{lindroos2015forestry}.
 A key subtask is log-pile clearing: repeatedly grasping multiple logs from a rack or pile and removing them.
-This setting is challenging because (i) the scene is densely cluttered with up to 200 rigid-body logs in frictional contact, (ii) each grasp disturbs the pile through contact cascades, continuously reshaping the configuration for subsequent attempts, and (iii) no two pile configurations are alike, so a targeting strategy must be robust to diverse arrangements.
+This setting is challenging because (i) the scene is densely cluttered with hundreds of rigid-body logs in frictional contact, (ii) each grasp disturbs the pile through contact cascades, continuously reshaping the configuration for subsequent attempts, and (iii) no two pile configurations are alike, so a targeting strategy must be robust to diverse arrangements.
 
 We address the grasp target selection problem: given a point cloud derived from a stereo depth camera, where should the crane place and orient the grapple to clear the pile efficiently?
 We deliberately separate this high-level targeting decision from low-level motion execution.
 Concretely, we implement a grasp-and-remove simulator in Isaac Lab~\cite{mittal2023orbit} where each environment step is one complete pick attempt: a policy selects where to grasp, a fixed FSM handles execution, and grasped logs are removed rather than deposited, allowing us to measure clearing progress without modeling placement dynamics.
 
-We find that from-scratch RL, while effective at maximizing per-grasp reward, develops a narrow targeting strategy that stalls at roughly 60\% pile clearing, failing to adapt as the pile geometry changes.
-In contrast, BC trained on heuristic demonstrations from segmented point clouds achieves clearing performance close to the expert, demonstrating that depth-derived geometry is sufficient for effective grasp targeting in this domain.
+Existing work on autonomous log grasping addresses small-scale settings: single-log pick-and-place, small groupings of 2--7 logs, or grasp prediction without sequential clearing.
+We scale to full pile-level clearing with dense frictional contact dynamics among hundreds of logs, where each grasp reshapes the configuration for all subsequent attempts.
+To our knowledge, this is the first study of learned sequential grasp targeting at this pile scale.
 
 Our main contributions are:
 \begin{itemize}
-    \item A grasp-and-remove crane environment in Isaac Lab that supports GPU-parallelized training across many environments with configurable pile sizes and shapes (up to 200 logs in our experiments), paired with a fixed FSM controller that isolates the targeting decision from low-level execution.
     \item A pipeline for learning grasp target selection in dense log piles from heuristic expert demonstrations, using segmented point cloud observations encoded by a PointNet~\cite{qi2017pointnet}.
+    \item A grasp-and-remove crane environment in Isaac Lab that supports GPU-parallelized training across many environments with configurable pile sizes and shapes, paired with a fixed FSM controller that isolates the targeting decision from low-level execution.
     \item A comparative evaluation of heuristic targeting, from-scratch RL, and BC, showing that BC from point clouds achieves near-expert clearing performance while from-scratch RL stalls at roughly 60\% clearing due to a narrow targeting strategy.
 \end{itemize}
 
 \section{Related Work}
 
 \subsection{Grasping in Clutter}
-Learning-based grasp detection has progressed from single isolated objects to cluttered, multi-object scenes.
+Learning-based grasp detection has progressed from single isolated objects to cluttered, multi-object scenes, with applications spanning industrial bin picking of manufactured parts~\cite{mahler2017dexnet}, warehouse depalletizing, and natural-resource handling such as forestry log loading.
 Deep grasp prediction networks~\cite{morrison2018closing, kumra2017robotic} predict grasp pose directly from visual input.
 Sequential decluttering has been studied in bin picking~\cite{mahler2017dexnet, zeng2018learning}, including learning grasp sequences that account for how each pick changes the scene~\cite{mahler2017sequential}.
 However, these works typically involve heterogeneous objects of varied shape and size in loose arrangements, where clutter arises from random placement rather than dense packing.
 The grasping primitive is almost always a precision or pinch grasp that isolates a single target object.
-Our setting differs in important ways: we perform power grasps from dense piles of identical cylindrical logs that are initially stacked in ordered layers.
-The homogeneity and tight packing mean that logs are in extensive frictional contact with their neighbors, and each grasp attempt (which captures 5--20 logs simultaneously) disturbs the pile, causing settling, rolling, and potential knock-offs that reshape the configuration for all subsequent attempts.
+Our setting differs in important ways: we perform power grasps from dense piles of cylindrical logs of uniform geometry that are initially stacked in ordered layers.
+The homogeneity and tight packing mean that logs are in extensive frictional contact with their neighbors, and each grasp attempt (which captures multiple logs simultaneously) disturbs the pile, causing settling, rolling, and potential knock-offs that reshape the configuration for all subsequent attempts.
 For 3D perception, PointNet~\cite{qi2017pointnet} processes unordered point sets via per-point MLPs and symmetric pooling; we adopt this architecture to encode depth-derived point clouds into a latent representation for grasp target prediction.
 
 \subsection{Learning for Log Grasping and Forestry Crane Control}
 A growing body of work applies learning methods to log grasping and forestry crane automation, though existing approaches address smaller-scale settings than the one considered here.
 
-For grasp prediction, Wallin et~al.~\cite{wallin2024multilog} use RL with virtual visual servoing for multi-log grasping from piles of 2--5 logs, separating image segmentation from Cartesian crane control; their agent achieves 95\% success but the pile dynamics are limited to a handful of objects.
-F{\"a}lldin et~al.~\cite{falldin2025synthesizing} train a U-Net CNN on synthetic RGB-D images to predict grasp poses for piles of up to 7 logs, with an open-loop kinematic controller; they do not address sequential clearing or pile-scale dynamics.
+For grasp prediction, Wallin et~al.~\cite{wallin2024multilog} use RL with virtual visual servoing for multi-log grasping from small groupings of 2--5 logs in simulation, separating image segmentation from Cartesian crane control; their agent achieves 95\% success but the pile dynamics are limited to a handful of objects.
+F{\"a}lldin et~al.~\cite{falldin2025synthesizing} train a U-Net CNN on synthetic RGB-D images to predict grasp poses for small clusters of up to 7 logs, with an open-loop kinematic controller; their work focuses on grasp prediction from synthetic data and does not address sequential clearing or pile-scale dynamics.
 Ayoub et~al.~\cite{ayoub2023grasp} propose a CNN-based grasp planner for a log-loading forestry machine that predicts a grasp configuration from a depth image for small piles, validated both in simulation and on a commercial log loader retrofitted for autonomy.
 
-For crane control, Vu et~al.~\cite{vu2025autonomous} present a MuJoCo-based forestry crane simulator and benchmark RL velocity controllers for grasping single logs of varying diameter.
-Kurinov et~al.~\cite{kurinov2025reinforcement} train an RL agent for the full single-log pick-and-place pipeline (locate, grasp, transport, load) using Isaac Gym, achieving 94\% success across parallel environments but with one log at a time.
+For crane control, Vu et~al.~\cite{vu2025autonomous} present a MuJoCo-based forestry crane simulator and benchmark RL velocity controllers for grasping single logs of varying diameter (simulation only).
+Kurinov et~al.~\cite{kurinov2025reinforcement} train an RL agent for the full single-log pick-and-place pipeline (locate, grasp, transport, load) in Isaac Gym simulation, achieving 94\% success across parallel environments but with one log at a time.
 Jebellat et~al.~\cite{jebellat2025designing} use dynamic programming to design anti-sway trajectories for a log loader end effector, addressing the pendulum dynamics that also arise in our passive grapple chain.
-These works address individual subtasks but none tackle sequential clearing of a dense pile at the scale considered here (200 logs).
+These works address individual subtasks but none tackle sequential clearing of a dense pile at the scale considered here.
 
 \section{Task Formulation}
 \subsection{Grasp-and-Remove Formulation}
 \label{sec:formulation}
-Each environment step corresponds to a complete grasp attempt rather than a low-level control tick: a policy selects a grasp target, the FSM executes the approach, close, and lift, and grasped logs are removed from the scene.
+Each environment step corresponds to a complete grasp attempt: a policy selects a grasp target, the FSM executes the approach, close, and lift, and grasped logs are removed from the scene.
 This formulation is shared by all methods (heuristic, BC, and RL).
 The state $s_t \in \mathcal{S}$ is the current pile configuration (observed via point cloud or privileged poses; Section~\ref{sec:obs}).
 A grasp target is defined by the tuple
@@ -101,7 +102,7 @@ A grasp target is defined by the tuple
     \mathbf{g} = (x,\, y,\, z,\, \psi),
 \end{equation}
 where $(x, y, z)$ is the grapple position in the crane base frame and $\psi$ is the grapple yaw angle about the vertical axis.
-Because a cylindrical log at yaw $\psi$ is identical to the same log at $\psi + \pi$, the policy represents $\psi$ via the $\pi$-periodic encoding $(\cos 2\psi, \sin 2\psi)$, giving a 5D action $a_t \in \mathcal{A} \subset \mathbb{R}^5$ (Section~\ref{sec:actions}).
+Because a cylindrical log at yaw $\psi$ is identical to the same log at $\psi + \pi$, the policy represents $\psi$ via the $\pi$-periodic encoding $(\cos 2\psi, \sin 2\psi)$~\cite{morrison2018closing}, giving a 5D action $a_t \in \mathcal{A} \subset \mathbb{R}^5$ (Section~\ref{sec:actions}).
 The transition $T(s_{t+1}|s_t, a_t)$ is determined by the physics simulation and FSM execution.
 After each grasp attempt, an outcome evaluation measures the number of logs grasped, grapple--log alignment, and grapple stability (Section~\ref{sec:outcome}).
 For RL training, this outcome is used as a scalar reward $r_t = R(s_t, a_t)$, and the full structure is treated as an episodic Markov decision process $(\mathcal{S}, \mathcal{A}, T, R, \gamma)$ with discount factor $\gamma$, where a policy $\pi$ maximizes the expected discounted return over a horizon of $H$ grasp attempts:
@@ -188,7 +189,7 @@ The FSM implements a five-phase grasp cycle:
     \item \texttt{HOVER}: Move grapple to hover position above the target $(x, y, z + z_{\text{clear}})$, with $z_{\text{clear}} = 2.5$\,m clearance above the target log.
     \item \texttt{ALIGN}: Hold position and rotate grapple to the target yaw $\psi$.
     \item \texttt{DESCEND}: Lower grapple to approach height at reduced speed (30\% step scaling) to minimize pile disturbance.
-    \item \texttt{CLOSE}: Close grapple jaws via discrete stepping.
+    \item \texttt{CLOSE}: Close the grapple jaws incrementally via discrete stepping.
     \item \texttt{LIFT}: Lift back to hover height at moderate speed (50\% step scaling), then hold for $\sim$1\,s while grasp outcome is evaluated (Section~\ref{sec:outcome}). Grasped logs are removed, the jaws open, and the cycle repeats from \texttt{HOVER} with the next target.
 \end{enumerate}
 A per-phase timeout (100 timesteps, $\sim$2\,s) forces advancement if the two-stage convergence is not reached, preventing the FSM from stalling on difficult configurations.
@@ -203,9 +204,9 @@ After lifting (\texttt{LIFT}), the FSM holds the grapple at hover height and eva
 \textbf{Logs grasped} ($g$): the number of active logs whose centers lie within a proximity radius of the grapple (default 1.5\,m).
 
 \textbf{Alignment} ($\alpha$): for each grasped log $i$, we measure the angle between the grapple's jaw axis $\hat{y}_g$ and the log's length axis $\hat{y}_{\ell_i}$ via their dot product ($\hat{y}_g^\top \hat{y}_{\ell_i} = \cos\theta_a$, where $\theta_a$ is the misalignment angle).
-Because a cylindrical log's length direction is arbitrary, we take the absolute value; raising to the 8th power creates a sharp dropoff that penalizes even moderate misalignment:
+Because a cylindrical log has no preferred length direction, the even exponent absorbs the sign; raising to the 8th power creates a sharp dropoff that penalizes moderate misalignment:
 \begin{equation}
-    \alpha_i = \big|\hat{y}_g^\top \hat{y}_{\ell_i}\big|^{8}, \qquad \alpha = \frac{1}{g}\sum_{i=1}^{g} \alpha_i \;\in [0,1].
+    \alpha_i = \big(\hat{y}_g^\top \hat{y}_{\ell_i}\big)^{8}, \qquad \alpha = \frac{1}{g}\sum_{i=1}^{g} \alpha_i \;\in [0,1].
 \end{equation}
 
 \textbf{Stability} ($s$): the grapple's levelness after lifting, measured as $\hat{z}_g^\top \hat{z}_w = \cos\theta_s$, where $\theta_s$ is the tilt angle between the grapple's up vector and the world vertical.
@@ -218,7 +219,7 @@ Logs that leave the workspace bounds during a grasp are removed and excluded fro
 
 \begin{figure}[t]
 \centering
-\TODO{Insert zoomed-in grasp diagram showing: (1) grapple holding logs with coordinate frames drawn on the grapple ($\hat{y}_g$, $\hat{z}_g$) and a log ($\hat{y}_\ell$), illustrating the alignment dot product $\langle \hat{y}_g, \hat{y}_\ell \rangle$ and the stability dot product $\hat{z}_g^\top \hat{z}_w$; (2) the 3D action space bounding box overlaid on the rack, showing the workspace limits $[b_i^{\min}, b_i^{\max}]$ that define the policy's reachable target space; (3) include outcome\_scores.pdf subplots showing the shaped score curves ($|\cos\theta|^8$ for alignment, $(\cos\theta)^4$ for stability) alongside the diagram.}
+\TODO{Insert zoomed-in grasp diagram showing: (1) the crane and grapple with the grasp state variables $(x,y,z,\psi)$ labeled on the grapple body; (2) grapple holding logs with coordinate frames drawn on the grapple ($\hat{y}_g$, $\hat{z}_g$) and a log ($\hat{y}_\ell$), illustrating the alignment dot product $\langle \hat{y}_g, \hat{y}_\ell \rangle$ and the stability dot product $\hat{z}_g^\top \hat{z}_w$; (3) the 3D action space bounding box overlaid on the rack, showing the workspace limits $[b_i^{\min}, b_i^{\max}]$ that define the policy's reachable target space; (4) include outcome\_scores.pdf subplots showing the shaped score curves ($(\cos\theta)^8$ for alignment, $(\cos\theta)^4$ for stability) alongside the diagram.}
 \caption{Grasp geometry and action space. Left: coordinate frames used to compute alignment ($\alpha$) and stability ($s$). The alignment score measures parallelism between the grapple jaw axis $\hat{y}_g$ and the log length axis $\hat{y}_\ell$; stability measures the grapple's levelness via $\hat{z}_g^\top \hat{z}_w$. Right: the 3D workspace bounds define the policy's action space over the rack.}
 \label{fig:grasp_geometry}
 \end{figure}
@@ -533,7 +534,7 @@ Fourth, all experiments are in simulation; sim-to-real transfer with domain rand
 Despite these simplifications, the environment captures the essential challenges of sequential multi-log grasping from dense piles.
 
 \section{Conclusion}
-We presented a grasp-and-remove crane environment for studying grasp target selection in dense log-pile clearing at scale (up to 200 rigid-body logs in contact).
+We presented a grasp-and-remove crane environment for studying grasp target selection in dense log-pile clearing at scale.
 By factorizing target choice from low-level execution, we compared heuristic targeting, from-scratch RL, and BC on a shared controller.
 Our results show that from-scratch RL, while effective at per-grasp reward, converges to a narrow targeting strategy that stalls at roughly 60\% clearing.
 BC trained on segmented point clouds achieves $96.3$\% clearing, within 1.6 percentage points of the $97.9$\% heuristic expert, indicating that depth-derived geometry carries enough information for sequential grasp targeting in dense log piles.

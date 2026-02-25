@@ -1781,12 +1781,18 @@ class CraneDirectEnvFull(DirectRLEnv):
             self._action_bounds_max   = torch.zeros((N, 3), device=self.device)
             self._action_bounds_valid = torch.zeros((N,), dtype=torch.bool, device=self.device)
 
-        # --- Rack/layout extents in WORLD ---
-        y_half_span = 0.5 * (cfg.rows - 1) * cfg.spacing_y
+        # --- Fixed rack extents in WORLD ---
+        # Anchored to the physical rack geometry (matches the original 20-row x 10-layer
+        # grid: 0.5*(20-1)*0.16 = 1.52 m half-span, top at base_z + 9*0.12 + 0.12 = 1.30 m).
+        # These are independent of the log spawn pattern so that action bounds stay
+        # constant regardless of which pattern (A/B/C) is used.
+        RACK_Y_HALF_SPAN = 1.52   # metres, fixed to rack Y extent
+        RACK_Z_TOP       = 0.70   # metres above world origin (base_z + 0.60 m stack height)
+
         rack_center_y_w = cfg.center_y_world
-        y_min_w = rack_center_y_w - y_half_span
-        y_max_w = rack_center_y_w + y_half_span
-        z_top_w = cfg.base_z + (cfg.layers - 1) * cfg.spacing_z + cfg.spawn_height + cfg.jitter_height
+        y_min_w = rack_center_y_w - RACK_Y_HALF_SPAN
+        y_max_w = rack_center_y_w + RACK_Y_HALF_SPAN
+        z_top_w = RACK_Z_TOP
 
 
         # --- Tunable margins (base-frame box size) ---

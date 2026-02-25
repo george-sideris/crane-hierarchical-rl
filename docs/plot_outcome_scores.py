@@ -23,24 +23,24 @@ plt.rcParams.update({
 theta = np.linspace(0, 90, 500)  # degrees
 theta_rad = np.deg2rad(theta)
 
-# Alignment: a = |cos(theta)|^8
+# Alignment: a = cos(theta)^8  (even exponent absorbs the sign)
 # theta = 0 means perfectly aligned, 90 means perpendicular
-alignment = np.abs(np.cos(theta_rad)) ** 8
+alignment = np.cos(theta_rad) ** 8
 
 # Stability: s = max(0, cos(theta))^4
 # theta = 0 means perfectly level, 90 means horizontal
 stability = np.maximum(0, np.cos(theta_rad)) ** 4
 
 # Also show unshaped versions for comparison
-alignment_raw = np.abs(np.cos(theta_rad))
+alignment_raw = np.cos(theta_rad)
 stability_raw = np.maximum(0, np.cos(theta_rad))
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(3.5, 1.8), sharey=True)
 fig.subplots_adjust(wspace=0.35)
 
 # Alignment
-ax1.plot(theta, alignment_raw, "--", color="C0", linewidth=0.8, alpha=0.5, label=r"$|\cos\theta_a|$")
-ax1.plot(theta, alignment, color="C0", linewidth=1.5, label=r"$|\cos\theta_a|^8$")
+ax1.plot(theta, alignment_raw, "--", color="C0", linewidth=0.8, alpha=0.5, label=r"$\cos\theta_a$")
+ax1.plot(theta, alignment, color="C0", linewidth=1.5, label=r"$(\cos\theta_a)^8$")
 ax1.set_xlabel(r"Misalignment angle $\theta_a$ (deg)")
 ax1.set_ylabel("Score")
 ax1.set_title("Alignment $a$")

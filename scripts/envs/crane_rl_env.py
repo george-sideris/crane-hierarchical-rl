@@ -1549,22 +1549,28 @@ class CraneDirectEnv(DirectRLEnv):
             self._action_bounds_max   = torch.zeros((N, 3), device=self.device)
             self._action_bounds_valid = torch.zeros((N,), dtype=torch.bool, device=self.device)
 
-        # --- Rack/layout extents in WORLD ---
-        y_half_span = 0.5 * (cfg.rows - 1) * cfg.spacing_y
+        # --- Fixed rack extents in WORLD ---
+        # Anchored to the physical rack geometry (matches the original 20-row x 10-layer
+        # grid: 0.5*(20-1)*0.16 = 1.52 m half-span, top at base_z + 9*0.12 + 0.12 = 1.30 m).
+        # These are independent of the log spawn pattern so that action bounds stay
+        # constant regardless of which pattern (A/B/C) is used.
+        RACK_Y_HALF_SPAN = 1.52   # metres, fixed to rack Y extent
+        RACK_Z_TOP       = 0.70   # metres above world origin (base_z + 0.60 m stack height)
+
         rack_center_y_w = cfg.center_y_world
-        y_min_w = rack_center_y_w - y_half_span
-        y_max_w = rack_center_y_w + y_half_span
+        y_min_w = rack_center_y_w - RACK_Y_HALF_SPAN
+        y_max_w = rack_center_y_w + RACK_Y_HALF_SPAN
 
         # "Top of stack" estimate in WORLD (do NOT include hover-clear)
-        z_top_w = cfg.base_z + (cfg.layers - 1) * cfg.spacing_z + cfg.spawn_height + cfg.jitter_height
+        z_top_w = RACK_Z_TOP
 
         # --- Tunable margins (base-frame box size) ---
         # Wider in X so the policy can choose end-grasps (increase if your logs are longer)
-        margin_x_back  = 1.5   # was 0.25
-        margin_x_front = 1.5   # was 0.50
+        margin_x_back  = 1.0
+        margin_x_front = 1.0
 
         # Y overhang (keep some slack so you can hit edge logs / shifted patterns)
-        margin_y = 1.00        # was 1.00 (feel free to keep 1.00 if you liked it)
+        margin_y = 1.15
 
         # Much shorter in Z: just enough above the stack for grasp points (hover is handled elsewhere)
         margin_z_top = 0.35    # was 1.50
