@@ -885,6 +885,10 @@ class CraneDirectEnvCfgFull(DirectRLEnvCfg):
     use_stability_reward: bool = True
     debug_reward: bool = False  # Print debug info for reward computation
 
+    # End-of-episode clearing bonus: reward = clearing_pct * scale at termination.
+    # 0.0 = disabled (default, no change to existing tasks).
+    clearing_bonus_scale: float = 0.0
+
     # Curriculum: gradually increase active logs. None = disabled (default).
     # List of (episode_threshold, num_active_logs) tuples, e.g.:
     # [(0, 15), (200, 50), (500, 100), (1000, 200)]
@@ -1229,6 +1233,7 @@ class CraneDirectEnvFull(DirectRLEnv):
         self._episode_alignment_sum_weighted = torch.zeros(self.num_envs, device=self.device, dtype=torch.float32)  # Sum of (logs * alignment)
         self._episode_stability_sum_weighted = torch.zeros(self.num_envs, device=self.device, dtype=torch.float32)  # Sum of (logs * stability)
         self._prev_grasp_stability = torch.zeros(self.num_envs, device=self.device, dtype=torch.float32)  # Last grasp stability
+        self._last_clearing_bonus = torch.zeros(self.num_envs, device=self.device, dtype=torch.float32)  # Last clearing bonus given
 
         # Logs available at target position (for normalized reward computation)
         self._logs_available_at_target = torch.zeros(self.num_envs, device=self.device, dtype=torch.int32)
@@ -1368,6 +1373,19 @@ class CraneDirectEnvFull(DirectRLEnv):
                 terminated[i] = True
             elif self._cycle_count[i] >= 30:  # Timeout (reduced from 50 for no-deposition mode)
                 terminated[i] = True
+
+        # End-of-episode clearing bonus (before reset clears episode counters)
+        clearing_bonus_scale = getattr(self.cfg, 'clearing_bonus_scale', 0.0)
+        if clearing_bonus_scale > 0.0:
+            for i in range(self.num_envs):
+                if terminated[i]:
+                    starting = float(self._per_env_log_counts[i].clamp(min=1).item())
+                    cleared = float(self._episode_total_logs_grasped[i].item())
+                    clearing_pct = cleared / starting
+                    bonus = clearing_pct * clearing_bonus_scale
+                    self.reward_buf[i] += bonus
+                    self._episode_return[i] += bonus
+                    self._last_clearing_bonus[i] = bonus
 
         truncated = torch.zeros_like(terminated)
 
@@ -2682,6 +2700,10 @@ class CraneDirectEnvFull(DirectRLEnv):
                 "reward/per_cycle": (self._episode_return / cycles_per_env.clamp(min=1)).mean().item(),
             }
 
+            # Clearing bonus metrics (only when clearing bonus is enabled)
+            if getattr(self.cfg, 'clearing_bonus_scale', 0.0) > 0.0:
+                extras["episode"]["clearing_bonus"] = self._last_clearing_bonus.mean().item()
+
             # Curriculum metrics (only when curriculum is active)
             if self.cfg.curriculum_schedule is not None:
                 extras["episode"]["curriculum/active_logs"] = float(self._curriculum_active_logs)
@@ -3007,6 +3029,8 @@ class CraneDirectEnvFull(DirectRLEnv):
                 self._logs_knocked_off[i] = 0  # Reset out-of-bounds counter
 
                 # Reset episode-level metrics for TensorBoard
+                # NOTE: _last_clearing_bonus is NOT reset here — it's read by _get_extras()
+                # after step() returns, and only written when terminated[i] is True.
                 self._episode_successful_grasps[i] = 0
                 self._episode_failed_grasps[i] = 0
                 self._episode_return[i] = 0.0
