@@ -1051,7 +1051,7 @@ class CranePointCloudEnvCfg_CosSin_MR_Curriculum(CraneDirectEnvCfgFull):
     depth_range_max: float = 10.0
     reward_formula: str = "multiplicative"
     normalize_reward: bool = False
-    curriculum_schedule = [(0, 10), (100, 30), (250, 80), (500, 200)]
+    curriculum_schedule = [(0, 20), (100, 60), (200, 120), (300, 200)]
 
 
 ##

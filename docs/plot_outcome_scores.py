@@ -8,12 +8,12 @@ import matplotlib.pyplot as plt
 
 plt.rcParams.update({
     "font.family": "serif",
-    "font.size": 9,
-    "axes.labelsize": 10,
-    "axes.titlesize": 10,
-    "legend.fontsize": 8,
-    "xtick.labelsize": 8,
-    "ytick.labelsize": 8,
+    "font.size": 7,
+    "axes.labelsize": 8,
+    "axes.titlesize": 8,
+    "legend.fontsize": 6,
+    "xtick.labelsize": 6,
+    "ytick.labelsize": 6,
     "figure.dpi": 300,
     "savefig.dpi": 300,
     "savefig.bbox": "tight",
@@ -39,8 +39,8 @@ fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(3.5, 1.8), sharey=True)
 fig.subplots_adjust(wspace=0.35)
 
 # Alignment
-ax1.plot(theta, alignment_raw, "--", color="C0", linewidth=0.8, alpha=0.5, label=r"$|\cos\theta|$")
-ax1.plot(theta, alignment, color="C0", linewidth=1.5, label=r"$|\cos\theta|^8$")
+ax1.plot(theta, alignment_raw, "--", color="C0", linewidth=0.8, alpha=0.5, label=r"$|\cos\theta_a|$")
+ax1.plot(theta, alignment, color="C0", linewidth=1.5, label=r"$|\cos\theta_a|^8$")
 ax1.set_xlabel(r"Misalignment angle $\theta_a$ (deg)")
 ax1.set_ylabel("Score")
 ax1.set_title("Alignment $a$")
@@ -52,8 +52,8 @@ ax1.spines["top"].set_visible(False)
 ax1.spines["right"].set_visible(False)
 
 # Stability
-ax2.plot(theta, stability_raw, "--", color="C1", linewidth=0.8, alpha=0.5, label=r"$\max(0,\cos\theta)$")
-ax2.plot(theta, stability, color="C1", linewidth=1.5, label=r"$\max(0,\cos\theta)^4$")
+ax2.plot(theta, stability_raw, "--", color="C1", linewidth=0.8, alpha=0.5, label=r"$\max(0,\cos\theta_s)$")
+ax2.plot(theta, stability, color="C1", linewidth=1.5, label=r"$\max(0,\cos\theta_s)^4$")
 ax2.set_xlabel(r"Tilt angle $\theta_s$ (deg)")
 ax2.set_title("Stability $s$")
 ax2.legend(loc="upper right", framealpha=0.9)

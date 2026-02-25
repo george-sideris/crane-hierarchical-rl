@@ -260,7 +260,7 @@ parser.add_argument("--urdf_path", type=str, default="/workspace/crane_testbed/a
 
 # Logs grid (per env)
 parser.add_argument("--num_logs", type=int, default=200)
-parser.add_argument("--rows", type=int, default=20)
+parser.add_argument("--rows", type=int, default=25)
 parser.add_argument("--layers", type=int, default=10)
 parser.add_argument("--spacing_y", type=float, default=0.16)
 parser.add_argument("--spacing_z", type=float, default=0.12)
@@ -561,14 +561,18 @@ def plan_grid_yz(center_y_local: float, rows: int, layers: int, spacing_y: float
         mean_off = sum(layer_offs) / layers
         layer_offs = [o - mean_off for o in layer_offs]
     positions, placed = [], 0
-    y0 = center_y_local - 0.5 * (rows - 1) * spacing_y
+    # When cap < full grid, use fewer rows per layer but keep full rack span
+    effective_rows = min(rows, cap)
+    full_span = (rows - 1) * spacing_y
+    effective_spacing = full_span / max(effective_rows - 1, 1) if effective_rows > 1 else spacing_y
+    y0 = center_y_local - 0.5 * (effective_rows - 1) * effective_spacing
     for L in range(layers):
         if placed >= cap: break
         zc = base_z + L * spacing_z
         layer_offset = layer_offs[L]
-        for i in range(rows):
+        for i in range(effective_rows):
             if placed >= cap: break
-            yc = y0 + i * spacing_y + layer_offset
+            yc = y0 + i * effective_spacing + layer_offset
             if row_y_jitter > 0.0:
                 yc += (random.random()*2 - 1) * row_y_jitter
             positions.append((yc, zc))
@@ -666,12 +670,20 @@ def plan_grid_yz_random(center_y_local: float, rows: int, layers: int, spacing_y
     pattern_rows = random.randint(15, 25)
     pattern_layers_max = random.randint(10, 20)
 
-    # Randomize spacing
-    random_spacing_y = spacing_y * random.uniform(0.9, 1.15)
+    # When cap is small (curriculum), use fewer rows but keep full rack span
+    effective_rows = min(pattern_rows, cap)
+    full_span = (rows - 1) * spacing_y  # full rack width
+
+    # Randomize spacing but ensure logs span the full rack width
+    if effective_rows > 1:
+        random_spacing_y = full_span / (effective_rows - 1) * random.uniform(0.95, 1.05)
+    else:
+        random_spacing_y = spacing_y * random.uniform(0.9, 1.15)
     random_spacing_z = spacing_z * random.uniform(0.9, 1.15)
 
-    # Randomize center shift
-    center_shift = random.uniform(-0.6, 0.6)
+    # Randomize center shift (disabled — keep logs centered on rack)
+    max_shift = 0.0
+    center_shift = random.uniform(-max_shift, max_shift)
     shifted_center = center_y_local + center_shift
 
     # --- Height profile: controls max layers per column ---
@@ -690,13 +702,13 @@ def plan_grid_yz_random(center_y_local: float, rows: int, layers: int, spacing_y
 
     # Build positions layer by layer (uniform grid — profile is carved after settling)
     positions, placed = [], 0
-    y0 = shifted_center - 0.5 * (pattern_rows - 1) * random_spacing_y
+    y0 = shifted_center - 0.5 * (effective_rows - 1) * random_spacing_y
     base_z_variation = random.uniform(-0.02, 0.02)
 
     L = 0
     while placed < cap and L < 100:
         layer_offset = layer_offs[L % len(layer_offs)] if layer_offs else 0.0
-        for col in range(pattern_rows):
+        for col in range(effective_rows):
             if placed >= cap:
                 break
             yc = y0 + col * random_spacing_y + layer_offset
@@ -1066,9 +1078,14 @@ class CraneDirectEnvFull(DirectRLEnv):
         self._log_quat = self._log_quat.to(self.device)
         self._bootstrap_done = False
 
-        # Curriculum state
-        self._total_episodes_completed = 0
-        self._curriculum_active_logs = self.cfg.num_logs  # default: all logs
+        # Curriculum state (thresholds are in learning iterations)
+        self._total_episodes_completed = 0  # for logging
+        self._curriculum_step_count = 0  # total step() calls
+        self._curriculum_num_steps_per_env = 4  # steps per iteration (matches rsl_rl_cfg)
+        if self.cfg.curriculum_schedule is not None and len(self.cfg.curriculum_schedule) > 0:
+            self._curriculum_active_logs = self.cfg.curriculum_schedule[0][1]
+        else:
+            self._curriculum_active_logs = self.cfg.num_logs
         self._curriculum_stage_idx = 0  # index into curriculum_schedule
 
         # Heuristic per-env state
@@ -1258,6 +1275,20 @@ class CraneDirectEnvFull(DirectRLEnv):
             - Grasp is evaluated, logs despawned, crane returns to HOVER_UP
             - Returns (obs, reward, done) for the completed grasp
         """
+        # Curriculum: advance stage based on learning iterations
+        if self.cfg.curriculum_schedule is not None and self._logs_settled:
+            self._curriculum_step_count += 1
+            current_iter = self._curriculum_step_count // self._curriculum_num_steps_per_env
+            schedule = self.cfg.curriculum_schedule
+            while (self._curriculum_stage_idx < len(schedule) - 1
+                   and current_iter >= schedule[self._curriculum_stage_idx + 1][0]):
+                self._curriculum_stage_idx += 1
+                new_active = schedule[self._curriculum_stage_idx][1]
+                if new_active != self._curriculum_active_logs:
+                    self._curriculum_active_logs = new_active
+                    print(f"[Curriculum] Stage {self._curriculum_stage_idx}: "
+                          f"{new_active} active logs at iteration {current_iter}")
+
         # No-deposition version always uses hierarchical mode
         # 1. Process action (target selection) at HOVER_UP
         action = action.to(self.device)
@@ -1371,11 +1402,10 @@ class CraneDirectEnvFull(DirectRLEnv):
             self._viz = None
             self._viz_proto_idx = {}
 
-        # ground + light (crane and logs are now handled by scene config)
+        # ground + light
         spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
         dome = sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75))
         dome.func("/World/Light", dome)
-
         # build env_0 rack + Origins and then clone to envs
         self._make_env0_rack_and_origins()
         self.scene.clone_environments(copy_from_source=True)
@@ -2263,7 +2293,8 @@ class CraneDirectEnvFull(DirectRLEnv):
 
             # Log count: curriculum > DR > default
             if self.cfg.curriculum_schedule is not None:
-                per_env_target = int(min(per_env_cap, self._curriculum_active_logs))
+                fallback = self.cfg.curriculum_schedule[0][1] if self.cfg.curriculum_schedule else self.cfg.num_logs
+                per_env_target = int(min(per_env_cap, getattr(self, '_curriculum_active_logs', fallback)))
             elif self.cfg.enable_domain_randomization:
                 import random
                 per_env_target = random.randint(20, 200)
@@ -2874,18 +2905,10 @@ class CraneDirectEnvFull(DirectRLEnv):
             env_ids = self.crane._ALL_INDICES
         super()._reset_idx(env_ids)
 
-        # Curriculum: advance stage based on total episodes completed
-        if self.cfg.curriculum_schedule is not None:
+        # Curriculum is now advanced in step() based on learning iterations
+        # Still count episodes for logging
+        if self._logs_settled:
             self._total_episodes_completed += len(env_ids)
-            schedule = self.cfg.curriculum_schedule
-            while (self._curriculum_stage_idx < len(schedule) - 1
-                   and self._total_episodes_completed >= schedule[self._curriculum_stage_idx + 1][0]):
-                self._curriculum_stage_idx += 1
-                new_active = schedule[self._curriculum_stage_idx][1]
-                if new_active != self._curriculum_active_logs:
-                    self._curriculum_active_logs = new_active
-                    print(f"[Curriculum] Stage {self._curriculum_stage_idx}: "
-                          f"{new_active} active logs at episode {self._total_episodes_completed}")
 
         # Always randomize pile arrangement (spacing, jitter, center shift) on reset.
         # Log count is only randomized when domain randomization is enabled.
@@ -4760,8 +4783,11 @@ class CraneDirectEnvFull(DirectRLEnv):
             
             log_pos_w = base_pos_w + self._quat_rotate_vec_wxyz(base_quat_w, log_b)
 
-            # Visualize target as red sphere
-            self._viz["log"].visualize(log_pos_w)
+            # Visualize target as red sphere (hide when showing action bounds)
+            if getattr(args_cli, 'show_action_bounds', False):
+                self._viz["log"].visualize(torch.full_like(log_pos_w, -1000.0))
+            else:
+                self._viz["log"].visualize(log_pos_w)
 
             # Action space bounding box visualization (frame cube)
             if getattr(args_cli, 'show_action_bounds', False):
