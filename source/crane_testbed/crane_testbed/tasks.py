@@ -762,6 +762,35 @@ gym.register(
 )
 
 ##
+# Full CosSin Curriculum variant (no camera, pile-size curriculum)
+##
+
+@configclass
+class CraneDirectEnvCfg_Full_CosSin_MR_Curriculum(CraneDirectEnvCfgFull):
+    """CosSin-MR with pile-size curriculum (no camera)."""
+    use_hierarchical_rl: bool = True
+    episode_length_s = 600.0
+    action_space = 5  # [x, y, z, cos(2*yaw), sin(2*yaw)]
+    max_logs_obs: int = 32
+    observation_space = 128
+    enable_domain_randomization: bool = False
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = False
+    use_stability_reward: bool = True
+    failure_penalty: float = -1.0
+    curriculum_schedule = [(0, 20), (100, 60), (200, 120), (300, 200)]
+
+gym.register(
+    id="Isaac-Crane-Full-CosSin-Curriculum-v0",
+    entry_point="crane_rl_env_full:CraneDirectEnvFull",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CraneDirectEnvCfg_Full_CosSin_MR_Curriculum,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Full",
+    },
+)
+
+##
 # Depth observation environment: CNN-based visual RL
 ##
 
