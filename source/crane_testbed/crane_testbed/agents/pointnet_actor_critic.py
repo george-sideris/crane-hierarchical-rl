@@ -131,6 +131,28 @@ class PointNetActorCritic(nn.Module):
     ):
         super().__init__()
 
+        # Handle TensorDict obs specs from newer RSL-RL (extract integer sizes)
+        if not isinstance(num_actor_obs, (int, float)):
+            if hasattr(num_actor_obs, 'shape'):
+                num_actor_obs = num_actor_obs.shape[-1]
+            elif isinstance(num_actor_obs, dict) or hasattr(num_actor_obs, 'get'):
+                try:
+                    pol = num_actor_obs.get('policy', num_actor_obs)
+                    num_actor_obs = pol.shape[-1] if hasattr(pol, 'shape') else int(pol)
+                except Exception:
+                    num_actor_obs = int(num_actor_obs)
+        if not isinstance(num_critic_obs, (int, float)):
+            if hasattr(num_critic_obs, 'shape'):
+                num_critic_obs = num_critic_obs.shape[-1]
+            elif isinstance(num_critic_obs, dict) or hasattr(num_critic_obs, 'get'):
+                try:
+                    crt = num_critic_obs.get('critic', num_critic_obs.get('policy', num_critic_obs))
+                    num_critic_obs = crt.shape[-1] if hasattr(crt, 'shape') else int(crt)
+                except Exception:
+                    num_critic_obs = int(num_critic_obs)
+        num_actor_obs = int(num_actor_obs)
+        num_critic_obs = int(num_critic_obs)
+
         self.num_points = num_points
         self.encoder_lr_scale = encoder_lr_scale
 
