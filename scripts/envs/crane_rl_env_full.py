@@ -1374,18 +1374,16 @@ class CraneDirectEnvFull(DirectRLEnv):
             elif self._cycle_count[i] >= 30:  # Timeout (reduced from 50 for no-deposition mode)
                 terminated[i] = True
 
-        # End-of-episode clearing bonus (before reset clears episode counters)
+        # End-of-episode clearing bonus (full clear only — curriculum makes this achievable)
         clearing_bonus_scale = getattr(self.cfg, 'clearing_bonus_scale', 0.0)
         if clearing_bonus_scale > 0.0:
             for i in range(self.num_envs):
-                if terminated[i]:
-                    starting = float(self._per_env_log_counts[i].clamp(min=1).item())
-                    cleared = float(self._episode_total_logs_grasped[i].item())
-                    clearing_pct = cleared / starting
-                    bonus = clearing_pct * clearing_bonus_scale
-                    self.reward_buf[i] += bonus
-                    self._episode_return[i] += bonus
-                    self._last_clearing_bonus[i] = bonus
+                if terminated[i] and self._count_logs_in_rack(i) == 0:
+                    self.reward_buf[i] += clearing_bonus_scale
+                    self._episode_return[i] += clearing_bonus_scale
+                    self._last_clearing_bonus[i] = clearing_bonus_scale
+                elif terminated[i]:
+                    self._last_clearing_bonus[i] = 0.0
 
         truncated = torch.zeros_like(terminated)
 

@@ -794,7 +794,7 @@ class CraneDirectEnvCfg_Full_CosSin_ClearBonus_Ablation(CraneDirectEnvCfgFull):
     use_alignment_reward: bool = False         # remove alignment gate
     use_stability_reward: bool = False         # remove stability gate
     clearing_bonus_scale: float = 100.0        # end-of-episode clearing bonus
-    curriculum_schedule = [(0, 20), (100, 60), (200, 120), (300, 200)]
+    curriculum_schedule = [(0, 20), (300, 60), (600, 120), (1000, 200)]
 
 gym.register(
     id="Isaac-Crane-Full-CosSin-ClearBonus-v0",
