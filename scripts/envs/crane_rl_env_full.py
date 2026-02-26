@@ -876,7 +876,7 @@ class CraneDirectEnvCfgFull(DirectRLEnvCfg):
     reward_formula: str = "multiplicative"
     # normalize_reward: if True, use efficiency = logs_grasped / available (clamped); otherwise use throughput = logs_grasped
     normalize_reward: bool = True
-    max_graspable_logs: int = 20  # Physical grapple capacity cap for normalization denominator
+    max_graspable_logs: int = 15  # Physical grapple capacity cap for normalization denominator
     normalized_efficiency_scale: float = 10.0  # Used when reward_formula="multiplicative" and normalize_reward=True
     failure_penalty: float = -1.0  # Penalty for 0-log grasps
     use_alignment_reward: bool = True  # Multiply/add alignment term (ablate by setting False)
@@ -2202,6 +2202,17 @@ class CraneDirectEnvFull(DirectRLEnv):
             hide_quat[:, 0] = 1.0
             hide_scale = torch.full((N * 12, 3), 1e-3, device=self.device, dtype=torch.float32)
             viz["grasp_prism"].visualize(translations=hide_pos, orientations=hide_quat, scales=hide_scale)
+        except Exception:
+            pass
+
+        # Hide action_bounds by default so it doesn't linger at the origin before first update.
+        try:
+            N = int(self.num_envs)
+            hide_pos = torch.full((N * 12, 3), -1000.0, device=self.device, dtype=torch.float32)
+            hide_quat = torch.zeros((N * 12, 4), device=self.device, dtype=torch.float32)
+            hide_quat[:, 0] = 1.0
+            hide_scale = torch.full((N * 12, 3), 1e-3, device=self.device, dtype=torch.float32)
+            viz["action_bounds"].visualize(translations=hide_pos, orientations=hide_quat, scales=hide_scale)
         except Exception:
             pass
 
@@ -4680,7 +4691,7 @@ class CraneDirectEnvFull(DirectRLEnv):
                 if getattr(self.cfg, "use_stability_reward", False):
                     total_reward += s
             else:
-                max_g = float(getattr(self.cfg, "max_graspable_logs", 20))
+                max_g = float(getattr(self.cfg, "max_graspable_logs", 15))
                 total_reward = (efficiency / max_g) + align_term
                 if getattr(self.cfg, "use_stability_reward", False):
                     total_reward += s
@@ -4797,7 +4808,7 @@ class CraneDirectEnvFull(DirectRLEnv):
                 if unknown.numel() > 0:
                     bg_target_b[unknown] = torch.zeros_like(bg_target_b[unknown])
             bg_target_w = base_pos_w + self._quat_rotate_vec_wxyz(base_quat_w, bg_target_b)
-            show_bg = bool(getattr(args_cli, 'debug_logs', False) or getattr(args_cli, 'debug_reward_norm', False))
+            show_bg = bool(getattr(args_cli, 'debug_logs', False))
             if not show_bg:
                 bg_target_w = torch.full_like(bg_target_w, -1000.0)
             self._viz["bg_target"].visualize(bg_target_w, base_quat_w)
@@ -4810,8 +4821,8 @@ class CraneDirectEnvFull(DirectRLEnv):
             
             log_pos_w = base_pos_w + self._quat_rotate_vec_wxyz(base_quat_w, log_b)
 
-            # Visualize target as red sphere (hide when showing action bounds)
-            if getattr(args_cli, 'show_action_bounds', False):
+            # Visualize target as red sphere (hide when showing action bounds or reward norm slice)
+            if getattr(args_cli, 'show_action_bounds', False) or getattr(args_cli, 'debug_reward_norm', False):
                 self._viz["log"].visualize(torch.full_like(log_pos_w, -1000.0))
             else:
                 self._viz["log"].visualize(log_pos_w)
@@ -4938,7 +4949,7 @@ class CraneDirectEnvFull(DirectRLEnv):
                         Lz = (z1 - z0).clamp(min=1e-6)
 
                         # Edge thickness (meters)
-                        t = float(getattr(args_cli, "grasp_prism_edge_thickness", getattr(args_cli, "action_bounds_edge_thickness", 0.01)))
+                        t = float(getattr(args_cli, "grasp_prism_edge_thickness", None) or getattr(args_cli, "action_bounds_edge_thickness", None) or 0.01)
                         tt = torch.full((N,), t, device=self.device, dtype=mins.dtype)
 
                         centers_x = torch.stack(

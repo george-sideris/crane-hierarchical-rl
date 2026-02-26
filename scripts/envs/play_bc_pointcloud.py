@@ -35,6 +35,7 @@ parser.add_argument("--output_dir", type=str, default=None, help="Output directo
 parser.add_argument("--visualize", action="store_true", help="Save per-step visualization PNGs")
 parser.add_argument("--viz_dir", type=str, default=None, help="Directory for viz PNGs (default: checkpoint dir / viz)")
 parser.add_argument("--paper_viz", action="store_true", help="Save paper-quality pipeline and progression figures")
+parser.add_argument("--raw_pcd", action="store_true", help="Use raw (unmasked) point cloud instead of segmented log-only points")
 args_cli, _ = parser.parse_known_args()
 
 # IsaacLab imports
@@ -133,9 +134,13 @@ def farthest_point_sampling(points: torch.Tensor, num_samples: int) -> torch.Ten
 
 
 def get_log_pointcloud_base_frame(env, env_idx: int, num_points: int,
-                                   depth_range: tuple = (1.0, 10.0)) -> torch.Tensor:
-    """Get masked log point cloud in crane base frame."""
-    pc_world = env.get_log_pointcloud_world(env_idx, max_points=5000, depth_range=depth_range)
+                                   depth_range: tuple = (1.0, 10.0),
+                                   raw_pcd: bool = False) -> torch.Tensor:
+    """Get point cloud in crane base frame (masked or raw)."""
+    if raw_pcd:
+        pc_world = env.get_pointcloud_world(env_idx, max_points=5000, depth_range=depth_range)
+    else:
+        pc_world = env.get_log_pointcloud_world(env_idx, max_points=5000, depth_range=depth_range)
 
     if pc_world.shape[0] == 0:
         return torch.zeros((num_points, 3), device=env.device)
@@ -417,7 +422,7 @@ def get_pipeline_data(env, env_idx, num_points, depth_range=(1.0, 10.0)):
     data["base_points"] = base_pts
 
     # --- (e) FPS-sampled points ---
-    fps_pts = get_log_pointcloud_base_frame(env, env_idx, num_points, depth_range=depth_range)
+    fps_pts = get_log_pointcloud_base_frame(env, env_idx, num_points, depth_range=depth_range, raw_pcd=args_cli.raw_pcd)
     data["fps_points"] = fps_pts.cpu().numpy()
 
     return data
@@ -998,7 +1003,7 @@ def main():
             # Get point cloud observations
             pc_batch = []
             for i in range(env.num_envs):
-                pc = get_log_pointcloud_base_frame(env, i, num_points)
+                pc = get_log_pointcloud_base_frame(env, i, num_points, raw_pcd=args_cli.raw_pcd)
                 pc_batch.append(pc)
             obs = torch.stack(pc_batch)  # (num_envs, num_points, 3)
 

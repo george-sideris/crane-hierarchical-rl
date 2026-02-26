@@ -54,6 +54,7 @@ parser.add_argument("--norm_type", type=str, default="batchnorm", choices=["batc
 # Collection options
 parser.add_argument("--save_interval", type=int, default=20, help="Save checkpoint every N episodes")
 parser.add_argument("--collect_only", action="store_true", help="Only collect, skip training")
+parser.add_argument("--raw_pcd", action="store_true", help="Use raw (unmasked) point cloud instead of segmented log-only points")
 parser.add_argument("--train_only", type=str, default=None, help="Skip collection, train from this data dir")
 args_cli, _ = parser.parse_known_args()
 
@@ -285,21 +286,26 @@ def farthest_point_sampling(points: torch.Tensor, num_samples: int) -> torch.Ten
 
 
 def get_log_pointcloud_base_frame(env, env_idx: int, num_points: int,
-                                   depth_range: tuple = (1.0, 10.0)) -> torch.Tensor:
+                                   depth_range: tuple = (1.0, 10.0),
+                                   raw_pcd: bool = False) -> torch.Tensor:
     """
-    Get masked log point cloud in crane base frame.
+    Get point cloud in crane base frame.
 
     Args:
         env: Environment
         env_idx: Environment index
         num_points: Number of points to return (via FPS)
         depth_range: (min, max) depth range
+        raw_pcd: If True, use full unmasked depth; if False, use segmented log-only points
 
     Returns:
         (num_points, 3) point cloud in base frame
     """
-    # Get log point cloud in world frame
-    pc_world = env.get_log_pointcloud_world(env_idx, max_points=5000, depth_range=depth_range)
+    # Get point cloud in world frame (raw or masked)
+    if raw_pcd:
+        pc_world = env.get_pointcloud_world(env_idx, max_points=5000, depth_range=depth_range)
+    else:
+        pc_world = env.get_log_pointcloud_world(env_idx, max_points=5000, depth_range=depth_range)
 
     if pc_world.shape[0] == 0:
         return torch.zeros((num_points, 3), device=env.device)
@@ -385,7 +391,7 @@ def collect_demonstrations(env, num_episodes: int, output_dir: str,
             # Get point cloud observations for all envs BEFORE step
             pc_batch = []
             for i in range(env.num_envs):
-                pc = get_log_pointcloud_base_frame(env, i, num_points, depth_range)
+                pc = get_log_pointcloud_base_frame(env, i, num_points, depth_range, raw_pcd=args_cli.raw_pcd)
                 pc_batch.append(pc.cpu().numpy())
             pc_batch = np.stack(pc_batch)  # (num_envs, num_points, 3)
 
