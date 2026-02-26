@@ -274,9 +274,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # Override optimizer if policy supports differential learning rates (e.g., PointNet encoder_lr_scale)
     # RSL-RL's PPO creates optimizer with policy.parameters() at a single LR, ignoring get_param_groups()
-    if hasattr(runner.alg.actor_critic, 'get_param_groups'):
+    if hasattr(runner.alg.policy, 'get_param_groups'):
         base_lr = agent_cfg.algorithm.learning_rate
-        param_groups = runner.alg.actor_critic.get_param_groups(base_lr)
+        param_groups = runner.alg.policy.get_param_groups(base_lr)
         runner.alg.optimizer = torch.optim.Adam(param_groups, lr=base_lr)
         print(f"[INFO]: Optimizer overridden with encoder_lr_scale param groups (base_lr={base_lr})")
 
