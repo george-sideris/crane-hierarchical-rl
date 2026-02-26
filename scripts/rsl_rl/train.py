@@ -271,6 +271,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     # write git state to logs
     runner.add_git_repo_to_log(__file__)
+
+    # Override optimizer if policy supports differential learning rates (e.g., PointNet encoder_lr_scale)
+    # RSL-RL's PPO creates optimizer with policy.parameters() at a single LR, ignoring get_param_groups()
+    if hasattr(runner.alg.actor_critic, 'get_param_groups'):
+        base_lr = agent_cfg.algorithm.learning_rate
+        param_groups = runner.alg.actor_critic.get_param_groups(base_lr)
+        runner.alg.optimizer = torch.optim.Adam(param_groups, lr=base_lr)
+        print(f"[INFO]: Optimizer overridden with encoder_lr_scale param groups (base_lr={base_lr})")
+
     # load the checkpoint
     if args_cli.bc_checkpoint:
         # BC fine-tuning: load only actor weights, skip optimizer
@@ -304,7 +313,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 for param in actor_critic.encoder.parameters():
                     param.requires_grad = False
                     frozen_params += param.numel()
-                print(f"[INFO]: Encoder frozen ({frozen_params} params)")
+                # CRITICAL: Freeze BatchNorm running statistics too.
+                # requires_grad=False only freezes learnable params (weight, bias)
+                # but running_mean/running_var are buffers that update in train mode.
+                actor_critic.encoder.eval()
+                # Monkey-patch train() so PPO's policy.train() doesn't re-enable encoder training mode
+                _orig_train = actor_critic.train
+                def _patched_train(mode=True):
+                    _orig_train(mode)
+                    actor_critic.encoder.eval()  # Always keep encoder in eval mode
+                    return actor_critic
+                actor_critic.train = _patched_train
+                print(f"[INFO]: Encoder frozen ({frozen_params} params, BatchNorm stats locked)")
             else:
                 print("[WARN]: --freeze_encoder set but model has no 'encoder' attribute")
     elif agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":

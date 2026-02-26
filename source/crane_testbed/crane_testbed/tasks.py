@@ -418,6 +418,57 @@ class CraneDirectEnvCfg_Full_CosSin_MN_v0(CraneDirectEnvCfgFull):
     failure_penalty: float = -1.0
 
 
+# CosSin-MR-NoAlign: multiplicative raw, no alignment reward — g * s
+@configclass
+class CraneDirectEnvCfg_Full_CosSin_MR_NoAlign_v0(CraneDirectEnvCfgFull):
+    """CosSin-MR v0 without alignment: g * s (ablation)."""
+    use_hierarchical_rl: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    max_logs_obs: int = 32
+    observation_space = 128
+    enable_domain_randomization: bool = False
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = False
+    use_alignment_reward: bool = False
+    use_stability_reward: bool = True
+    failure_penalty: float = -1.0
+
+
+# CosSin-MR-NoStab: multiplicative raw, no stability reward — g * a
+@configclass
+class CraneDirectEnvCfg_Full_CosSin_MR_NoStab_v0(CraneDirectEnvCfgFull):
+    """CosSin-MR v0 without stability: g * a (ablation)."""
+    use_hierarchical_rl: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    max_logs_obs: int = 32
+    observation_space = 128
+    enable_domain_randomization: bool = False
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = False
+    use_alignment_reward: bool = True
+    use_stability_reward: bool = False
+    failure_penalty: float = -1.0
+
+
+# CosSin-MR-ThroughputOnly: just g, no alignment or stability
+@configclass
+class CraneDirectEnvCfg_Full_CosSin_MR_ThroughputOnly_v0(CraneDirectEnvCfgFull):
+    """CosSin-MR v0 throughput only: g (ablation)."""
+    use_hierarchical_rl: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    max_logs_obs: int = 32
+    observation_space = 128
+    enable_domain_randomization: bool = False
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = False
+    use_alignment_reward: bool = False
+    use_stability_reward: bool = False
+    failure_penalty: float = -1.0
+
+
 # CosSin-AR: additive, raw
 @configclass
 class CraneDirectEnvCfg_Full_CosSin_AR_v0(CraneDirectEnvCfgFull):
@@ -676,6 +727,36 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": CraneDirectEnvCfg_Full_CosSin_MN_v0,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Full",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-Full-CosSin-MR-NoAlign-v0",  # 5D action, MR without alignment
+    entry_point="crane_rl_env_full:CraneDirectEnvFull",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CraneDirectEnvCfg_Full_CosSin_MR_NoAlign_v0,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Full",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-Full-CosSin-MR-NoStab-v0",  # 5D action, MR without stability
+    entry_point="crane_rl_env_full:CraneDirectEnvFull",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CraneDirectEnvCfg_Full_CosSin_MR_NoStab_v0,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Full",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-Full-CosSin-MR-ThroughputOnly-v0",  # 5D action, just g
+    entry_point="crane_rl_env_full:CraneDirectEnvFull",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CraneDirectEnvCfg_Full_CosSin_MR_ThroughputOnly_v0,
         "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Full",
     },
 )
@@ -1089,6 +1170,156 @@ class CranePointCloudEnvCfg_CosSin_AN(CraneDirectEnvCfgFull):
 
 
 ##
+# Point Cloud CosSin reward ablation variants (masked PCD, no DR)
+##
+
+# NoAlign: multiplicative raw, no alignment reward — g * s
+@configclass
+class CranePointCloudEnvCfg_CosSin_MR_NoAlign(CraneDirectEnvCfgFull):
+    """PCD-CosSin-MR-NoAlign: multiplicative, no alignment (ablation)."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    observation_space = 3072
+    enable_domain_randomization: bool = False
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = False
+    use_alignment_reward: bool = False
+    use_stability_reward: bool = True
+
+
+# NoStab: multiplicative raw, no stability reward — g * a
+@configclass
+class CranePointCloudEnvCfg_CosSin_MR_NoStab(CraneDirectEnvCfgFull):
+    """PCD-CosSin-MR-NoStab: multiplicative, no stability (ablation)."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    observation_space = 3072
+    enable_domain_randomization: bool = False
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = False
+    use_alignment_reward: bool = True
+    use_stability_reward: bool = False
+
+
+# ThroughputOnly: just g, no alignment or stability
+@configclass
+class CranePointCloudEnvCfg_CosSin_MR_ThroughputOnly(CraneDirectEnvCfgFull):
+    """PCD-CosSin-MR-ThroughputOnly: throughput only (ablation)."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    observation_space = 3072
+    enable_domain_randomization: bool = False
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = False
+    use_alignment_reward: bool = False
+    use_stability_reward: bool = False
+
+
+##
+# Point Cloud CosSin Raw PCD variants (full scene, no segmentation)
+##
+
+@configclass
+class CranePointCloudEnvCfg_CosSin_Raw_MR(CraneDirectEnvCfgFull):
+    """PCD-CosSin-Raw-MR: raw point cloud, multiplicative reward."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    observation_space = 3072
+    enable_domain_randomization: bool = False
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = False
+    use_raw_pointcloud: bool = True
+
+
+@configclass
+class CranePointCloudEnvCfg_CosSin_Raw_MR_NoAlign(CraneDirectEnvCfgFull):
+    """PCD-CosSin-Raw-MR-NoAlign: raw PCD, no alignment (ablation)."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    observation_space = 3072
+    enable_domain_randomization: bool = False
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = False
+    use_raw_pointcloud: bool = True
+    use_alignment_reward: bool = False
+    use_stability_reward: bool = True
+
+
+@configclass
+class CranePointCloudEnvCfg_CosSin_Raw_MR_NoStab(CraneDirectEnvCfgFull):
+    """PCD-CosSin-Raw-MR-NoStab: raw PCD, no stability (ablation)."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    observation_space = 3072
+    enable_domain_randomization: bool = False
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = False
+    use_raw_pointcloud: bool = True
+    use_alignment_reward: bool = True
+    use_stability_reward: bool = False
+
+
+@configclass
+class CranePointCloudEnvCfg_CosSin_Raw_MR_ThroughputOnly(CraneDirectEnvCfgFull):
+    """PCD-CosSin-Raw-MR-ThroughputOnly: raw PCD, throughput only (ablation)."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    observation_space = 3072
+    enable_domain_randomization: bool = False
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = False
+    use_raw_pointcloud: bool = True
+    use_alignment_reward: bool = False
+    use_stability_reward: bool = False
+
+
+##
+# Point Cloud CosSin Raw PCD + Proportional Clearing Bonus
+##
+
+@configclass
+class CranePointCloudEnvCfg_CosSin_Raw_MR_PropClear(CranePointCloudEnvCfg_CosSin_Raw_MR):
+    """Raw PCD, CosSin-MR + proportional clearing bonus (50.0 scale)."""
+    clearing_bonus_scale: float = 50.0
+    proportional_clearing_bonus: bool = True
+
+
+##
 # Point Cloud CosSin Curriculum variants (pile-size curriculum for exploration)
 ##
 
@@ -1239,6 +1470,88 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_AN,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+# 5D CosSin action — masked PCD reward ablation variants (no DR)
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-MR-NoAlign-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_MR_NoAlign,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-MR-NoStab-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_MR_NoStab,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-MR-ThroughputOnly-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_MR_ThroughputOnly,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+# 5D CosSin action — raw PCD variants
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-Raw-MR-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_Raw_MR,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-Raw-MR-NoAlign-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_Raw_MR_NoAlign,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-Raw-MR-NoStab-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_Raw_MR_NoStab,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-Raw-MR-ThroughputOnly-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_Raw_MR_ThroughputOnly,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-Raw-MR-PropClear-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_Raw_MR_PropClear,
         "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
     },
 )

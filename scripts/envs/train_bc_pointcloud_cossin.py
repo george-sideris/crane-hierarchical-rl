@@ -442,7 +442,12 @@ def collect_demonstrations(env, num_episodes: int, output_dir: str,
                         knocked_off = int(env._logs_knocked_off[env_i].item())
                     else:
                         knocked_off = 0
-                    cycles = int(env._cycle_count[env_i].item()) if hasattr(env, '_cycle_count') else 0
+                    if hasattr(env, '_final_episode_cycle_count'):
+                        cycles = int(env._final_episode_cycle_count[env_i].item())
+                    elif hasattr(env, '_cycle_count'):
+                        cycles = int(env._cycle_count[env_i].item())
+                    else:
+                        cycles = 0
                     knocked_off_per_episode.append(knocked_off)
                     cycles_per_episode.append(cycles)
 

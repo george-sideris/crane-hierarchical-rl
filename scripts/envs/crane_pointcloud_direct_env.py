@@ -50,12 +50,14 @@ class CranePointCloudDirectEnv(gym.Env):
         self.depth_range_max = getattr(cfg, 'depth_range_max', 10.0)
         self.save_debug_pointclouds = getattr(cfg, 'save_debug_pointclouds', False)
         self.asymmetric_critic = getattr(cfg, 'asymmetric_critic', False)
+        self.use_raw_pointcloud = getattr(cfg, 'use_raw_pointcloud', False)
         self._obs_dim = self.num_points * 3
         self._critic_obs_dim = 128  # 32 logs × 4 (x, y, z, yaw) from _build_target_selection_obs
 
         print(f"[PointCloudDirectEnv] Config: {self.num_points} points, "
               f"depth=[{self.depth_range_min}, {self.depth_range_max}], "
-              f"obs_dim={self._obs_dim}, asymmetric_critic={self.asymmetric_critic}", flush=True)
+              f"obs_dim={self._obs_dim}, asymmetric_critic={self.asymmetric_critic}, "
+              f"raw_pcd={self.use_raw_pointcloud}", flush=True)
 
         # Merge point cloud config into base config
         base_cfg = CraneDirectEnvCfgFull()
@@ -132,11 +134,17 @@ class CranePointCloudDirectEnv(gym.Env):
 
         all_obs = []
         for env_idx in range(self.num_envs):
-            # Get log point cloud in world frame
-            pc_world = self._base_env.get_log_pointcloud_world(
-                env_idx, max_points=5000,
-                depth_range=(self.depth_range_min, self.depth_range_max)
-            )
+            # Get point cloud in world frame (raw = full scene, masked = logs only)
+            if self.use_raw_pointcloud:
+                pc_world = self._base_env.get_pointcloud_world(
+                    env_idx, max_points=5000,
+                    depth_range=(self.depth_range_min, self.depth_range_max)
+                )
+            else:
+                pc_world = self._base_env.get_log_pointcloud_world(
+                    env_idx, max_points=5000,
+                    depth_range=(self.depth_range_min, self.depth_range_max)
+                )
 
             if pc_world.shape[0] == 0:
                 all_obs.append(torch.zeros(self._obs_dim, device=self.device))
@@ -162,10 +170,16 @@ class CranePointCloudDirectEnv(gym.Env):
         if self._obs_call_count == 1:
             import sys
             for i in range(min(2, self.num_envs)):
-                pc_world = self._base_env.get_log_pointcloud_world(
-                    i, max_points=5000,
-                    depth_range=(self.depth_range_min, self.depth_range_max)
-                )
+                if self.use_raw_pointcloud:
+                    pc_world = self._base_env.get_pointcloud_world(
+                        i, max_points=5000,
+                        depth_range=(self.depth_range_min, self.depth_range_max)
+                    )
+                else:
+                    pc_world = self._base_env.get_log_pointcloud_world(
+                        i, max_points=5000,
+                        depth_range=(self.depth_range_min, self.depth_range_max)
+                    )
                 pc_base = self._world_to_base_frame(pc_world, i)
                 pc_fps = self._farthest_point_sampling(pc_base, self.num_points)
                 rl_obs = obs[i].view(self.num_points, 3)
