@@ -1320,6 +1320,16 @@ class CranePointCloudEnvCfg_CosSin_Raw_MR_PropClear(CranePointCloudEnvCfg_CosSin
 
 
 ##
+# Point Cloud CosSin Raw PCD + Asymmetric Critic
+##
+
+@configclass
+class CranePointCloudEnvCfg_CosSin_Raw_MR_Asym(CranePointCloudEnvCfg_CosSin_Raw_MR):
+    """Raw PCD, CosSin-MR + asymmetric critic (128D state for critic)."""
+    asymmetric_critic: bool = True
+
+
+##
 # Point Cloud CosSin Curriculum variants (pile-size curriculum for exploration)
 ##
 
@@ -1556,6 +1566,16 @@ gym.register(
     },
 )
 
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-Raw-MR-Asym-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_Raw_MR_Asym,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud_BCFinetune",
+    },
+)
+
 # 5D CosSin action — reward ablation variants (with DR)
 gym.register(
     id="Isaac-Crane-PointCloud-CosSin-DR-MR-v0",
@@ -1687,5 +1707,32 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": CranePointCloudEnvCfg_v2_DR,
         "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud_v2",
+    },
+)
+
+
+##
+# Pure RL from scratch: additive reward, low exponents, curriculum, asymmetric critic
+##
+
+@configclass
+class CranePointCloudEnvCfg_CosSin_Raw_PureRL(CranePointCloudEnvCfg_CosSin_Raw_MR):
+    """Pure RL from scratch: additive reward, low exponents, curriculum, asymmetric critic."""
+    asymmetric_critic: bool = True
+    reward_formula: str = "additive"
+    normalize_reward: bool = True
+    alignment_exponent: int = 2
+    stability_exponent: int = 2
+    failure_penalty: float = -0.5
+    curriculum_schedule = [(0, 20), (200, 60), (500, 120), (1000, 200)]
+
+
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-Raw-PureRL-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_Raw_PureRL,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud_PureRL",
     },
 )

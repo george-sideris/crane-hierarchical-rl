@@ -307,6 +307,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             if unexpected:
                 print(f"[INFO]: Unexpected keys (ignored): {unexpected}")
         print("[INFO]: BC actor weights loaded. Optimizer starting fresh.")
+        # Reduce exploration noise for fine-tuning (BC checkpoint sets std=0.1, we can go lower)
+        if hasattr(actor_critic, 'std'):
+            actor_critic.std.data.fill_(0.05)
+            print(f"[INFO]: Action noise std set to 0.05 for BC fine-tuning")
         if args_cli.freeze_encoder:
             if hasattr(actor_critic, 'encoder'):
                 frozen_params = 0

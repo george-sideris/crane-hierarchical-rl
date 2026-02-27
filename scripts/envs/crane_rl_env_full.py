@@ -4368,7 +4368,7 @@ class CraneDirectEnvFull(DirectRLEnv):
         raw_stability = max(0.0, raw_stability)
 
         # Sharpen so small tilts are penalized more strongly
-        stability = raw_stability ** 4
+        stability = raw_stability ** getattr(self.cfg, "stability_exponent", 4)
         return stability
 
     def _check_grasped_logs(self, env_i: int, proximity_radius: float = 1.5) -> tuple[int, float, float]:
@@ -4425,7 +4425,7 @@ class CraneDirectEnvFull(DirectRLEnv):
                 dot_product = torch.dot(bg_y_axis, log_length_axis).item()
                 # Logs can point either direction, so we use the even power
                 # which maps [-1,1] → [0,1] with sharp dropoff on misalignment
-                alignment = dot_product ** 8
+                alignment = dot_product ** getattr(self.cfg, "alignment_exponent", 8)
 
                 alignment_sum += alignment
 

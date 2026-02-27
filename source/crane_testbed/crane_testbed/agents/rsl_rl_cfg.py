@@ -306,6 +306,102 @@ class CranePPORunnerCfg_PointCloud(RslRlOnPolicyRunnerCfg):
 
 
 @configclass
+class CranePPORunnerCfg_PointCloud_BCFinetune(RslRlOnPolicyRunnerCfg):
+    """Conservative PPO config for BC→RL fine-tuning with point cloud.
+
+    Lower LR, tighter clipping, and no entropy bonus to preserve BC knowledge
+    while the fresh asymmetric critic catches up.
+    """
+
+    num_steps_per_env = 8  # 512 transitions (vs 256 default) for smoother updates
+    max_iterations = 5000
+    save_interval = 10
+    experiment_name = "crane_pointcloud_bc_finetune"
+    empirical_normalization = False
+
+    # Logging
+    logger = "tensorboard"
+    neptune_project = None
+    wandb_project = None
+    resume = False
+    load_run = None
+    load_checkpoint = None
+
+    policy = PointNetActorCriticCfg(
+        class_name="rsl_rl.modules.PointNetActorCritic",
+        init_noise_std=1.0,
+        actor_hidden_dims=[128, 64],
+        critic_hidden_dims=[128, 64],
+        activation="elu",
+        norm_type="batchnorm",  # Must match BC checkpoint
+        encoder_lr_scale=0.2,
+    )
+
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.1,  # 2x tighter — bound policy shift per iteration
+        entropy_coef=0.0,  # Don't push toward randomness
+        num_learning_epochs=3,  # Less overfitting on small batches
+        num_mini_batches=4,
+        learning_rate=1e-4,  # 3x lower — preserve BC knowledge
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.008,  # Tighter adaptive LR throttle
+        max_grad_norm=1.0,
+    )
+
+
+@configclass
+class CranePPORunnerCfg_PointCloud_PureRL(RslRlOnPolicyRunnerCfg):
+    """PPO config for from-scratch RL with point cloud.
+
+    More data per iteration, LayerNorm for batch-independent normalization,
+    standard exploration pressure for from-scratch training.
+    """
+
+    num_steps_per_env = 16  # 64 envs × 16 steps = 1024 transitions per iteration
+    max_iterations = 5000
+    save_interval = 50  # Less frequent saves for long runs
+    experiment_name = "crane_pointcloud_purerl"
+    empirical_normalization = False
+
+    # Logging
+    logger = "tensorboard"
+    neptune_project = None
+    wandb_project = None
+    resume = False
+    load_run = None
+    load_checkpoint = None
+
+    policy = PointNetActorCriticCfg(
+        class_name="rsl_rl.modules.PointNetActorCritic",
+        init_noise_std=1.0,
+        actor_hidden_dims=[128, 64],
+        critic_hidden_dims=[128, 64],
+        activation="elu",
+        norm_type="layernorm",  # Batch-independent, stable for RL
+        encoder_lr_scale=0.2,
+    )
+
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.01,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=3e-4,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+    )
+
+
+@configclass
 class CranePPORunnerCfg_PointCloud_Curriculum(RslRlOnPolicyRunnerCfg):
     """PPO configuration for crane RL with pile-size curriculum.
 
