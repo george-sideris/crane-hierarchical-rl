@@ -257,6 +257,16 @@ def get_raw_pipeline_data(env, env_idx: int, num_points: int,
     depth_tensor = env._camera.data.output["depth"][env_idx].squeeze(-1)  # (H, W)
     data["depth"] = depth_tensor.cpu().numpy().copy()
 
+    # --- Base-frame rotation matrix (used for both raw and log points) ---
+    base_pos_w = env.crane.data.root_pos_w[env_idx]
+    base_quat_w = env.crane.data.root_quat_w[env_idx]
+    w, bx, by, bz = base_quat_w[0], base_quat_w[1], base_quat_w[2], base_quat_w[3]
+    R = torch.stack([
+        torch.stack([1 - 2*by*by - 2*bz*bz, 2*bx*by - 2*w*bz, 2*bx*bz + 2*w*by]),
+        torch.stack([2*bx*by + 2*w*bz, 1 - 2*bx*bx - 2*bz*bz, 2*by*bz - 2*w*bx]),
+        torch.stack([2*bx*bz - 2*w*by, 2*by*bz + 2*w*bx, 1 - 2*bx*bx - 2*by*by]),
+    ])
+
     # --- (c) All valid 3D points in base frame (before FPS) ---
     if raw_pcd:
         pc_world = env.get_pointcloud_world(env_idx, max_points=5000, depth_range=depth_range)
@@ -264,19 +274,21 @@ def get_raw_pipeline_data(env, env_idx: int, num_points: int,
         pc_world = env.get_log_pointcloud_world(env_idx, max_points=5000, depth_range=depth_range)
 
     if pc_world.shape[0] > 0:
-        base_pos_w = env.crane.data.root_pos_w[env_idx]
-        base_quat_w = env.crane.data.root_quat_w[env_idx]
         pc_translated = pc_world - base_pos_w
-        w, bx, by, bz = base_quat_w[0], base_quat_w[1], base_quat_w[2], base_quat_w[3]
-        R = torch.stack([
-            torch.stack([1 - 2*by*by - 2*bz*bz, 2*bx*by - 2*w*bz, 2*bx*bz + 2*w*by]),
-            torch.stack([2*bx*by + 2*w*bz, 1 - 2*bx*bx - 2*bz*bz, 2*by*bz - 2*w*bx]),
-            torch.stack([2*bx*bz - 2*w*by, 2*by*bz + 2*w*bx, 1 - 2*bx*bx - 2*by*by]),
-        ])
         base_pts = (pc_translated @ R).cpu().numpy()
     else:
         base_pts = np.zeros((0, 3))
     data["base_points"] = base_pts
+
+    # --- Log-only points for visualization labeling (not fed to policy) ---
+    if raw_pcd:
+        log_world = env.get_log_pointcloud_world(env_idx, max_points=5000, depth_range=depth_range)
+        if log_world.shape[0] > 0:
+            log_translated = log_world - base_pos_w
+            log_base = (log_translated @ R).cpu().numpy()
+        else:
+            log_base = np.zeros((0, 3))
+        data["log_base_points"] = log_base
 
     # --- (d) FPS-sampled points ---
     fps_pts = get_log_pointcloud_base_frame(env, env_idx, num_points,
@@ -334,15 +346,25 @@ def save_raw_pipeline_viz(pipeline_data, x, y, z, yaw, step_idx, viz_dir,
     ax_depth.set_xticks([])
     ax_depth.set_yticks([])
 
-    # --- (c) 3D point cloud in base frame (top-down, all points) ---
+    # --- (c) 3D point cloud in base frame (top-down) — dual-layer ---
     ax_pcd = fig.add_subplot(gs[0, 2])
     base_pts = pipeline_data["base_points"]
+    log_pts = pipeline_data.get("log_base_points", np.zeros((0, 3)))
+
+    # Background: all raw points as faint gray
     if len(base_pts) > 0:
         mask = np.any(base_pts != 0.0, axis=1)
-        pts = base_pts[mask] if mask.any() else base_pts
-        if len(pts) > 0:
-            sc = ax_pcd.scatter(pts[:, 1], pts[:, 0], c=pts[:, 2], cmap='viridis',
-                                s=0.5, alpha=0.6, rasterized=True)
+        bg = base_pts[mask] if mask.any() else base_pts
+        if len(bg) > 0:
+            ax_pcd.scatter(bg[:, 1], bg[:, 0], c='#cccccc', s=0.3, alpha=0.3, rasterized=True)
+
+    # Foreground: log-only points in viridis
+    if len(log_pts) > 0:
+        mask = np.any(log_pts != 0.0, axis=1)
+        lp = log_pts[mask] if mask.any() else log_pts
+        if len(lp) > 0:
+            sc = ax_pcd.scatter(lp[:, 1], lp[:, 0], c=lp[:, 2], cmap='viridis',
+                                s=1.0, alpha=0.7, rasterized=True)
             cb = plt.colorbar(sc, ax=ax_pcd, fraction=0.046, pad=0.04)
             cb.ax.tick_params(labelsize=5)
             cb.set_label('Z (m)', fontsize=6)
@@ -362,17 +384,36 @@ def save_raw_pipeline_viz(pipeline_data, x, y, z, yaw, step_idx, viz_dir,
     ax_pcd.set_aspect('equal')
     ax_pcd.tick_params(labelsize=6)
 
-    # --- (d) FPS PCD + grapple prediction ---
+    # --- (d) FPS PCD + grapple prediction — z-threshold split ---
     ax_fps = fig.add_subplot(gs[0, 3])
     fps_pts = pipeline_data["fps_points"]
     mask = np.any(fps_pts != 0.0, axis=1)
     pts = fps_pts[mask] if mask.any() else fps_pts
+
+    # Compute floor threshold from log points
+    log_pts_d = pipeline_data.get("log_base_points", np.zeros((0, 3)))
+    if len(log_pts_d) > 0:
+        valid_log = log_pts_d[np.any(log_pts_d != 0.0, axis=1)]
+        z_floor_thresh = valid_log[:, 2].min() - 0.05 if len(valid_log) > 0 else -999
+    else:
+        z_floor_thresh = -999
+
     if len(pts) > 0:
-        sc = ax_fps.scatter(pts[:, 1], pts[:, 0], c=pts[:, 2], cmap='viridis',
-                            s=1.0, alpha=0.6, rasterized=True)
-        cb = plt.colorbar(sc, ax=ax_fps, fraction=0.046, pad=0.04)
-        cb.ax.tick_params(labelsize=5)
-        cb.set_label('Z (m)', fontsize=6)
+        floor_mask = pts[:, 2] < z_floor_thresh
+        log_mask = ~floor_mask
+
+        # Floor points: faint gray
+        if floor_mask.any():
+            ax_fps.scatter(pts[floor_mask, 1], pts[floor_mask, 0],
+                           c='#cccccc', s=0.5, alpha=0.25, rasterized=True)
+        # Log-height points: viridis
+        if log_mask.any():
+            sc = ax_fps.scatter(pts[log_mask, 1], pts[log_mask, 0],
+                                c=pts[log_mask, 2], cmap='viridis',
+                                s=2.0, alpha=0.7, rasterized=True)
+            cb = plt.colorbar(sc, ax=ax_fps, fraction=0.046, pad=0.04)
+            cb.ax.tick_params(labelsize=5)
+            cb.set_label('Z (m)', fontsize=6)
 
     draw_grapple_footprint(ax_fps, y, x, np.pi / 2 - yaw, width=1.5, length=0.5,
                            success=success, alpha=0.25)
@@ -501,16 +542,27 @@ def save_raw_stacked_pipeline_viz(grasp_data_list, episode_idx, viz_dir,
         ax_depth.set_xticks([])
         ax_depth.set_yticks([])
 
-        # --- (c) 3D PCD (base frame, top-down) ---
+        # --- (c) 3D PCD (base frame, top-down) — dual-layer ---
         ax_pcd = fig.add_subplot(gs[row, 2])
         base_pts = d["base_points"]
+        log_pts = d.get("log_base_points", np.zeros((0, 3)))
         sc_pcd = None
+
+        # Background: all raw points as faint gray
         if len(base_pts) > 0:
             mask = np.any(base_pts != 0.0, axis=1)
-            pts = base_pts[mask] if mask.any() else base_pts
-            if len(pts) > 0:
-                sc_pcd = ax_pcd.scatter(pts[:, 1], pts[:, 0], c=pts[:, 2], cmap='viridis',
-                                        s=0.5, alpha=0.6, rasterized=True)
+            bg = base_pts[mask] if mask.any() else base_pts
+            if len(bg) > 0:
+                ax_pcd.scatter(bg[:, 1], bg[:, 0], c='#cccccc', s=0.3, alpha=0.3, rasterized=True)
+
+        # Foreground: log-only points in viridis
+        if len(log_pts) > 0:
+            mask = np.any(log_pts != 0.0, axis=1)
+            lp = log_pts[mask] if mask.any() else log_pts
+            if len(lp) > 0:
+                sc_pcd = ax_pcd.scatter(lp[:, 1], lp[:, 0], c=lp[:, 2], cmap='viridis',
+                                        s=1.0, alpha=0.7, rasterized=True)
+
         if bounds_min is not None and bounds_max is not None:
             ax_pcd.set_xlim(bounds_min[1] - 0.5, bounds_max[1] + 0.5)
             ax_pcd.set_ylim(bounds_max[0] + 0.5, bounds_min[0] - 0.5)
@@ -523,15 +575,33 @@ def save_raw_stacked_pipeline_viz(grasp_data_list, episode_idx, viz_dir,
         ax_pcd.set_aspect('equal')
         ax_pcd.tick_params(labelsize=5)
 
-        # --- (d) FPS PCD + grapple prediction ---
+        # --- (d) FPS PCD + grapple prediction — z-threshold split ---
         ax_fps = fig.add_subplot(gs[row, 3])
         fps_pts = d["fps_points"]
         mask = np.any(fps_pts != 0.0, axis=1)
         pts = fps_pts[mask] if mask.any() else fps_pts
+
+        # Compute floor threshold from log points
+        if len(log_pts) > 0:
+            valid_log = log_pts[np.any(log_pts != 0.0, axis=1)]
+            z_floor_thresh = valid_log[:, 2].min() - 0.05 if len(valid_log) > 0 else -999
+        else:
+            z_floor_thresh = -999
+
         sc_fps = None
         if len(pts) > 0:
-            sc_fps = ax_fps.scatter(pts[:, 1], pts[:, 0], c=pts[:, 2], cmap='viridis',
-                                    s=1.0, alpha=0.6, rasterized=True)
+            floor_mask = pts[:, 2] < z_floor_thresh
+            log_mask = ~floor_mask
+
+            # Floor points: faint gray
+            if floor_mask.any():
+                ax_fps.scatter(pts[floor_mask, 1], pts[floor_mask, 0],
+                               c='#cccccc', s=0.5, alpha=0.25, rasterized=True)
+            # Log-height points: viridis
+            if log_mask.any():
+                sc_fps = ax_fps.scatter(pts[log_mask, 1], pts[log_mask, 0],
+                                        c=pts[log_mask, 2], cmap='viridis',
+                                        s=2.0, alpha=0.7, rasterized=True)
 
         draw_grapple_footprint(ax_fps, y, x, np.pi / 2 - yaw, width=1.5, length=0.5,
                                success=success, alpha=0.25)
@@ -654,9 +724,27 @@ def save_raw_episode_progression(episode_data, episode_idx, viz_dir,
 
             success = d.get("logs_grasped") is not None and d.get("logs_grasped", 0) > 0
 
+            # Compute floor threshold from log points
+            log_pts = d.get("log_base_points", np.zeros((0, 3)))
+            if len(log_pts) > 0:
+                valid_log = log_pts[np.any(log_pts != 0.0, axis=1)]
+                z_floor_thresh = valid_log[:, 2].min() - 0.05 if len(valid_log) > 0 else -999
+            else:
+                z_floor_thresh = -999
+
             if len(pts) > 0:
-                ax.scatter(pts[:, 1], pts[:, 0], c=pts[:, 2], cmap='viridis',
-                           s=1.0, alpha=0.6, rasterized=True)
+                floor_mask = pts[:, 2] < z_floor_thresh
+                log_mask = ~floor_mask
+
+                # Floor points: faint gray
+                if floor_mask.any():
+                    ax.scatter(pts[floor_mask, 1], pts[floor_mask, 0],
+                               c='#cccccc', s=0.5, alpha=0.25, rasterized=True)
+                # Log-height points: viridis
+                if log_mask.any():
+                    ax.scatter(pts[log_mask, 1], pts[log_mask, 0],
+                               c=pts[log_mask, 2], cmap='viridis',
+                               s=1.5, alpha=0.7, rasterized=True)
 
             draw_grapple_footprint(ax, d["y"], d["x"], np.pi / 2 - d["yaw"],
                                    width=1.5, length=0.5,
