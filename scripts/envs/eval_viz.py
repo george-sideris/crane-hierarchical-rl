@@ -316,7 +316,7 @@ def save_raw_pipeline_viz(pipeline_data, x, y, z, yaw, step_idx, viz_dir,
     import matplotlib.gridspec as gridspec
 
     fig = plt.figure(figsize=(18, 4.2))
-    gs = gridspec.GridSpec(1, 4, figure=fig, wspace=0.28)
+    gs = gridspec.GridSpec(1, 4, figure=fig, wspace=0.35)
 
     success = logs_grasped is not None and logs_grasped > 0
     panel_labels = ['(a)', '(b)', '(c)', '(d)']
@@ -356,7 +356,7 @@ def save_raw_pipeline_viz(pipeline_data, x, y, z, yaw, step_idx, viz_dir,
         mask = np.any(base_pts != 0.0, axis=1)
         bg = base_pts[mask] if mask.any() else base_pts
         if len(bg) > 0:
-            ax_pcd.scatter(bg[:, 1], bg[:, 0], c='#cccccc', s=0.3, alpha=0.3, rasterized=True)
+            ax_pcd.scatter(bg[:, 1], bg[:, 0], c='#aaaaaa', s=0.3, alpha=0.3, rasterized=True)
 
     # Foreground: log-only points in viridis
     if len(log_pts) > 0:
@@ -405,7 +405,7 @@ def save_raw_pipeline_viz(pipeline_data, x, y, z, yaw, step_idx, viz_dir,
         # Floor points: faint gray
         if floor_mask.any():
             ax_fps.scatter(pts[floor_mask, 1], pts[floor_mask, 0],
-                           c='#cccccc', s=0.5, alpha=0.25, rasterized=True)
+                           c='#aaaaaa', s=0.5, alpha=0.25, rasterized=True)
         # Log-height points: viridis
         if log_mask.any():
             sc = ax_fps.scatter(pts[log_mask, 1], pts[log_mask, 0],
@@ -491,7 +491,7 @@ def save_raw_stacked_pipeline_viz(grasp_data_list, episode_idx, viz_dir,
 
     row_height = 3.2
     fig = plt.figure(figsize=(18, row_height * n_grasps + 0.3))
-    gs = gridspec.GridSpec(n_grasps, 4, figure=fig, wspace=0.25, hspace=0.25)
+    gs = gridspec.GridSpec(n_grasps, 4, figure=fig, wspace=0.32, hspace=0.25)
 
     panel_labels = ['(a)', '(b)', '(c)', '(d)']
 
@@ -553,7 +553,7 @@ def save_raw_stacked_pipeline_viz(grasp_data_list, episode_idx, viz_dir,
             mask = np.any(base_pts != 0.0, axis=1)
             bg = base_pts[mask] if mask.any() else base_pts
             if len(bg) > 0:
-                ax_pcd.scatter(bg[:, 1], bg[:, 0], c='#cccccc', s=0.3, alpha=0.3, rasterized=True)
+                ax_pcd.scatter(bg[:, 1], bg[:, 0], c='#aaaaaa', s=0.3, alpha=0.3, rasterized=True)
 
         # Foreground: log-only points in viridis
         if len(log_pts) > 0:
@@ -596,7 +596,7 @@ def save_raw_stacked_pipeline_viz(grasp_data_list, episode_idx, viz_dir,
             # Floor points: faint gray
             if floor_mask.any():
                 ax_fps.scatter(pts[floor_mask, 1], pts[floor_mask, 0],
-                               c='#cccccc', s=0.5, alpha=0.25, rasterized=True)
+                               c='#aaaaaa', s=0.5, alpha=0.25, rasterized=True)
             # Log-height points: viridis
             if log_mask.any():
                 sc_fps = ax_fps.scatter(pts[log_mask, 1], pts[log_mask, 0],
@@ -739,7 +739,7 @@ def save_raw_episode_progression(episode_data, episode_idx, viz_dir,
                 # Floor points: faint gray
                 if floor_mask.any():
                     ax.scatter(pts[floor_mask, 1], pts[floor_mask, 0],
-                               c='#cccccc', s=0.5, alpha=0.25, rasterized=True)
+                               c='#aaaaaa', s=0.5, alpha=0.25, rasterized=True)
                 # Log-height points: viridis
                 if log_mask.any():
                     ax.scatter(pts[log_mask, 1], pts[log_mask, 0],
