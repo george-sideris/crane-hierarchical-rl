@@ -1572,7 +1572,7 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_Raw_MR_Asym,
-        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud_BCFinetune",
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
     },
 )
 

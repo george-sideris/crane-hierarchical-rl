@@ -38,6 +38,12 @@ parser.add_argument("--real-time", action="store_true", default=False, help="Run
 parser.add_argument("--num_episodes", type=int, default=None, help="Number of episodes to run for evaluation (if set, exits after completion)")
 parser.add_argument("--save_metrics", action="store_true", default=False, help="Save evaluation metrics to JSON file")
 parser.add_argument("--metrics_output_dir", type=str, default=None, help="Output directory for metrics (default: checkpoint directory)")
+parser.add_argument("--visualize", action="store_true", default=False,
+                    help="Save per-step 2-panel PCD viz PNGs (PointCloud tasks only)")
+parser.add_argument("--paper_viz", action="store_true", default=False,
+                    help="Save paper-quality pipeline + progression figures (PointCloud tasks only)")
+parser.add_argument("--viz_dir", type=str, default=None,
+                    help="Output directory for viz PNGs (default: checkpoint dir / viz or paper_viz)")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -50,6 +56,10 @@ if args_cli.video:
 
 # automatically enable cameras for depth/pointcloud tasks
 if args_cli.task and ("Depth" in args_cli.task or "PointCloud" in args_cli.task):
+    args_cli.enable_cameras = True
+
+# enable cameras when viz flags are used with PointCloud tasks
+if (args_cli.visualize or args_cli.paper_viz) and args_cli.task and "PointCloud" in args_cli.task:
     args_cli.enable_cameras = True
 
 # clear out sys.argv for Hydra
@@ -153,6 +163,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         envs_dir = Path(__file__).parent.parent / "envs"
         if str(envs_dir) not in sys.path:
             sys.path.insert(0, str(envs_dir))
+        # Ensure RGB is available for paper viz, strip it otherwise for performance
+        if args_cli.paper_viz and hasattr(env_cfg, 'camera_cfg'):
+            if "rgb" not in env_cfg.camera_cfg.data_types:
+                env_cfg.camera_cfg.data_types = list(env_cfg.camera_cfg.data_types) + ["rgb"]
         from crane_pointcloud_direct_env import CranePointCloudDirectEnv
         print(f"[INFO] Creating CranePointCloudDirectEnv for pointcloud-based inference")
         env = CranePointCloudDirectEnv(env_cfg, render_mode="rgb_array" if args_cli.video else None)
@@ -209,6 +223,39 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if hasattr(underlying_env, 'env'):
         underlying_env = underlying_env.env  # Unwrap further if needed
 
+    # --- Visualization setup ---
+    is_pointcloud_task = args_cli.task and "PointCloud" in args_cli.task
+    paper_viz_active = args_cli.paper_viz and is_pointcloud_task
+    step_viz_active = args_cli.visualize and is_pointcloud_task
+
+    if (args_cli.paper_viz or args_cli.visualize) and not is_pointcloud_task:
+        print("[WARN] --paper_viz / --visualize only work with PointCloud tasks, ignoring")
+
+    if paper_viz_active or step_viz_active:
+        from eval_viz import (
+            get_raw_pipeline_data, get_log_pointcloud_base_frame,
+            decode_action, save_step_viz, save_raw_pipeline_viz,
+            save_raw_stacked_pipeline_viz, save_raw_episode_progression,
+        )
+        import numpy as np
+        _use_raw_pcd = getattr(env_cfg, 'use_raw_pointcloud', False)
+        _num_points_viz = getattr(env_cfg, 'num_points', 1024)
+        _depth_range_viz = (getattr(env_cfg, 'depth_range_min', 1.0),
+                            getattr(env_cfg, 'depth_range_max', 10.0))
+        underlying_env._compute_action_space_bounds()
+
+    if step_viz_active:
+        viz_dir = args_cli.viz_dir or os.path.join(log_dir, "viz")
+        os.makedirs(viz_dir, exist_ok=True)
+        print(f"[INFO] Saving per-step viz to: {viz_dir}")
+
+    if paper_viz_active:
+        paper_viz_dir = args_cli.viz_dir or os.path.join(log_dir, "paper_viz")
+        os.makedirs(paper_viz_dir, exist_ok=True)
+        print(f"[INFO] Saving paper viz to: {paper_viz_dir}")
+
+    total_viz_step = 0
+
     # Metrics tracking
     episodes_done = 0
     total_reward = 0.0
@@ -236,12 +283,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     ep_failed_grasps = torch.zeros(num_envs, device=device, dtype=torch.int32)
     ep_alignment_sum = torch.zeros(num_envs, device=device)
     ep_stability_sum = torch.zeros(num_envs, device=device)
+    ep_cycle_count = torch.zeros(num_envs, device=device, dtype=torch.int32)
+    ep_clearing_curves = [[] for _ in range(num_envs)]  # per-env list of clearing % at each cycle
+    if paper_viz_active:
+        paper_episode_data = [[] for _ in range(num_envs)]
 
     # Per-episode result lists (for mean ± std reporting)
     per_ep_success_rates = []
     per_ep_throughputs = []
     per_ep_alignments = []
     per_ep_stabilities = []
+    per_ep_cycles = []
+    per_ep_clearing_curves = []
 
     # Get initial observations (triggers reset if needed)
     obs, _ = env.get_observations()
@@ -270,6 +323,31 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         with torch.inference_mode():
             # agent stepping
             actions = policy(obs)
+
+            # Pre-step: collect viz data before env.step modifies state
+            if paper_viz_active:
+                paper_pre_step = {}
+                for i in range(num_envs):
+                    min_b = underlying_env._action_bounds_min[i].cpu().numpy()
+                    max_b = underlying_env._action_bounds_max[i].cpu().numpy()
+                    x, y, z, yaw = decode_action(actions[i], min_b, max_b)
+                    pdata = get_raw_pipeline_data(underlying_env, i, _num_points_viz,
+                                                  depth_range=_depth_range_viz, raw_pcd=_use_raw_pcd)
+                    pdata.update({"x": x, "y": y, "z": z, "yaw": yaw,
+                                  "bounds_min": min_b.copy(), "bounds_max": max_b.copy(),
+                                  "step_idx": int(ep_cycle_count[i].item())})
+                    paper_pre_step[i] = pdata
+            elif step_viz_active:
+                viz_pre_step = {}
+                for i in range(num_envs):
+                    min_b = underlying_env._action_bounds_min[i].cpu().numpy()
+                    max_b = underlying_env._action_bounds_max[i].cpu().numpy()
+                    x, y, z, yaw = decode_action(actions[i], min_b, max_b)
+                    pc = get_log_pointcloud_base_frame(underlying_env, i, _num_points_viz,
+                                                       depth_range=_depth_range_viz, raw_pcd=_use_raw_pcd)
+                    viz_pre_step[i] = {"pts": pc.cpu().numpy(), "x": x, "y": y, "z": z, "yaw": yaw,
+                                       "bounds_min": min_b.copy(), "bounds_max": max_b.copy()}
+
             # env stepping
             obs, rewards, dones, _ = env.step(actions)
 
@@ -285,6 +363,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     total_grasps += 1
                     total_logs_grasped += logs_grasped
                     episode_logs_cleared[i] += logs_grasped
+                    ep_cycle_count[i] += 1
+                    starting = max(1, int(episode_starting_logs[i].item()))
+                    clear_pct_now = int(episode_logs_cleared[i].item()) / starting * 100
+                    ep_clearing_curves[i].append(round(clear_pct_now, 1))
                     if logs_grasped > 0:
                         successful_grasps += 1
                         total_alignment += alignment
@@ -295,6 +377,36 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     else:
                         failed_grasps += 1
                         ep_failed_grasps[i] += 1
+
+                    # --- Per-step visualization ---
+                    if step_viz_active and not paper_viz_active:
+                        d = viz_pre_step[i]
+                        save_step_viz(d["pts"], d["x"], d["y"], d["z"], d["yaw"],
+                                      total_viz_step, viz_dir,
+                                      logs_grasped=logs_grasped, alignment=alignment,
+                                      bounds_min=d["bounds_min"], bounds_max=d["bounds_max"])
+
+                    if paper_viz_active:
+                        pdata = paper_pre_step[i]
+                        pdata["logs_grasped"] = logs_grasped
+                        pdata["alignment"] = alignment
+                        pdata["stability"] = stability
+                        knocked_off = int(underlying_env._prev_cycle_knocked_off[i].item()) if hasattr(underlying_env, '_prev_cycle_knocked_off') else 0
+                        if hasattr(underlying_env, '_prev_logs_remaining'):
+                            pre_remaining = int(underlying_env._prev_logs_remaining[i].item())
+                            pdata["logs_remaining"] = pre_remaining - logs_grasped - knocked_off
+                        else:
+                            pdata["logs_remaining"] = None
+                        pdata["knocked_off"] = knocked_off
+                        paper_episode_data[i].append(pdata)
+                        save_raw_pipeline_viz(pdata, pdata["x"], pdata["y"], pdata["z"], pdata["yaw"],
+                                              total_viz_step, paper_viz_dir,
+                                              logs_grasped=logs_grasped, alignment=alignment, stability=stability,
+                                              depth_range=_depth_range_viz,
+                                              bounds_min=pdata["bounds_min"], bounds_max=pdata["bounds_max"])
+
+                    if paper_viz_active or step_viz_active:
+                        total_viz_step += 1
 
             # Check for episode completion
             for i in range(num_envs):
@@ -326,6 +438,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     knocked_off_per_episode.append(ep_knocked_off)
                     logs_cleared_per_episode.append(logs_cleared)
 
+                    per_ep_cycles.append(int(ep_cycle_count[i].item()))
+                    per_ep_clearing_curves.append(ep_clearing_curves[i][:])  # copy the curve
+
                     # Per-episode grasp metrics
                     n_success = int(ep_successful_grasps[i].item())
                     n_fail = int(ep_failed_grasps[i].item())
@@ -337,6 +452,53 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
                     print(f"[Eval] Episode {episodes_done}: reward={ep_reward:.2f}, cleared={clear_pct:.1f}% ({logs_cleared}/{starting_logs} logs), knocked_off={ep_knocked_off}")
 
+                    # Generate paper viz figures for this episode
+                    if paper_viz_active and len(paper_episode_data[i]) > 0:
+                        ep_data = paper_episode_data[i]
+                        # Trim stuck tail (consecutive misses at same remaining count)
+                        trimmed = list(ep_data)
+                        if len(trimmed) >= 2:
+                            last_remaining = trimmed[-1].get("logs_remaining")
+                            if last_remaining is not None:
+                                stuck_start = len(trimmed)
+                                for si in range(len(trimmed) - 1, -1, -1):
+                                    d = trimmed[si]
+                                    if (d.get("logs_remaining") == last_remaining
+                                            and (d.get("logs_grasped") or 0) == 0):
+                                        stuck_start = si
+                                    else:
+                                        break
+                                if stuck_start < len(trimmed):
+                                    n_removed = len(trimmed) - stuck_start
+                                    trimmed = trimmed[:stuck_start]
+                                    if n_removed > 0:
+                                        print(f"[PaperViz] Trimmed {n_removed} stuck repeated grasps (remaining={last_remaining})")
+                            if len(trimmed) == 0:
+                                trimmed = [ep_data[0]]
+
+                        ep_bmin = trimmed[0].get("bounds_min")
+                        ep_bmax = trimmed[0].get("bounds_max")
+
+                        # Representative grasps (begin, mid, end)
+                        n = len(trimmed)
+                        rep = [0] + ([n // 2] if n > 2 else []) + ([n - 1] if n > 1 else [])
+                        save_raw_stacked_pipeline_viz([trimmed[j] for j in rep], episodes_done, paper_viz_dir,
+                                                      depth_range=_depth_range_viz, bounds_min=ep_bmin, bounds_max=ep_bmax)
+
+                        # 9 consecutive grasps (3 from each section) if enough data
+                        if n >= 6:
+                            consec = list(trimmed[0:3])
+                            mid = n // 2
+                            consec += trimmed[max(0, mid-1):max(0, mid-1)+3]
+                            consec += trimmed[max(0, n-3):n]
+                            save_raw_stacked_pipeline_viz(consec, episodes_done, paper_viz_dir,
+                                                          depth_range=_depth_range_viz, bounds_min=ep_bmin, bounds_max=ep_bmax,
+                                                          suffix="_consecutive")
+
+                        # Episode progression grid
+                        save_raw_episode_progression(trimmed, episodes_done, paper_viz_dir,
+                                                     bounds_min=ep_bmin, bounds_max=ep_bmax)
+
                     # Reset per-episode tracking
                     episode_rewards[i] = 0.0
                     episode_logs_cleared[i] = 0
@@ -344,6 +506,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     ep_failed_grasps[i] = 0
                     ep_alignment_sum[i] = 0.0
                     ep_stability_sum[i] = 0.0
+                    ep_cycle_count[i] = 0
+                    ep_clearing_curves[i] = []
+                    if paper_viz_active:
+                        paper_episode_data[i] = []
                     # Update starting logs for next episode
                     if has_variable_logs:
                         episode_starting_logs[i] = int(underlying_env._per_env_log_counts[i].item())
@@ -388,6 +554,17 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                             for j in range(len(knocked_off_per_episode))]
         avg_knocked_off_pct = _mean(knocked_off_pcts)
 
+        avg_cycles = _mean(per_ep_cycles)
+        std_cycles = _std(per_ep_cycles, avg_cycles)
+
+        # Derive cycles to 95% from clearing curves
+        per_ep_cycles_to_95 = []
+        for curve in per_ep_clearing_curves:
+            c95 = next((i + 1 for i, pct in enumerate(curve) if pct >= 95.0), len(curve))
+            per_ep_cycles_to_95.append(c95)
+        avg_cycles_to_95 = _mean(per_ep_cycles_to_95)
+        std_cycles_to_95 = _std(per_ep_cycles_to_95, avg_cycles_to_95)
+
         std_reward = _std(episode_rewards_list, avg_reward)
         std_clear_pct = _std(clearing_percentages, avg_clear_pct)
         std_success_rate = _std(per_ep_success_rates, avg_success_rate)
@@ -407,6 +584,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"[Eval] Alignment:           {avg_alignment:.3f} ± {std_alignment:.3f}")
         print(f"[Eval] Stability:           {avg_stability:.3f} ± {std_stability:.3f}")
         print(f"[Eval] Knocked Off:         {avg_knocked_off_pct:.1f} ± {std_knocked_off_pct:.1f}%")
+        print(f"[Eval] Avg Cycles:          {avg_cycles:.1f} ± {std_cycles:.1f}")
+        print(f"[Eval] Cycles to 95%:       {avg_cycles_to_95:.1f} ± {std_cycles_to_95:.1f}")
         print(f"[Eval] Total Logs Grasped:  {total_logs_grasped}")
         print(f"[Eval] =======================")
 
@@ -444,6 +623,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     "alignment":         {"mean": avg_alignment, "std": std_alignment},
                     "stability":         {"mean": avg_stability, "std": std_stability},
                     "knocked_off_pct":   {"mean": avg_knocked_off_pct, "std": std_knocked_off_pct},
+                    "cycles":            {"mean": avg_cycles, "std": std_cycles},
+                    "cycles_to_95pct":   {"mean": avg_cycles_to_95, "std": std_cycles_to_95},
                     "total_logs_grasped": total_logs_grasped,
                     "total_grasps": total_grasps,
                     "total_successful_grasps": successful_grasps,
@@ -460,6 +641,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     "knocked_off_pcts": knocked_off_pcts,
                     "logs_cleared": logs_cleared_per_episode,
                     "logs_per_pile": logs_per_episode,
+                    "cycles": per_ep_cycles,
+                    "cycles_to_95pct": per_ep_cycles_to_95,
+                    "clearing_curves": per_ep_clearing_curves,
                 },
             }
 
