@@ -33,6 +33,7 @@ parser.add_argument(
 )
 parser.add_argument("--export_io_descriptors", action="store_true", default=False, help="Export IO descriptors.")
 parser.add_argument("--bc_checkpoint", type=str, default=None, help="Path to BC checkpoint for fine-tuning (loads actor weights only, skips optimizer).")
+parser.add_argument("--sigma_init", type=float, default=0.05, help="Initial action noise std for BC fine-tuning (default: 0.05).")
 parser.add_argument("--freeze_encoder", action="store_true", default=False, help="Freeze PointNet encoder weights (use with --bc_checkpoint).")
 parser.add_argument("--save_debug_pointclouds", action="store_true", default=False, help="Save debug point cloud .npy and plots on first observation.")
 # append RSL-RL cli arguments
@@ -309,8 +310,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print("[INFO]: BC actor weights loaded. Optimizer starting fresh.")
         # Reduce exploration noise for fine-tuning (BC checkpoint sets std=0.1, we can go lower)
         if hasattr(actor_critic, 'std'):
-            actor_critic.std.data.fill_(0.05)
-            print(f"[INFO]: Action noise std set to 0.05 for BC fine-tuning")
+            actor_critic.std.data.fill_(args_cli.sigma_init)
+            print(f"[INFO]: Action noise std set to {args_cli.sigma_init} for BC fine-tuning")
         if args_cli.freeze_encoder:
             if hasattr(actor_critic, 'encoder'):
                 frozen_params = 0
