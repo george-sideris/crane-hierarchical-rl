@@ -977,12 +977,16 @@ def main():
     ep_failed_grasps = torch.zeros(env.num_envs, device=env.device, dtype=torch.int32)
     ep_alignment_sum = torch.zeros(env.num_envs, device=env.device)
     ep_stability_sum = torch.zeros(env.num_envs, device=env.device)
+    ep_cycle_count = torch.zeros(env.num_envs, device=env.device, dtype=torch.int32)
+    ep_clearing_curves = [[] for _ in range(env.num_envs)]  # per-env list of clearing % at each cycle
 
     # Per-episode result lists (for mean ± std reporting)
     per_ep_success_rates = []
     per_ep_throughputs = []
     per_ep_alignments = []
     per_ep_stabilities = []
+    per_ep_cycles = []
+    per_ep_clearing_curves = []
 
     # Get starting log counts
     has_variable_logs = hasattr(env, '_per_env_log_counts') and env._per_env_log_counts is not None
@@ -1110,6 +1114,10 @@ def main():
                 total_grasps += 1
                 total_logs_grasped += logs_grasped
                 episode_logs_cleared[i] += logs_grasped
+                ep_cycle_count[i] += 1
+                starting = max(1, int(episode_starting_logs[i].item()))
+                clear_pct_now = int(episode_logs_cleared[i].item()) / starting * 100
+                ep_clearing_curves[i].append(round(clear_pct_now, 1))
                 if logs_grasped > 0:
                     successful_grasps += 1
                     total_alignment += alignment
@@ -1150,6 +1158,9 @@ def main():
                     total_knocked_off += ep_knocked_off
                     knocked_off_per_episode.append(ep_knocked_off)
                     logs_cleared_per_episode.append(logs_cleared)
+
+                    per_ep_cycles.append(int(ep_cycle_count[i].item()))
+                    per_ep_clearing_curves.append(ep_clearing_curves[i][:])  # copy the curve
 
                     # Per-episode grasp metrics
                     n_success = int(ep_successful_grasps[i].item())
@@ -1247,6 +1258,8 @@ def main():
                     ep_failed_grasps[i] = 0
                     ep_alignment_sum[i] = 0.0
                     ep_stability_sum[i] = 0.0
+                    ep_cycle_count[i] = 0
+                    ep_clearing_curves[i] = []
                     if has_variable_logs:
                         episode_starting_logs[i] = int(env._per_env_log_counts[i].item())
 
@@ -1272,6 +1285,17 @@ def main():
                         for j in range(len(knocked_off_per_episode))]
     avg_knocked_off_pct = _mean(knocked_off_pcts)
 
+    avg_cycles = _mean(per_ep_cycles)
+    std_cycles = _std(per_ep_cycles, avg_cycles)
+
+    # Derive cycles to 95% from clearing curves
+    per_ep_cycles_to_95 = []
+    for curve in per_ep_clearing_curves:
+        c95 = next((i + 1 for i, pct in enumerate(curve) if pct >= 95.0), len(curve))
+        per_ep_cycles_to_95.append(c95)
+    avg_cycles_to_95 = _mean(per_ep_cycles_to_95)
+    std_cycles_to_95 = _std(per_ep_cycles_to_95, avg_cycles_to_95)
+
     std_reward = _std(episode_rewards_list, avg_reward)
     std_clear_pct = _std(clearing_percentages, avg_clear_pct)
     std_success_rate = _std(per_ep_success_rates, avg_success_rate)
@@ -1291,6 +1315,8 @@ def main():
     print(f"[Play] Alignment:           {avg_alignment:.3f} ± {std_alignment:.3f}")
     print(f"[Play] Stability:           {avg_stability:.3f} ± {std_stability:.3f}")
     print(f"[Play] Knocked Off:         {avg_knocked_off_pct:.1f} ± {std_knocked_off_pct:.1f}%")
+    print(f"[Play] Avg Cycles:          {avg_cycles:.1f} ± {std_cycles:.1f}")
+    print(f"[Play] Cycles to 95%:       {avg_cycles_to_95:.1f} ± {std_cycles_to_95:.1f}")
     print(f"[Play] Total Logs Grasped:  {total_logs_grasped}")
     print(f"[Play] =======================")
 
@@ -1325,6 +1351,8 @@ def main():
                 "alignment":         {"mean": avg_alignment, "std": std_alignment},
                 "stability":         {"mean": avg_stability, "std": std_stability},
                 "knocked_off_pct":   {"mean": avg_knocked_off_pct, "std": std_knocked_off_pct},
+                "cycles":            {"mean": avg_cycles, "std": std_cycles},
+                "cycles_to_95pct":   {"mean": avg_cycles_to_95, "std": std_cycles_to_95},
                 "total_logs_grasped": total_logs_grasped,
                 "total_grasps": total_grasps,
                 "total_successful_grasps": successful_grasps,
@@ -1341,6 +1369,9 @@ def main():
                 "knocked_off_pcts": knocked_off_pcts,
                 "logs_cleared": logs_cleared_per_episode,
                 "logs_per_pile": logs_per_episode,
+                "cycles": per_ep_cycles,
+                "cycles_to_95pct": per_ep_cycles_to_95,
+                "clearing_curves": per_ep_clearing_curves,
             },
         }
 
