@@ -14,6 +14,14 @@ Usage:
     # Headless evaluation (faster)
     ./isaaclab.sh -p crane_testbed/scripts/envs/play_heuristic.py \
         --num_envs 8 --num_episodes 100 --domain_randomization --save_metrics --headless
+
+    # Standard deterministic eval
+    ./isaaclab.sh -p crane_testbed/scripts/envs/play_heuristic.py \
+        --seed 42 --num_envs 20 --num_episodes 100 --save_metrics --headless
+
+    # Robustness eval with observation noise
+    ./isaaclab.sh -p crane_testbed/scripts/envs/play_heuristic.py \
+        --seed 42 --num_envs 20 --num_episodes 100 --obs_noise 0.01 --save_metrics --headless
 """
 
 import os
@@ -35,7 +43,9 @@ from isaaclab.app import AppLauncher
 parser = argparse.ArgumentParser(description="Play heuristic baseline")
 parser.add_argument("--num_envs", type=int, default=1, help="Number of environments")
 parser.add_argument("--num_episodes", type=int, default=10, help="Number of episodes to run")
+parser.add_argument("--seed", type=int, default=None, help="Random seed for deterministic evaluation")
 parser.add_argument("--domain_randomization", action="store_true", help="Enable domain randomization (variable pile sizes)")
+parser.add_argument("--obs_noise", type=float, default=0.0, help="Gaussian noise σ (meters) added to heuristic target position")
 parser.add_argument("--save_metrics", action="store_true", help="Save metrics to JSON file")
 parser.add_argument("--output_dir", type=str, default="logs/heuristic_baseline", help="Output directory for metrics")
 # Add standard AppLauncher args (--headless, --device, etc.)
@@ -58,12 +68,19 @@ def main():
     cfg.sim.device = args_cli.device
     cfg.use_hierarchical_rl = False  # Pure heuristic mode (no policy)
     cfg.enable_domain_randomization = args_cli.domain_randomization
+    if args_cli.seed is not None:
+        cfg.seed = args_cli.seed
+    cfg.heuristic_target_noise = args_cli.obs_noise
     cfg.sim.physx.solver_type = 1
     cfg.sim.physx.enable_stabilization = True
 
     env = CraneDirectEnvFull(cfg)
     print(f"[Heuristic] Environment created with {env.num_envs} envs")
     print(f"[Heuristic] Domain randomization: {args_cli.domain_randomization}")
+    if args_cli.seed is not None:
+        print(f"[Heuristic] Seed: {args_cli.seed}")
+    if args_cli.obs_noise > 0:
+        print(f"[Heuristic] Observation noise σ: {args_cli.obs_noise}m")
     print(f"[Heuristic] Running built-in heuristic FSM (target top log + optimal yaw)")
 
     # Run episodes
@@ -280,7 +297,9 @@ def main():
                 "method": "heuristic_baseline",
                 "num_envs": args_cli.num_envs,
                 "num_episodes": episodes_done,
+                "seed": args_cli.seed,
                 "domain_randomization": args_cli.domain_randomization,
+                "obs_noise": args_cli.obs_noise,
                 "timestamp": timestamp,
             },
             "episodes": {

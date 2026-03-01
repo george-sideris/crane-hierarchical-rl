@@ -36,6 +36,9 @@ parser.add_argument("--visualize", action="store_true", help="Save per-step visu
 parser.add_argument("--viz_dir", type=str, default=None, help="Directory for viz PNGs (default: checkpoint dir / viz)")
 parser.add_argument("--paper_viz", action="store_true", help="Save paper-quality pipeline and progression figures")
 parser.add_argument("--raw_pcd", action="store_true", help="Use raw (unmasked) point cloud instead of segmented log-only points")
+parser.add_argument("--seed", type=int, default=None, help="Random seed for deterministic evaluation")
+parser.add_argument("--obs_noise", type=float, default=0.0, help="Gaussian noise σ added to PCD coordinates (meters)")
+parser.add_argument("--action_noise", type=float, default=0.0, help="Gaussian noise σ added to policy action output")
 args_cli, _ = parser.parse_known_args()
 
 # IsaacLab imports
@@ -908,12 +911,20 @@ def main():
     else:
         cfg.camera_cfg.data_types = ["depth", "semantic_segmentation"]
     cfg.enable_domain_randomization = args_cli.domain_randomization
+    if args_cli.seed is not None:
+        cfg.seed = args_cli.seed
     cfg.sim.physx.solver_type = 1
     cfg.sim.physx.enable_stabilization = True
 
     env = CraneDirectEnvFull(cfg)
     print(f"[Play] Environment created with {env.num_envs} envs")
     print(f"[Play] Domain randomization: {args_cli.domain_randomization}")
+    if args_cli.seed is not None:
+        print(f"[Play] Seed: {args_cli.seed}")
+    if args_cli.obs_noise > 0:
+        print(f"[Play] Observation noise σ: {args_cli.obs_noise} m")
+    if args_cli.action_noise > 0:
+        print(f"[Play] Action noise σ: {args_cli.action_noise}")
 
     # Set up visualization directory
     if args_cli.visualize:
@@ -1011,8 +1022,16 @@ def main():
                 pc_batch.append(pc)
             obs = torch.stack(pc_batch)  # (num_envs, num_points, 3)
 
+            # Inject observation noise (Gaussian on PCD coordinates)
+            if args_cli.obs_noise > 0:
+                obs = obs + torch.randn_like(obs) * args_cli.obs_noise
+
             # Get policy action
             actions = policy(obs)
+
+            # Inject action noise (Gaussian on raw policy output, before workspace scaling)
+            if args_cli.action_noise > 0:
+                actions = actions + torch.randn_like(actions) * args_cli.action_noise
 
             # Debug: print action stats occasionally
             if total_grasps < 5 or total_grasps % 100 == 0:
@@ -1333,6 +1352,9 @@ def main():
                 "num_envs": args_cli.num_envs,
                 "num_episodes": episodes_done,
                 "domain_randomization": args_cli.domain_randomization,
+                "seed": args_cli.seed,
+                "obs_noise": args_cli.obs_noise,
+                "action_noise": args_cli.action_noise,
                 "num_points": num_points,
                 "timestamp": timestamp,
             },

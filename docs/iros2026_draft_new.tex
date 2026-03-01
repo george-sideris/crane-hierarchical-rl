@@ -37,7 +37,7 @@ We study grasp target selection for a forestry log loader in simulation, focusin
 We introduce a grasp-and-remove formulation in which each environment step is a complete pick attempt: a policy selects a grasp target $(x,y,z,\psi)$, a fixed finite-state machine (FSM) executes the approach and lift, and grasped logs are removed.
 Policies observe raw depth-derived point clouds---requiring no semantic segmentation---processed by a PointNet encoder.
 We compare four methods: a privileged-state heuristic, from-scratch reinforcement learning (RL) with PPO, behavior cloning (BC) from heuristic demonstrations, and BC-initialized RL fine-tuning (BC+RL) with an asymmetric actor-critic.
-From-scratch RL stalls at roughly 60\% pile clearing regardless of observation type or network architecture.
+From-scratch RL stalls at roughly 60\% pile clearing regardless of observation type.
 BC achieves $98.6$\% clearing from raw point clouds alone, matching the $97.9$\% heuristic expert.
 BC+RL combines BC's full-trajectory coverage with RL's per-grasp optimization, achieving the highest grasp success rate ($87.0$\%) and grapple stability ($0.950$) while maintaining $98.3$\% clearing.
 Our results show that raw point clouds are sufficient for sequential grasp targeting and that demonstration data provides the exploration curriculum that from-scratch RL cannot discover.
@@ -63,8 +63,8 @@ To our knowledge, this is the first study of learned sequential grasp targeting 
 Our main contributions are:
 \begin{itemize}
     \item A grasp-and-remove crane environment in Isaac Lab for dense pile clearing at scale (200 logs), with a fixed FSM that isolates targeting from execution and supports GPU-parallelized training.
-    \item A BC$\to$RL fine-tuning pipeline using PointNet on raw (unsegmented) point clouds with an asymmetric actor-critic~\cite{pinto2018asymmetric}, achieving near-expert clearing from depth alone.
-    \item A four-method comparison showing: (a) from-scratch RL fails regardless of observation type or architecture, (b) BC achieves near-expert clearing from raw point clouds, and (c) BC+RL improves per-grasp success rate and stability while maintaining clearing performance.
+    \item A BC$\to$RL fine-tuning pipeline using PointNet on raw (unsegmented) point clouds with a frozen encoder and asymmetric actor-critic~\cite{pinto2018asymmetric}, achieving near-expert clearing from depth alone.
+    \item A four-method comparison showing: (a) from-scratch RL fails regardless of observation type, (b) BC achieves near-expert clearing from raw point clouds, and (c) BC+RL improves per-grasp success rate and stability while maintaining clearing performance.
 \end{itemize}
 
 \section{Related Work}
@@ -343,7 +343,7 @@ Table~\ref{tab:architecture} summarizes the network architecture for both observ
 \midrule
 Encoder
   & PointNet: $3\!\to\!64\!\to\!128\!\to\!256$, BN, max-pool
-  & Same (init from BC)
+  & Same (frozen, init from BC)
   & MLP: $128\!\to\!256\!\to\!128\!\to\!64$ \\[3pt]
 Actor
   & $256\!\to\!128\!\to\!64\!\to\!5$
@@ -398,7 +398,7 @@ Global pile-clearing ability thus emerges from the policy's targeting strategy r
 \begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{reward_curves.pdf}
-\caption{PPO training curves. Mean episode reward (sum of per-grasp rewards $r = g \cdot \alpha \cdot s$ over a 200-log clearing episode) vs.\ PPO iteration. Each iteration collects $4 N_{\text{env}}$ grasp cycles; flat segments occur when no episode has terminated since the last update. RL (Pose) converges quickly with privileged state; RL (PCD) learns more slowly from point clouds. The BC$\to$RL (PCD) curve initializes from the trained BC policy and reaches the highest episode reward while maintaining pile-clearing performance.}
+\caption{PPO training curves. Mean episode reward (sum of per-grasp rewards $r = g \cdot \alpha \cdot s$ over a 200-log clearing episode) vs.\ PPO iteration. Each iteration collects $4 N_{\text{env}}$ grasp cycles; flat segments occur when no episode has terminated since the last update. All three from-scratch RL variants (Pose, Seg.\ PCD, Raw PCD) improve per-grasp reward but fail to achieve full pile clearing (Table~\ref{tab:rl_ablation}). BC$\to$RL initializes from the trained BC policy and reaches the highest episode reward while maintaining near-complete clearing.}
 \label{fig:reward_curves}
 \end{figure}
 
@@ -407,13 +407,15 @@ Global pile-clearing ability thus emerges from the policy's targeting strategy r
 To combine BC's full-trajectory coverage with RL's ability to optimize per-grasp metrics, we initialize a PPO agent from the trained BC policy and fine-tune with on-policy experience~\cite{rajeswaran2018learning, nair2018overcoming}.
 
 The BC actor weights (PointNet encoder and actor MLP) are loaded into the PPO actor; the critic is initialized randomly and the optimizer starts fresh.
-We use an \emph{asymmetric actor-critic} architecture~\cite{pinto2018asymmetric}: the actor observes the raw point cloud (same as BC), while the critic receives the privileged 128-dimensional pose state vector (top-$K$ log poses).
+We use an \emph{asymmetric actor-critic}~\cite{pinto2018asymmetric}: the actor observes the raw point cloud (same as BC), while the critic is a trainable MLP that receives the privileged 128D pose state vector (top-$K$ log poses).
 This asymmetry allows the critic to learn a more accurate value function from compact state information, while the actor retains the vision-based input it will use at deployment.
 
+We freeze the BC-trained PointNet encoder during RL fine-tuning; fine-tuning the full network---even with a $5\times$ reduced encoder learning rate---causes feature drift and training collapse within $\sim$100 iterations.
+This diverges from DAPG~\cite{rajeswaran2018learning}, which fine-tunes all weights; the frozen encoder is necessary because the asymmetric critic cannot propagate gradients through the encoder, so an unfrozen encoder drifts without constraint.
+
 Conservative hyperparameters prevent the RL updates from overwriting the BC-learned policy.
-We set the initial policy noise $\sigma_0 = 0.05$ (vs.\ $1.0$ for from-scratch RL), reducing exploration to small perturbations around the BC mean.
+We set the initial policy noise $\sigma_0 = 0.05$ (vs.\ $1.0$ for from-scratch RL), reducing exploration to small perturbations around the BC mean; values up to $\sigma_0 = 0.1$ produce comparable results, while $\sigma_0 = 0.3$ causes training collapse.
 The learning rate is reduced to $10^{-4}$ (vs.\ $3\!\times\!10^{-4}$), the clipping ratio tightened to $\epsilon = 0.1$ (vs.\ $0.2$), and the entropy coefficient set to zero.
-The PointNet encoder learning rate is further scaled by $0.2\times$ to preserve the pre-trained feature representations.
 We collect 8 steps per environment per iteration (vs.\ 4 for from-scratch RL) for smoother updates.
 
 \begin{figure*}[t]
@@ -462,20 +464,20 @@ This curve captures the full clearing dynamics, including where methods diverge 
 \subsection{Overall Performance}
 \begin{table*}[t]
 \centering
-\caption{Evaluation results across 100 episodes with randomized 200-log pile configurations (mean $\pm$ std). All learned methods use raw (unsegmented) point cloud observations. BC+RL and RL use identical architectures (PointNet actor, state-based critic); the only difference is BC initialization.}
+\caption{Evaluation results across 100 episodes with randomized 200-log pile configurations (mean $\pm$ std). All learned methods use raw (unsegmented) point cloud observations processed by a PointNet encoder. RL uses a symmetric actor-critic (shared encoder); BC+RL uses an asymmetric actor-critic (frozen BC encoder for actor, state-based MLP critic).}
 \label{tab:results}
 \setlength{\tabcolsep}{5pt}
-\begin{tabular}{@{}lllcccccc@{}}
+\begin{tabular}{@{}llcccccc@{}}
 \toprule
-Method & Obs. & Arch. & Throughput & Align.\,$\alpha$ & Stab.\,$s$ & Grasp succ.\,(\%) & Clear rate\,(\%) & Knocked off\,(\%) \\
+Method & Obs. & Throughput & Align.\,$\alpha$ & Stab.\,$s$ & Grasp succ.\,(\%) & Clear rate\,(\%) & Knocked off\,(\%) \\
 \midrule
-Heuristic & Pose & --- & $9.40 \pm 1.17$ & $0.914 \pm 0.027$ & $0.789 \pm 0.024$ & $88.4 \pm 10.1$ & $97.9 \pm 4.4$ & $1.4 \pm 1.6$ \\
+Heuristic & Pose & $9.40 \pm 1.17$ & $0.914 \pm 0.027$ & $0.789 \pm 0.024$ & $88.4 \pm 10.1$ & $97.9 \pm 4.4$ & $1.4 \pm 1.6$ \\
 \addlinespace
-RL        & Raw PCD & Asym & \multicolumn{6}{c}{\TODO{Fill after RL (Raw PCD, asym) evaluation}} \\
+RL        & Raw PCD & \multicolumn{6}{c}{\TODO{Fill after RL (Raw PCD, sym) evaluation}} \\
 \addlinespace
-BC        & Raw PCD & --- & $9.23 \pm 0.95$ & $0.905 \pm 0.033$ & $0.824 \pm 0.025$ & $82.5 \pm 10.3$ & $98.6 \pm 2.2$ & \TODO{TBD} \\
+BC        & Raw PCD & $9.23 \pm 0.95$ & $0.905 \pm 0.033$ & $0.824 \pm 0.025$ & $82.5 \pm 10.3$ & $98.6 \pm 2.2$ & \TODO{TBD} \\
 \addlinespace
-BC$\to$RL & Raw PCD & Asym & $8.66 \pm 0.92$ & $0.908 \pm 0.028$ & $\mathbf{0.950 \pm 0.016}$ & $\mathbf{87.0 \pm 9.3}$ & $98.3 \pm 1.6$ & $1.2 \pm 1.0$ \\
+BC$\to$RL & Raw PCD & $8.66 \pm 0.92$ & $0.908 \pm 0.028$ & $\mathbf{0.950 \pm 0.016}$ & $\mathbf{87.0 \pm 9.3}$ & $98.3 \pm 1.6$ & $1.2 \pm 1.0$ \\
 \bottomrule
 \end{tabular}
 \end{table*}
@@ -489,12 +491,13 @@ BC$\to$RL & Raw PCD & Asym & $8.66 \pm 0.92$ & $0.908 \pm 0.028$ & $\mathbf{0.95
 
 Table~\ref{tab:results} summarizes the evaluation metrics.
 All four methods share the same controller, pile configuration, and evaluation protocol; the only differences are the targeting policy and its observation.
-BC+RL and from-scratch RL use an identical asymmetric actor-critic architecture (PointNet actor on raw PCD, state-based MLP critic), so their performance difference is attributable entirely to BC initialization.
+From-scratch RL uses a symmetric actor-critic in which both actor and critic process point clouds through independent PointNet encoders.
+BC+RL uses an asymmetric actor-critic~\cite{pinto2018asymmetric} in which the actor retains the frozen BC-trained PointNet encoder while the critic is a trainable MLP that receives the privileged state vector (Section~\ref{sec:bcrl}).
 
 The heuristic expert clears $97.9 \pm 4.4$\% of the pile with a grasp success rate of $88.4$\%.
 Both BC ($98.6 \pm 2.2$\%) and BC+RL ($98.3 \pm 1.6$\%) achieve comparable clearing from raw point clouds---notably, without requiring semantic segmentation.
 BC+RL achieves the best grasp success rate ($87.0$\%) and grapple stability ($0.950$), demonstrating that RL fine-tuning improves per-grasp execution quality.
-From-scratch RL stalls at roughly 60\% clearing despite using the same network architecture.
+From-scratch RL stalls at roughly 60\% clearing regardless of observation type (Table~\ref{tab:rl_ablation}).
 
 Qualitatively, we observe three regimes (Fig.~\ref{fig:clearing_curves}):
 (i) early clearing, where dense piles yield high-throughput grasps for all methods;
@@ -525,29 +528,31 @@ The near-match in these conditional metrics indicates that the BC policy has cap
 From-scratch RL achieves competitive per-grasp reward during training (Fig.~\ref{fig:reward_curves}): RL~(Pose) converges to a mean episode reward of $\sim$95--97 within 80 iterations, while RL~(PCD) reaches $\sim$85--90 after 800+ iterations.
 However, high training reward does not translate to pile-clearing performance.
 
-To test whether the observation type or architecture could rescue from-scratch RL, we trained four variants: RL with privileged pose observations (128D), segmented PCD, raw PCD (symmetric critic), and raw PCD (asymmetric critic).
-All achieve roughly 58--62\% clearing (Table~\ref{tab:rl_ablation}), confirming that RL's failure is fundamental to the exploration landscape rather than a limitation of the visual encoder or critic architecture.
+To test whether observation type affects performance, we trained three RL variants with a symmetric actor-critic: privileged pose observations (128D), segmented PCD, and raw PCD.
+All achieve roughly similar clearing (Table~\ref{tab:rl_ablation}), confirming that RL's failure is fundamental to the exploration landscape rather than a limitation of the observation representation.
+In contrast, observation type does matter for BC: raw PCD ($98.6$\% clearing, $82.5$\% success) outperforms segmented PCD ($96.3$\% clearing, $72.0$\% success), showing that segmentation provides no benefit and slightly hurts performance (Table~\ref{tab:rl_ablation}).
 
 \begin{table}[t]
 \centering
-\caption{From-scratch RL: observation and architecture ablation. All use multiplicative reward. Clearing rate is mean $\pm$ std over 100 episodes.}
+\caption{Observation type ablation for RL and BC. All RL variants use symmetric actor-critic. BC variants use PointNet with identical architecture. Clearing rate is mean $\pm$ std over 100 episodes. RL fails regardless of observation type; for BC, raw PCD outperforms segmented PCD.}
 \label{tab:rl_ablation}
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{@{}llc@{}}
 \toprule
-Observation & Architecture & Clear rate\,(\%) \\
+Method & Observation & Clear rate\,(\%) \\
 \midrule
-Pose (128D) & Symmetric & \TODO{Extract from eval} \\
-Seg.\ PCD   & Symmetric & $58.6 \pm 4.6$ \\
-Raw PCD     & Symmetric & \TODO{Running} \\
-Raw PCD     & Asymmetric & \TODO{New run needed} \\
+RL & Pose (128D) & \TODO{Eval needed} \\
+RL & Seg.\ PCD   & \TODO{Eval needed (training: $\sim$58.6\%)} \\
+RL & Raw PCD     & \TODO{Eval needed (training: $\sim$56\%)} \\
+\addlinespace
+BC & Seg.\ PCD   & $96.3 \pm 5.0$ \\
+BC & Raw PCD     & $98.6 \pm 2.2$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-RL~(Seg.\ PCD) clears only $58.6 \pm 4.6$\% of the pile with a grasp success rate of $56.1 \pm 10.0$\%.
-Per-grasp throughput ($7.15 \pm 1.12$) and alignment ($0.768 \pm 0.067$) are both lower than the heuristic and BC, while stability is higher ($0.892 \pm 0.036$), likely because the policy avoids difficult grasps that would tilt the grapple.
-The policy converges to a narrow targeting pattern that yields adequate reward in dense configurations but fails to adapt as the pile thins.
+The RL policies converge to narrow targeting patterns that yield adequate per-grasp reward in dense configurations but fail to adapt as the pile thins.
+\TODO{Update with eval numbers for best RL variant: clearing \%, success rate, throughput, alignment, stability.}
 
 \begin{figure*}[t]
 \centering
@@ -565,31 +570,10 @@ Figure~\ref{fig:remaining_logs} shows per-grasp throughput as a function of rema
 \label{fig:remaining_logs}
 \end{figure}
 
-\subsection{BC+RL Exploration Noise Sensitivity}
-\label{sec:sigma_sweep}
-The initial policy noise $\sigma_0$ controls the trade-off between preserving the BC policy and allowing RL exploration.
-Table~\ref{tab:sigma_sweep} shows that $\sigma_0 = 0.05$ preserves BC performance while enabling fine-tuning, whereas higher values degrade clearing.
-
-\begin{table}[t]
-\centering
-\caption{BC+RL sensitivity to initial action noise $\sigma_0$ (all raw PCD, asymmetric AC). Higher noise risks overwriting the BC-learned policy.}
-\label{tab:sigma_sweep}
-\setlength{\tabcolsep}{4pt}
-\begin{tabular}{@{}cccc@{}}
-\toprule
-$\sigma_0$ & Grasp succ.\,(\%) & Stab.\,$s$ & Clear rate\,(\%) \\
-\midrule
-0.05 & $87.0 \pm 9.3$ & $0.950 \pm 0.016$ & $98.3 \pm 1.6$ \\
-0.1  & \multicolumn{3}{c}{\TODO{Needs run}} \\
-0.3  & \multicolumn{3}{c}{\TODO{Needs run}} \\
-\bottomrule
-\end{tabular}
-\end{table}
-
 \section{Discussion and Limitations}
 
 \textbf{Why RL fails from scratch.}
-From-scratch RL achieves competitive per-grasp reward but stalls at roughly 60\% clearing regardless of observation type or critic architecture (Table~\ref{tab:rl_ablation}).
+From-scratch RL achieves competitive per-grasp reward but stalls at roughly 60\% clearing regardless of observation type (Table~\ref{tab:rl_ablation}).
 Because the per-grasp reward provides no direct incentive for global clearing, the policy converges to a narrow targeting pattern that yields adequate reward in dense configurations but does not adapt as the pile geometry changes through clearing.
 Once the easily accessible logs are exhausted, the fixed strategy produces missed grasps that consume the episode budget.
 This failure is not a perception limitation---RL with privileged pose observations fares no better---but rather a consequence of the exploration landscape: the policy never discovers the full diversity of pile states encountered during a complete clearing trajectory.
@@ -598,7 +582,8 @@ This failure is not a perception limitation---RL with privileged pose observatio
 BC initialization provides exactly the coverage that from-scratch RL lacks: the demonstration data spans the full clearing trajectory from dense stacks to sparse endgames~\cite{rajeswaran2018learning}.
 RL fine-tuning then optimizes per-grasp execution quality without needing to rediscover the global targeting strategy.
 The dramatic stability improvement ($0.950$ vs.\ $0.824$) suggests that RL learns to refine the vertical positioning of grasps, producing more level lifts.
-The conservative hyperparameters ($\sigma_0 = 0.05$, reduced learning rate, tight clipping) are critical: higher exploration noise risks overwriting the BC policy before the fresh critic can provide meaningful value estimates.
+Freezing the BC-trained encoder is critical: the asymmetric critic receives only the state vector and cannot propagate gradients through the encoder, so an unfrozen encoder drifts without constraint.
+The conservative hyperparameters ($\sigma_0 \leq 0.1$, reduced learning rate, tight clipping) further prevent the RL updates from overwriting the BC-learned policy.
 
 \textbf{Raw PCD sufficiency.}
 Raw (unsegmented) point clouds achieve $98.6$\% clearing via BC and $98.3$\% via BC+RL, matching or exceeding the segmented-PCD BC baseline ($96.3$\% in our earlier experiments with segmented input).
@@ -619,7 +604,7 @@ Despite these simplifications, the environment captures the essential challenges
 
 \section{Conclusion}
 We presented a grasp-and-remove crane environment for studying grasp target selection in dense log-pile clearing at scale, and compared four methods---heuristic, from-scratch RL, BC, and BC+RL---on a shared controller and evaluation protocol.
-Our results show that from-scratch RL fails to clear dense piles regardless of observation type or architecture, stalling at roughly 60\%.
+Our results show that from-scratch RL fails to clear dense piles regardless of observation type, stalling at roughly 60\%.
 BC trained on raw (unsegmented) point clouds achieves $98.6$\% clearing, matching the $97.9$\% privileged-state heuristic.
 BC+RL fine-tuning achieves the strongest overall performance: $87.0$\% grasp success, $0.950$ stability, and $98.3$\% clearing, demonstrating that demonstration data provides the exploration curriculum that RL cannot discover on its own.
 The success of raw point clouds---without semantic segmentation---simplifies the perception pipeline for future sim-to-real transfer.

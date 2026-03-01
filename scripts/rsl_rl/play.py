@@ -44,6 +44,12 @@ parser.add_argument("--paper_viz", action="store_true", default=False,
                     help="Save paper-quality pipeline + progression figures (PointCloud tasks only)")
 parser.add_argument("--viz_dir", type=str, default=None,
                     help="Output directory for viz PNGs (default: checkpoint dir / viz or paper_viz)")
+parser.add_argument("--domain_randomization", action="store_true", default=False,
+                    help="Enable domain randomization (random log count 20-200)")
+parser.add_argument("--obs_noise", type=float, default=0.0,
+                    help="Gaussian noise σ added to PCD coordinates before PointNet (meters)")
+parser.add_argument("--action_noise", type=float, default=0.0,
+                    help="Gaussian noise σ added to policy action output before workspace scaling")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -128,6 +134,17 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # note: certain randomizations occur in the environment initialization so we set the seed here
     env_cfg.seed = agent_cfg.seed
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
+
+    # domain randomization (random log count 20-200)
+    if args_cli.domain_randomization and hasattr(env_cfg, 'enable_domain_randomization'):
+        env_cfg.enable_domain_randomization = True
+        print(f"[INFO] Domain randomization enabled")
+
+    # noise injection info
+    if args_cli.obs_noise > 0:
+        print(f"[INFO] Observation noise σ: {args_cli.obs_noise} m")
+    if args_cli.action_noise > 0:
+        print(f"[INFO] Action noise σ: {args_cli.action_noise}")
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
@@ -321,8 +338,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         start_time = time.time()
         # run everything in inference mode
         with torch.inference_mode():
+            # Inject observation noise (Gaussian on PCD coordinates)
+            if args_cli.obs_noise > 0:
+                obs = obs + torch.randn_like(obs) * args_cli.obs_noise
+
             # agent stepping
             actions = policy(obs)
+
+            # Inject action noise (Gaussian on raw policy output, before workspace scaling)
+            if args_cli.action_noise > 0:
+                actions = actions + torch.randn_like(actions) * args_cli.action_noise
 
             # Pre-step: collect viz data before env.step modifies state
             if paper_viz_active:
@@ -606,6 +631,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     "task": args_cli.task,
                     "num_envs": num_envs,
                     "num_episodes": episodes_done,
+                    "seed": args_cli.seed,
+                    "domain_randomization": args_cli.domain_randomization,
+                    "obs_noise": args_cli.obs_noise,
+                    "action_noise": args_cli.action_noise,
                     "timestamp": timestamp,
                 },
                 "episodes": {

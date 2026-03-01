@@ -869,6 +869,7 @@ class CraneDirectEnvCfgFull(DirectRLEnvCfg):
 
     # Domain randomization (set in task configs - tasks.py)
     enable_domain_randomization: bool = False  # Default: no randomization
+    heuristic_target_noise: float = 0.0  # Gaussian σ (meters) added to heuristic target position for robustness evals
     # Reward configuration
     # reward_formula:
     #   - "multiplicative": (efficiency or throughput) × alignment × stability
@@ -2363,9 +2364,13 @@ class CraneDirectEnvFull(DirectRLEnv):
 
             # Generate seed for this environment
             if randomize_patterns:
-                import time
-                # Time-based seed ensures different pattern on every reset
-                pattern_seed = int(time.time() * 1000000) + env_id
+                if self.cfg.seed is not None and self.cfg.seed > 0:
+                    # Deterministic seed for reproducible evaluation
+                    pattern_seed = self.cfg.seed + self._total_episodes_completed * self.num_envs + env_id
+                else:
+                    import time
+                    # Time-based seed ensures different pattern on every reset (training)
+                    pattern_seed = int(time.time() * 1000000) + env_id
             else:
                 pattern_seed = self.cfg.seed + env_id if self.cfg.seed is not None else None
 
@@ -3700,6 +3705,10 @@ class CraneDirectEnvFull(DirectRLEnv):
                 else:
                     # Heuristic mode: pick the highest available log
                     log_pos_b, log_id, log_quat_w = self._target_top_log_center_b(i)
+                    # Add observation noise to heuristic target position (for robustness evals)
+                    noise_sigma = getattr(self.cfg, 'heuristic_target_noise', 0.0)
+                    if noise_sigma > 0:
+                        log_pos_b = log_pos_b + torch.randn(3, device=self.device) * noise_sigma
                     self._target_log_pos_b[i] = log_pos_b
                     self._current_target_log_id[i] = log_id
                     # Store the target log's quaternion for yaw alignment
