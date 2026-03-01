@@ -212,7 +212,19 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     # load previously trained model
     ppo_runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
-    ppo_runner.load(resume_path, load_optimizer=False)
+    try:
+        ppo_runner.load(resume_path, load_optimizer=False)
+    except RuntimeError as e:
+        # Handle architecture mismatch (e.g., asymmetric checkpoint loaded into symmetric model).
+        # Load with strict=False so extra keys (critic_encoder) are ignored — we only need the actor.
+        print(f"[WARN] Strict load failed ({e}), retrying with strict=False")
+        checkpoint = torch.load(resume_path, map_location=agent_cfg.device)
+        model_dict = checkpoint.get("model_state_dict", checkpoint)
+        try:
+            policy_ref = ppo_runner.alg.policy
+        except AttributeError:
+            policy_ref = ppo_runner.alg.actor_critic
+        policy_ref.load_state_dict(model_dict, strict=False)
 
     # extract the neural network module
     # we do this in a try-except to maintain backwards compatibility.
