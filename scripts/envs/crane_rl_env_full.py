@@ -891,6 +891,11 @@ class CraneDirectEnvCfgFull(DirectRLEnvCfg):
     clearing_bonus_scale: float = 0.0
     # Proportional clearing bonus: True = bonus proportional to % cleared, False = binary (100% only)
     proportional_clearing_bonus: bool = False
+    clearing_bonus_threshold: float = 1.0  # Min clearing fraction for binary bonus (1.0 = 100%, 0.95 = 95%)
+    # Tiered clearing bonuses: list of thresholds, each awards clearing_bonus_scale when crossed.
+    # e.g. [0.5, 0.7, 0.9] with scale=50 gives +50 at 50%, +50 at 70%, +50 at 90% (up to +150 total).
+    # None = disabled, use single threshold instead.
+    clearing_bonus_thresholds: list[float] | None = None
 
     # Curriculum: gradually increase active logs. None = disabled (default).
     # List of (episode_threshold, num_active_logs) tuples, e.g.:
@@ -1390,10 +1395,18 @@ class CraneDirectEnvFull(DirectRLEnv):
                         remaining = self._count_logs_in_rack(i)
                         clearing_pct = 1.0 - (remaining / max(starting_logs, 1))
                         bonus = clearing_pct * clearing_bonus_scale
-                    elif self._count_logs_in_rack(i) == 0:
-                        bonus = clearing_bonus_scale
                     else:
-                        bonus = 0.0
+                        starting_logs = int(self._per_env_log_counts[i])
+                        remaining = self._count_logs_in_rack(i)
+                        clearing_pct = 1.0 - (remaining / max(starting_logs, 1))
+                        tiered = getattr(self.cfg, 'clearing_bonus_thresholds', None)
+                        if tiered is not None:
+                            # Tiered: +scale for each threshold crossed
+                            bonus = sum(clearing_bonus_scale for t in tiered if clearing_pct >= t)
+                        else:
+                            # Single threshold
+                            threshold = getattr(self.cfg, 'clearing_bonus_threshold', 1.0)
+                            bonus = clearing_bonus_scale if clearing_pct >= threshold else 0.0
                     self.reward_buf[i] += bonus
                     self._episode_return[i] += bonus
                     self._last_clearing_bonus[i] = bonus
