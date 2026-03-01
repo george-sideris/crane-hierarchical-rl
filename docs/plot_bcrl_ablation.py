@@ -100,7 +100,9 @@ def load_all(tag):
 
 
 # ── Plotting helpers ──────────────────────────────────────────────────
-def plot_curve(ax, label, steps, smoothed, cfg):
+def plot_curve(ax, label, steps, raw, smoothed, cfg, show_raw=True):
+    if show_raw:
+        ax.plot(steps, raw, color=cfg["color"], alpha=0.15, linewidth=0.3)
     ax.plot(steps, smoothed, color=cfg["color"], linewidth=0.8,
             linestyle=cfg["linestyle"], label=label)
 
@@ -128,8 +130,8 @@ def plot():
     ax_main = fig.add_subplot(gs[0, :])
     main_data = load_all(MAIN_TAG)
     for label, cfg in RUNS.items():
-        steps, _raw, smoothed = main_data[label]
-        plot_curve(ax_main, label, steps, smoothed, cfg)
+        steps, raw, smoothed = main_data[label]
+        plot_curve(ax_main, label, steps, raw, smoothed, cfg)
     style_ax(ax_main, "Mean Episode Return", legend=True, legend_loc="lower right")
 
     # 2×2 subplots
@@ -140,8 +142,8 @@ def plot():
         ax = fig.add_subplot(gs[row, col])
         sub_data = load_all(tag)
         for label, cfg in RUNS.items():
-            steps, _raw, smoothed = sub_data[label]
-            plot_curve(ax, label, steps, smoothed, cfg)
+            steps, raw, smoothed = sub_data[label]
+            plot_curve(ax, label, steps, raw, smoothed, cfg, show_raw=False)
         style_ax(ax, title)
         if col == 0:
             left_axes.append(ax)
@@ -165,8 +167,8 @@ def plot_minimal():
     fig, ax = plt.subplots(figsize=(3.5, 2.4))  # single-column IEEE width
     main_data = load_all(MAIN_TAG)
     for label, cfg in RUNS.items():
-        steps, _raw, smoothed = main_data[label]
-        plot_curve(ax, label, steps, smoothed, cfg)
+        steps, raw, smoothed = main_data[label]
+        plot_curve(ax, label, steps, raw, smoothed, cfg)
     style_ax(ax, "Mean Episode Return", xlabel="PPO Iteration",
              legend=True, legend_loc="lower right")
 

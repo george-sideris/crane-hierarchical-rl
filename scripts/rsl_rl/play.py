@@ -214,9 +214,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     ppo_runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
     ppo_runner.load(resume_path, load_optimizer=False)
 
-    # obtain the trained policy for inference
-    policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)
-
     # extract the neural network module
     # we do this in a try-except to maintain backwards compatibility.
     try:
@@ -225,6 +222,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     except AttributeError:
         # version 2.2 and below
         policy_nn = ppo_runner.alg.actor_critic
+
+    # Use act_inference directly to avoid shape issues across RSL-RL versions.
+    # get_inference_policy() wraps through obs_normalizer which may alter tensor
+    # dimensions; calling act_inference on the module itself is more robust.
+    policy_nn.eval()
+    _policy_device = env.unwrapped.device
+    def policy(obs):
+        return policy_nn.act_inference(obs.to(_policy_device))
 
     # export policy to onnx/jit
     try:
