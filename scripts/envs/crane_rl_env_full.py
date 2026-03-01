@@ -3602,7 +3602,7 @@ class CraneDirectEnvFull(DirectRLEnv):
                 if use_policy:
                     # FULL ACTION SPACE: [x, y, z, yaw]
                     # Read last action (stored in _pre_physics_step)
-                    a = self._last_actions[i] if hasattr(self, "_last_actions") else torch.zeros(self.cfg.action_space, device=self.device)
+                    a = self._last_actions[i] if (hasattr(self, "_last_actions") and i < self._last_actions.shape[0]) else torch.zeros(self.cfg.action_space, device=self.device)
 
                     # Compute bounds if not already done
                     if not self._action_bounds_valid[i]:
