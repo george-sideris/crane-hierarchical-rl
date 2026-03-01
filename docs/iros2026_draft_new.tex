@@ -512,7 +512,7 @@ Only the frozen-encoder, $\sigma_0 = 0.05$ configuration sustains clearing perfo
 
 \begin{figure}[t]
 \centering
-\TODO{Insert BC+RL ablation training curves: mean episode return vs.\ iteration for four variants (frozen $\sigma_0=0.05$, frozen $\sigma_0=0.1$, frozen $\sigma_0=0.3$, unfrozen $\sigma_0=0.05$). Same style as Fig.~\ref{fig:reward_curves}. All runs to 500 iterations.}
+\includegraphics[width=\columnwidth]{bcrl_ablation.pdf}
 \caption{BC+RL training sensitivity. Mean episode return vs.\ PPO iteration for four configurations varying encoder freezing and initial policy noise $\sigma_0$. Only the frozen-encoder, low-noise configuration ($\sigma_0 = 0.05$) sustains performance; all other variants collapse during training.}
 \label{fig:bcrl_ablation}
 \end{figure}

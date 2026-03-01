@@ -228,11 +228,15 @@ class PointNetActorCritic(nn.Module):
     def _encode(self, obs) -> torch.Tensor:
         """Encode observation through PointNet."""
         obs = self._to_tensor(obs)
-        batch_size = obs.shape[0]
 
-        # Handle flattened input
-        if obs.dim() == 2:
-            obs = obs.view(batch_size, self.num_points, 3)
+        # Handle all input shapes:
+        #   1D (N*3,)     -> single sample from RSL-RL inference wrapper
+        #   2D (B, N*3)   -> batched flattened input
+        #   3D (B, N, 3)  -> already shaped
+        if obs.dim() == 1:
+            obs = obs.view(1, self.num_points, 3)
+        elif obs.dim() == 2:
+            obs = obs.view(obs.shape[0], self.num_points, 3)
 
         return self.encoder(obs)
 
