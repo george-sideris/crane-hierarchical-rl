@@ -557,7 +557,7 @@ The best RL variant (Raw PCD) achieves only 53\% clearing with 53.3\% grasp succ
 
 \begin{table*}[t]
 \centering
-\caption{Robustness evaluation under domain randomization (DR), observation noise, and their combination (mean $\pm$ std over 100 episodes). DR varies log friction, mass, and spawn pattern; observation noise adds Gaussian perturbations ($\sigma=0.01$) to the point cloud.}
+\caption{Robustness evaluation under domain randomization (DR), observation noise, and their combination (mean $\pm$ std over 100 episodes). DR varies log friction, mass, and spawn pattern. Observation noise ($\sigma_{\mathrm{pos}}=0.10$\,m, consistent with stereo-camera positioning precision in field trials~\cite{semberg2024realtime}) is applied as i.i.d.\ Gaussian perturbations to each point in the input point cloud for learned policies. For the heuristic, noise perturbs the target log position and orientation ($\sigma_{\mathrm{yaw}} = \arctan(\sigma_{\mathrm{pos}} / (L/2)) \approx 3.8^{\circ}$ for $L=3$\,m logs).}
 \label{tab:robustness}
 \setlength{\tabcolsep}{5pt}
 \begin{tabular}{@{}llcccccc@{}}

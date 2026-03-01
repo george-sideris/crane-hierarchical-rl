@@ -870,6 +870,7 @@ class CraneDirectEnvCfgFull(DirectRLEnvCfg):
     # Domain randomization (set in task configs - tasks.py)
     enable_domain_randomization: bool = False  # Default: no randomization
     heuristic_target_noise: float = 0.0  # Gaussian σ (meters) added to heuristic target position for robustness evals
+    heuristic_yaw_noise_auto: bool = True  # Auto-derive yaw noise from position noise: σ_yaw = arctan(σ_pos / (log_length/2))
     # Reward configuration
     # reward_formula:
     #   - "multiplicative": (efficiency or throughput) × alignment × stability
@@ -3724,7 +3725,28 @@ class CraneDirectEnvFull(DirectRLEnv):
                         log_pos_b = log_pos_b + torch.randn(3, device=self.device) * noise_sigma
                     self._target_log_pos_b[i] = log_pos_b
                     self._current_target_log_id[i] = log_id
-                    # Store the target log's quaternion for yaw alignment
+                    # Add orientation noise to heuristic target yaw (for robustness evals)
+                    # Auto-derived from position noise: σ_yaw = arctan(σ_pos / (log_length/2))
+                    yaw_noise_sigma = 0.0
+                    if noise_sigma > 0 and getattr(self.cfg, 'heuristic_yaw_noise_auto', True):
+                        import math
+                        log_half_length = 1.5  # ~3m logs
+                        yaw_noise_sigma = math.atan(noise_sigma / log_half_length)
+                    if yaw_noise_sigma > 0:
+                        import math
+                        dyaw = float(torch.randn(1, device=self.device).item()) * yaw_noise_sigma
+                        # Rotate quaternion around world Z by dyaw
+                        hw = dyaw / 2.0
+                        dq = torch.tensor([math.cos(hw), 0.0, 0.0, math.sin(hw)], device=self.device)
+                        # quat_mul: q_new = dq * q_old (wxyz convention)
+                        w1, x1, y1, z1 = dq[0], dq[1], dq[2], dq[3]
+                        w2, x2, y2, z2 = log_quat_w[0], log_quat_w[1], log_quat_w[2], log_quat_w[3]
+                        log_quat_w = torch.tensor([
+                            w1*w2 - x1*x2 - y1*y2 - z1*z2,
+                            w1*x2 + x1*w2 + y1*z2 - z1*y2,
+                            w1*y2 - x1*z2 + y1*w2 + z1*x2,
+                            w1*z2 + x1*y2 - y1*x2 + z1*w2,
+                        ], device=self.device)
                     self._target_log_quat_w[i] = log_quat_w
 
                 # Calculate and freeze hover targets (shared by both modes)
