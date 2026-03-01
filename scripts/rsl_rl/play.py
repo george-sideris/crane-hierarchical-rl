@@ -317,7 +317,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     per_ep_clearing_curves = []
 
     # Get initial observations (triggers reset if needed)
-    obs, _ = env.get_observations()
+    obs, *_ = env.get_observations()
 
     # Read starting log counts AFTER reset (so we get the actual randomized counts)
     has_variable_logs = hasattr(underlying_env, '_per_env_log_counts') and underlying_env._per_env_log_counts is not None
@@ -377,7 +377,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                                        "bounds_min": min_b.copy(), "bounds_max": max_b.copy()}
 
             # env stepping
-            obs, rewards, dones, _ = env.step(actions)
+            obs, rewards, dones, *_ = env.step(actions)
 
             # Track rewards
             episode_rewards += rewards
