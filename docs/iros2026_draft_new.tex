@@ -16,6 +16,8 @@
 \usepackage{xcolor}
 \usepackage{algorithm}
 \usepackage{algorithmic}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, fit, backgrounds, calc}
 
 % Floats & subfigures
 \usepackage{subcaption}
@@ -36,7 +38,7 @@ Clearing a dense pile of logs by sequential grasping is a contact-rich manipulat
 We study this problem in simulation for a forestry log loader that must clear piles of 200 logs using only depth-derived point clouds requiring no semantic segmentation.
 From-scratch reinforcement learning (RL) fails to discover effective clearing strategies regardless of observation type.
 Our framework first trains a PointNet-based policy via behavior cloning (BC) on demonstrations from a privileged-state heuristic, then fine-tunes with RL using an asymmetric actor-critic.
-BC provides the full-trajectory exploration curriculum that RL alone cannot discover, while RL optimizes per-grasp quality beyond what the demonstrator achieves.
+BC provides the full-trajectory exploration curriculum that RL alone cannot discover, while RL optimizes per-grasp execution beyond what the demonstrator achieves.
 The resulting policy maintains expert-level clearing ($98.2$\%) while improving grasp stability by $15$\% over the BC initialization, using only depth-derived point clouds.
 \end{abstract}
 
@@ -48,6 +50,13 @@ robot learning, multi-object grasping from dense clutter, behavior cloning, rein
 Forestry operations increasingly seek autonomy for heavy machinery to improve safety and productivity~\cite{lindroos2015forestry}.
 A key subtask is log-pile clearing: repeatedly grasping multiple logs from a rack or pile and removing them.
 This setting is challenging because (i) the scene is densely cluttered with hundreds of rigid-body logs in frictional contact, (ii) each grasp disturbs the pile through contact cascades, continuously reshaping the configuration for subsequent attempts, and (iii) no two pile configurations are alike, so a targeting strategy must be robust to diverse arrangements.
+
+\begin{figure}[b]
+\centering
+\includegraphics[width=\columnwidth]{mill.png}
+\caption{A log loader clearing piles at a millyard infeed deck. Our work targets autonomous grasp selection for this task using only depth-derived point clouds.}
+\label{fig:mill}
+\end{figure}
 
 We address the grasp target selection problem: given a raw point cloud derived from a stereo depth camera, where should the crane place and orient the grapple to clear the pile efficiently?
 We deliberately separate this high-level targeting decision from low-level motion execution.
@@ -121,7 +130,7 @@ The horizon is chosen to exceed the minimum needed: the grapple can hold up to 2
 
 \subsection{Observations}
 \label{sec:obs}
-The policy observes a raw point cloud of the scene.
+The policy observes a raw point cloud (PCD) of the scene.
 A depth camera mounted on the crane renders the scene from above the rack, producing a depth image $D_t$.
 The simulated camera uses a pinhole model with parameters matching the Stereolabs ZED~X in wide-angle configuration\footnote{\url{https://www.stereolabs.com/products/zed-x}}.
 
@@ -221,8 +230,6 @@ Clamping to zero excludes the degenerate case of an inverted grapple; raising to
 \begin{equation}
     \varsigma = \big(\max(0,\;\hat{z}_g^\top \hat{z}_w)\big)^{4} \;\in [0,1].
 \end{equation}
-We define \textbf{grasp quality} as the product $q = \alpha \cdot \varsigma \in [0,1]$, capturing how well-aligned and stable a grasp is independently of how many logs were captured.
-
 Logs identified as grasped are marked inactive and teleported out of the scene.
 Logs that leave the workspace bounds during a grasp are removed and excluded from the grasp count $g$.
 Figure~\ref{fig:grasp_geometry} visualizes the shaped score curves for alignment and stability.
@@ -317,40 +324,13 @@ We use BC~\cite{pomerleau1988alvinn} to train a policy from expert demonstration
 We collect demonstration pairs $(o_t, a_t)$ from successful expert grasps only (failed grasps are discarded), where $o_t$ is the point cloud observation and $a_t$ is the expert action in the pre-squashing space (positions via $\mathrm{arctanh}$, yaw via $\cos 2\psi, \sin 2\psi$ as described in Section~\ref{sec:actions}).
 
 The policy uses a PointNet encoder~\cite{qi2017pointnet}.
-A shared per-point MLP $h: \mathbb{R}^3 \to \mathbb{R}^{256}$ (layers $3 \!\to\! 64 \!\to\! 128 \!\to\! 256$ with batch normalization and ELU activations) maps each point independently; a symmetric max-pool aggregates the per-point features into a global latent vector:
+A shared per-point MLP $h: \mathbb{R}^3 \to \mathbb{R}^{256}$ (layers $3 \!\to\! 64 \!\to\! 128 \!\to\! 256$ with batch normalization and ELU activations) maps each point independently; a symmetric max-pool aggregates the per-point features, and a post-pooling fully connected layer ($256 \!\to\! 256$, BN, ELU) yields the global latent vector:
 \begin{equation}
-    \mathbf{z} = \max_{i=1,\ldots,N_p} h\!\big(o_t^{(i)}\big) \;\in \mathbb{R}^{256},
+    \mathbf{z} = f_{\mathrm{fc}}\!\Big(\max_{i=1,\ldots,N_p} h\!\big(o_t^{(i)}\big)\Big) \;\in \mathbb{R}^{256},
 \end{equation}
 where $o_t^{(i)} \in \mathbb{R}^3$ is the $i$-th point in the observation.
 An actor MLP $\mu_\theta: \mathbb{R}^{256} \to \mathbb{R}^{5}$ (layers $256 \!\to\! 128 \!\to\! 64 \!\to\! 5$) maps the latent to the action $\tilde{a}_t = \mu_\theta(\mathbf{z})$.
 For the privileged-pose ablation, we replace the PointNet encoder with a three-layer MLP ($128 \!\to\! 256 \!\to\! 128 \!\to\! 64$) with ELU activations.
-
-Table~\ref{tab:architecture} summarizes the network architecture for both observation types.
-
-\begin{table}[t]
-\centering
-\caption{Network architectures. All hidden layers use ELU activations. The PointNet encoder applies batch normalization. All policies output 5D actions: $(x,y,z,\cos 2\psi,\sin 2\psi)$.}
-\label{tab:architecture}
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{@{}lp{2.4cm}p{2.4cm}p{2.0cm}@{}}
-\toprule
-& \textbf{BC / RL (PCD)} & \textbf{BC+RL (PCD)} & \textbf{RL (Pose)} \\
-\midrule
-Encoder
-  & PointNet: $3\!\to\!64\!\to\!128\!\to\!256$, BN, max-pool
-  & Same (frozen, init from BC)
-  & MLP: $128\!\to\!256\!\to\!128\!\to\!64$ \\[3pt]
-Actor
-  & $256\!\to\!128\!\to\!64\!\to\!5$
-  & Same (init from BC)
-  & Shared enc $\to$ $64\!\to\!5$ \\[3pt]
-Critic
-  & PointNet + MLP head
-  & MLP: $128\!\to\!256\!\to\!128\!\to\!1$ (state)
-  & MLP: $256\!\to\!128\!\to\!64\!\to\!1$ \\
-\bottomrule
-\end{tabular}
-\end{table}
 
 We apply dropout (rate 0.2) after the encoder.
 The BC objective minimizes the mean-squared error between the predicted and expert actions over a dataset $\mathcal{D}$ of successful grasps:
@@ -383,10 +363,10 @@ Each iteration collects $N_{\text{env}} \times 4$ grasp cycles (one step per cyc
 The outcome components $(g,\alpha,\varsigma)$ from Section~\ref{sec:outcome} define the scalar reward:
 \label{eq:reward}
 \begin{equation}
-r = g \cdot \alpha \cdot \varsigma = g \cdot q,
+r = g \cdot \alpha \cdot \varsigma,
 \end{equation}
 for successful grasps ($g > 0$), and $r = \rho_{\text{fail}} = -1$ for failed grasps.
-The reward is thus the product of throughput and grasp quality; a high reward requires many logs grasped with good alignment and a level grapple.
+The reward is thus the product of throughput, alignment, and stability; a high reward requires many logs grasped with good alignment and a level grapple.
 The reward is entirely per-grasp.
 Global pile-clearing ability must emerge from the policy's targeting strategy rather than from explicit reward incentives.
 
@@ -401,7 +381,7 @@ rolling average with raw data in light shading. Diamond markers indicate the che
 selected for evaluation (highest mean return before degradation). Flat segments occur when
 no episode has terminated since the last update. All three from-scratch RL variants (Pose,
 Seg.\ PCD, Raw PCD) improve per-grasp reward but fail to achieve full pile clearing
-(Table~\ref{tab:rl_ablation}). BC$\to$RL initializes from the trained BC policy and reaches
+(Table~\ref{tab:results}). BC$\to$RL initializes from the trained BC policy and reaches
 the highest mean return while maintaining near-complete clearing; performance degrades after
 $\sim$500 iterations, motivating early stopping. Bottom panels decompose the reward signal
 into its per-grasp components.}
@@ -412,7 +392,7 @@ into its per-grasp components.}
 \label{sec:bcrl}
 To combine BC's full-trajectory coverage with RL's ability to optimize per-grasp metrics, we initialize a PPO agent from the trained BC policy and fine-tune with on-policy experience~\cite{rajeswaran2018learning, nair2018overcoming}.
 
-The BC actor weights (PointNet encoder and actor MLP) are loaded into the PPO actor; the critic is initialized randomly and the optimizer starts fresh.
+The BC actor weights (PointNet encoder and actor MLP) are loaded into the PPO actor; the critic is initialized randomly and the optimizer starts fresh (Fig.~\ref{fig:bcrl_pipeline}).
 We use an \emph{asymmetric actor-critic}~\cite{pinto2018asymmetric}: the actor observes the raw point cloud (same as BC), while the critic is a trainable MLP that receives the privileged 128D pose state vector (top-$K$ log poses).
 This asymmetry allows the critic to learn a more accurate value function from compact state information, while the actor retains the vision-based input it will use at deployment.
 
@@ -421,7 +401,118 @@ The asymmetric critic cannot propagate gradients through the encoder, so an unfr
 
 All other PPO hyperparameters remain identical to the from-scratch RL configuration (Section~\ref{sec:rl}); the only changes are the frozen encoder and a reduced initial policy noise $\sigma_0 = 0.05$ (vs.\ $1.0$ for from-scratch RL), which limits exploration to small perturbations around the BC mean.
 
-\TODO{Insert BC$\to$RL pipeline figure. Left: BC phase (expert demos $\to$ PointNet encoder + actor MLP, trained end-to-end with MSE loss). Center: RL phase (frozen PointNet encoder $\to$ trainable actor head + asymmetric state-based critic, trained with PPO). Right: Inference (frozen encoder + fine-tuned actor, no critic).}
+\begin{figure*}[t]
+\centering
+\resizebox{0.92\textwidth}{!}{%
+\begin{tikzpicture}[
+  block/.style={rectangle, rounded corners=3pt, draw=black!70,
+    text width=3.0cm, minimum height=0.7cm, align=center,
+    font=\scriptsize, inner sep=4pt},
+  frozen/.style={block, fill=blue!12},
+  trainable/.style={block, fill=orange!18},
+  io/.style={block, fill=white},
+  lossnode/.style={rectangle, rounded corners=3pt, draw=black!50, dashed,
+    text width=3.4cm, align=center, font=\scriptsize, inner sep=4pt, fill=gray!5},
+  wideloss/.style={lossnode, text width=5.5cm},
+  arr/.style={-{Stealth[length=4pt]}, thick, black!70},
+  panelbg/.style={rectangle, rounded corners=6pt, draw=gray!50,
+    fill=gray!3, inner sep=8pt},
+  ptitle/.style={font=\small\bfseries},
+  collabel/.style={font=\scriptsize\itshape, text=black!60},
+]
+% ====== PANEL (a): BEHAVIOR CLONING ======
+\node[io] (a_pcd) at (0, 0)
+  {Raw PCD\\$o_t \in \mathbb{R}^{1024\times3}$};
+\node[io] (a_expert) at (4, 0)
+  {Expert Heuristic\\$a^{*} \in \mathbb{R}^{5}$};
+\node[trainable, below=0.25cm of a_pcd] (a_enc)
+  {PointNet Encoder\\$3\!\to\!64\!\to\!128\!\to\!256$\\BN + ELU, max-pool\\$\to\mathbb{R}^{256}$};
+\node[trainable, below=0.25cm of a_enc] (a_mlp)
+  {Actor MLP\\$256\!\to\!128\!\to\!64\!\to\!5$\\ELU, dropout$\!=\!0.2$};
+\node[lossnode, below=0.25cm of a_mlp] (a_loss)
+  {$\mathcal{L}_{\text{BC}} = \lVert\mu_\theta(\mathbf{z}) - a^{*}\rVert^{2}$};
+\draw[arr] (a_pcd) -- (a_enc);
+\draw[arr] (a_enc) -- (a_mlp);
+\draw[arr] (a_mlp) -- (a_loss);
+\draw[arr] (a_expert.south) |- (a_loss.east);
+%
+% ====== PANEL (b): RL FINE-TUNING ======
+\node[collabel] (b_alabel) at (8.5, 0.55) {Actor (vision)};
+\node[collabel] (b_clabel) at (12.5, 0.55) {Critic (privileged)};
+% Actor column
+\node[io] (b_pcd) at (8.5, 0) {Raw PCD\\$o_t \in \mathbb{R}^{1024\times3}$};
+\node[frozen, below=0.25cm of b_pcd] (b_enc)
+  {PointNet Encoder\\(from BC, frozen)\\$3\!\to\!64\!\to\!128\!\to\!256$\\$\to\mathbb{R}^{256}$};
+\node[trainable, below=0.25cm of b_enc] (b_actor)
+  {Actor MLP\\(init from BC)\\$256\!\to\!128\!\to\!64\!\to\!5$\\ELU};
+\node[trainable, below=0.25cm of b_actor] (b_policy)
+  {$\pi = \mathcal{N}(\mu, \sigma^{2} I)$\\$\sigma_0 = 0.05$};
+% Critic column
+\node[io] (b_state) at (12.5, 0)
+  {Privileged State\\$s_t \in \mathbb{R}^{128}$};
+\node[trainable, below=0.25cm of b_state] (b_cenc)
+  {Critic Encoder\\$128\!\to\!256\!\to\!256$\\ELU};
+\node[trainable, below=0.25cm of b_cenc] (b_cmlp)
+  {Critic MLP\\$256\!\to\!128\!\to\!64\!\to\!1$\\ELU};
+% PPO node spanning both columns (anchored below deepest column, centered)
+\path (b_policy.south) ++(0,-0.5) coordinate (ppo_y);
+\path (b_pcd.center) -- (b_state.center) coordinate[midway] (ppo_x);
+\node[wideloss] (b_ppo) at (ppo_y -| ppo_x)
+  {PPO\enspace $\varepsilon\!=\!0.2,\;\gamma\!=\!0.99,\;\lambda\!=\!0.95$};
+\draw[arr] (b_pcd) -- (b_enc);
+\draw[arr] (b_enc) -- (b_actor);
+\draw[arr] (b_actor) -- (b_policy);
+\draw[arr] (b_state) -- (b_cenc);
+\draw[arr] (b_cenc) -- (b_cmlp);
+\draw[arr] (b_policy.south) -- (b_policy |- b_ppo.north);
+\draw[arr] (b_cmlp.south) -- (b_cmlp |- b_ppo.north);
+%
+% ====== PANEL (c): INFERENCE ======
+\node[io] (c_pcd) at (17, 0) {Raw PCD\\$o_t \in \mathbb{R}^{1024\times3}$};
+\node[frozen, below=0.25cm of c_pcd] (c_enc)
+  {PointNet Encoder\\(from BC)\\$\to\mathbb{R}^{256}$};
+\node[frozen, below=0.25cm of c_enc] (c_actor)
+  {Actor MLP\\(from RL)\\$\mu_\theta(\mathbf{z}) \in \mathbb{R}^{5}$};
+\node[io, below=0.25cm of c_actor] (c_scale)
+  {tanh + scale\\$\to(x,y,z,\psi)$};
+\node[io, below=0.25cm of c_scale] (c_fsm) {FSM Controller};
+\draw[arr] (c_pcd) -- (c_enc);
+\draw[arr] (c_enc) -- (c_actor);
+\draw[arr] (c_actor) -- (c_scale);
+\draw[arr] (c_scale) -- (c_fsm);
+%
+% ====== PANEL BACKGROUNDS (consolidated, natural height per panel) ======
+\begin{scope}[on background layer]
+  \node[panelbg, fit=(a_pcd)(a_expert)(a_enc)(a_mlp)(a_loss)] (bg_a) {};
+  \node[panelbg, fit=(b_alabel)(b_clabel)(b_pcd)(b_enc)(b_actor)(b_policy)(b_state)(b_cenc)(b_cmlp)(b_ppo)] (bg_b) {};
+  \node[panelbg, fit=(c_pcd)(c_enc)(c_actor)(c_scale)(c_fsm)] (bg_c) {};
+\end{scope}
+\node[ptitle, above=2pt of bg_a.north] {(a) Behavior Cloning};
+\node[ptitle, above=2pt of bg_b.north] {(b) RL Fine-Tuning};
+\node[ptitle, above=2pt of bg_c.north] {(c) Inference};
+%
+% ====== STAGE ARROWS (level, pinned to panel b midpoint) ======
+\draw[-{Stealth[length=6pt]}, very thick, gray!50]
+  (bg_a.east |- bg_b.west) -- (bg_b.west);
+\draw[-{Stealth[length=6pt]}, very thick, gray!50]
+  (bg_b.east) -- (bg_c.west |- bg_b.east);
+%
+% ====== LEGEND ======
+\coordinate (leg_start) at ($(bg_a.center |- b_ppo) + (-3.0, 0)$);
+\node[rectangle, rounded corners=2pt, draw=black!70, fill=orange!18,
+  minimum width=0.5cm, minimum height=0.25cm] (leg_t) at (leg_start) {};
+\node[font=\scriptsize, right=2pt of leg_t] (leg_tl) {Trainable};
+\node[rectangle, rounded corners=2pt, draw=black!70, fill=blue!12,
+  minimum width=0.5cm, minimum height=0.25cm, right=0.6cm of leg_tl] (leg_f) {};
+\node[font=\scriptsize, right=2pt of leg_f] (leg_fl) {Frozen};
+\node[rectangle, rounded corners=2pt, draw=black!50, dashed, fill=gray!5,
+  minimum width=0.5cm, minimum height=0.25cm, right=0.6cm of leg_fl] (leg_l) {};
+\node[font=\scriptsize, right=2pt of leg_l] {Loss / Optimizer};
+\end{tikzpicture}%
+}% end resizebox
+\caption{The BC$\to$RL pipeline. (a)~The PointNet encoder and actor MLP are trained end-to-end on expert demonstrations with MSE loss. (b)~The encoder is frozen and the actor MLP is fine-tuned with PPO alongside a state-based asymmetric critic. (c)~At inference the critic is discarded; the encoder and actor run deterministically.}
+\label{fig:bcrl_pipeline}
+\end{figure*}
 Higher noise causes gradual degradation ($\sigma_0 = 0.1$) or rapid collapse ($\sigma_0 = 0.3$), as shown in Fig.~\ref{fig:bcrl_ablation}.
 
 \begin{figure*}[t]
@@ -469,7 +560,7 @@ This curve captures the full clearing dynamics, including where methods diverge 
 \label{sec:results}
 \begin{table*}[t]
 \centering
-\caption{Evaluation results across 100 episodes with randomized 200-log pile configurations (mean $\pm$ std). All learned methods use raw point cloud observations processed by a PointNet encoder. RL uses a symmetric actor-critic (shared encoder); BC+RL uses an asymmetric actor-critic (frozen BC encoder for actor, state-based MLP critic).}
+\caption{Evaluation results across 100 episodes with randomized 200-log pile configurations (mean $\pm$ std). The heuristic uses privileged pose state. RL variants use a symmetric actor-critic (shared encoder provides auxiliary gradient); BC variants use a PointNet encoder with identical architecture; BC$\to$RL uses an asymmetric actor-critic (frozen BC encoder for actor, state-based MLP critic). RL fails regardless of observation type; for BC, raw PCD matches or exceeds segmented PCD across all metrics.}
 \label{tab:results}
 \setlength{\tabcolsep}{5pt}
 \begin{tabular}{@{}llcccccc@{}}
@@ -478,9 +569,12 @@ Method & Obs. & Thru.\,$g$ & Align.\,$\alpha$ & Stab.\,$\varsigma$ & Grasp succ.
 \midrule
 Heuristic & Pose & $\mathbf{9.94 \pm 1.17}$ & $\mathbf{0.918 \pm 0.031}$ & $0.797 \pm 0.018$ & $\mathbf{88.7 \pm 7.8}$ & $99.0 \pm 1.2$ & $1.0 \pm 1.1$ \\
 \addlinespace
-RL        & Raw PCD & $6.78 \pm 1.01$ & $0.758 \pm 0.072$ & $0.815 \pm 0.039$ & $53.3 \pm 8.7$ & $53.0 \pm 3.9$ & $0.6 \pm 0.6$ \\
+RL & Pose (128D) & $8.84 \pm 1.68$ & $0.908 \pm 0.040$ & $0.970 \pm 0.021$ & $38.5 \pm 13.5$ & $49.4 \pm 14.8$ & $0.0 \pm 0.2$ \\
+RL & Seg.\ PCD   & $7.04 \pm 1.06$ & $0.726 \pm 0.077$ & $0.776 \pm 0.042$ & $53.7 \pm 10.9$ & $55.2 \pm 5.4$ & $0.9 \pm 0.7$ \\
+RL & Raw PCD     & $6.78 \pm 1.01$ & $0.758 \pm 0.072$ & $0.815 \pm 0.039$ & $53.3 \pm 8.7$ & $53.0 \pm 3.9$ & $0.6 \pm 0.6$ \\
 \addlinespace
-BC        & Raw PCD & $9.32 \pm 1.12$ & $0.904 \pm 0.037$ & $0.824 \pm 0.025$ & $84.5 \pm 9.8$ & $\mathbf{98.5 \pm 5.1}$ & $\mathbf{0.7 \pm 0.7}$ \\
+BC & Seg.\ PCD   & $9.64 \pm 1.05$ & $0.907 \pm 0.028$ & $0.816 \pm 0.020$ & $70.3 \pm 10.6$ & $96.5 \pm 4.7$ & $0.9 \pm 1.0$ \\
+BC & Raw PCD     & $9.32 \pm 1.12$ & $0.904 \pm 0.037$ & $0.824 \pm 0.025$ & $84.5 \pm 9.8$ & $\mathbf{98.5 \pm 5.1}$ & $\mathbf{0.7 \pm 0.7}$ \\
 \addlinespace
 BC$\to$RL & Raw PCD & $8.65 \pm 0.97$ & $0.906 \pm 0.027$ & $\mathbf{0.947 \pm 0.016}$ & $86.3 \pm 8.5$ & $98.2 \pm 1.5$ & $1.2 \pm 0.8$ \\
 \bottomrule
@@ -503,7 +597,7 @@ BC+RL uses an asymmetric actor-critic~\cite{pinto2018asymmetric} in which the ac
 \label{sec:bcrl_perf}
 BC+RL fine-tuning improves grasp stability by 15\% while preserving BC's full-trajectory clearing ability (Table~\ref{tab:results}).
 BC+RL surpasses both BC and the privileged-state heuristic in stability by a wide margin, suggesting that RL optimizes the vertical component of grasp targets to produce more level lifts.
-Alignment remains comparable to BC, so the quality improvement is driven entirely by more stable grasps.
+Alignment remains comparable to BC, so the improvement is driven entirely by more stable grasps.
 Throughput is slightly lower, indicating that BC+RL favors more conservative, reliable grasps over maximum-throughput grasps.
 
 Both the frozen encoder and conservative noise are critical.
@@ -530,30 +624,11 @@ From-scratch RL achieves competitive per-grasp reward during training (Fig.~\ref
 However, high training reward does not translate to pile-clearing performance.
 
 To test whether observation type affects performance, we trained three RL variants with a symmetric actor-critic: privileged pose observations (128D), segmented PCD, and raw PCD.
-All achieve roughly similar clearing (Table~\ref{tab:rl_ablation}), confirming that RL's failure is fundamental to the exploration landscape rather than a limitation of the observation representation.
-In contrast, observation type does matter for BC: raw PCD outperforms segmented PCD in both clearing and success rate (Table~\ref{tab:rl_ablation}), showing that segmentation provides no benefit and slightly hurts performance.
-
-\begin{table*}[t]
-\centering
-\caption{Observation type ablation for RL and BC. All RL variants use symmetric actor-critic. BC variants use PointNet with identical architecture. Metrics are mean $\pm$ std over 100 episodes. RL fails regardless of observation type; for BC, raw PCD outperforms segmented PCD across all metrics.}
-\label{tab:rl_ablation}
-\setlength{\tabcolsep}{5pt}
-\begin{tabular}{@{}llcccccc@{}}
-\toprule
-Method & Obs. & Thru.\,$g$ & Align.\,$\alpha$ & Stab.\,$\varsigma$ & Grasp succ.\,(\%) & Clear rate\,(\%) & Knocked off\,(\%) \\
-\midrule
-RL & Pose (128D) & $8.84 \pm 1.68$ & $0.908 \pm 0.040$ & $0.970 \pm 0.021$ & $38.5 \pm 13.5$ & $49.4 \pm 14.8$ & $0.0 \pm 0.2$ \\
-RL & Seg.\ PCD   & $7.04 \pm 1.06$ & $0.726 \pm 0.077$ & $0.776 \pm 0.042$ & $53.7 \pm 10.9$ & $55.2 \pm 5.4$ & $0.9 \pm 0.7$ \\
-RL & Raw PCD     & $6.78 \pm 1.01$ & $0.758 \pm 0.072$ & $0.815 \pm 0.039$ & $53.3 \pm 8.7$ & $53.0 \pm 3.9$ & $0.6 \pm 0.6$ \\
-\addlinespace
-BC & Seg.\ PCD   & $9.64 \pm 1.05$ & $0.907 \pm 0.028$ & $0.816 \pm 0.020$ & $70.3 \pm 10.6$ & $96.5 \pm 4.7$ & $0.9 \pm 1.0$ \\
-BC & Raw PCD     & $9.32 \pm 1.12$ & $0.904 \pm 0.037$ & $0.824 \pm 0.025$ & $84.5 \pm 9.8$ & $98.5 \pm 5.1$ & $0.7 \pm 0.7$ \\
-\bottomrule
-\end{tabular}
-\end{table*}
+All achieve roughly similar clearing (Table~\ref{tab:results}), confirming that RL's failure is fundamental to the exploration landscape rather than a limitation of the observation representation.
+In contrast, observation type does matter for BC: raw PCD outperforms segmented PCD in both clearing and success rate (Table~\ref{tab:results}), showing that segmentation provides no benefit and slightly hurts performance.
 
 The RL policies converge to narrow targeting patterns that yield adequate per-grasp reward in dense configurations but fail to adapt as the pile thins.
-The best RL variant (Raw PCD) achieves only 53\% clearing with 53.3\% grasp success, compared to 98.5\% and 84.5\% for BC (Table~\ref{tab:rl_ablation}).
+The best RL variant (Raw PCD) achieves only 53\% clearing with 53.3\% grasp success, compared to 98.5\% and 84.5\% for BC (Table~\ref{tab:results}).
 
 \begin{table*}[t]
 \centering
@@ -587,11 +662,11 @@ BC$\to$RL & Pile variation & $6.97 \pm 1.63$ & $0.861 \pm 0.081$ & $0.922 \pm 0.
 
 The clearing progression (Fig.~\ref{fig:clearing_curves}) reveals a clear divergence around grasp 5--10: from-scratch RL throughput drops steadily and plateaus near 53\%, while the heuristic, BC, and BC+RL maintain similar clearing rates through the full episode. The near-identical clearing curves of BC and BC+RL confirm that RL fine-tuning preserves the expert's clearing ability while improving grasp stability (Table~\ref{tab:results}).
 
-From-scratch RL achieves competitive per-grasp reward but stalls at roughly 53\% clearing regardless of observation type (Table~\ref{tab:rl_ablation}).
+From-scratch RL achieves competitive per-grasp reward but stalls at roughly 53\% clearing regardless of observation type (Table~\ref{tab:results}).
 Because the per-grasp reward provides no direct incentive for global clearing, the policy converges to a narrow targeting pattern that yields adequate reward in dense configurations but does not adapt as the pile geometry changes through clearing.
 Once the easily accessible logs are exhausted, the fixed strategy produces missed grasps that consume the episode budget.
 This failure is not a perception limitation. RL with privileged pose observations fares no better. Rather, it is a consequence of the exploration landscape: the policy never discovers the full diversity of pile states encountered during a complete clearing trajectory.
-We also evaluated three reward shaping strategies (Table~\ref{tab:reward_ablation}): removing quality terms to simplify the reward landscape, normalizing throughput by available logs, and combining tiered clearing bonuses (at 60/75/90\%) with pile-size curriculum. All variants achieved comparable or higher per-grasp reward but none resolved the clearing plateau, suggesting that the bottleneck is exploration rather than reward design.
+We also evaluated three reward shaping strategies (Table~\ref{tab:reward_ablation}): removing alignment and stability terms to simplify the reward landscape, normalizing throughput by available logs, and combining tiered clearing bonuses (at 60/75/90\%) with pile-size curriculum. All variants achieved comparable or higher per-grasp reward but none resolved the clearing plateau, suggesting that the bottleneck is exploration rather than reward design.
 
 \begin{table}[t]
 \centering
@@ -613,12 +688,12 @@ Curriculum + bonus@60/75/90\% & TBD \\
 \end{table}
 
 BC initialization provides exactly the coverage that from-scratch RL lacks: the demonstration data spans the full clearing trajectory from dense stacks to sparse endgames~\cite{rajeswaran2018learning}.
-RL fine-tuning then optimizes per-grasp execution quality without needing to rediscover the global targeting strategy.
+RL fine-tuning then optimizes per-grasp alignment and stability without needing to rediscover the global targeting strategy.
 The stability improvement suggests that RL learns to refine the vertical positioning of grasps, producing more level lifts.
 Freezing the BC-trained encoder is critical to prevent feature drift, since the state-based critic provides no gradient signal to the visual pathway (Section~\ref{sec:bcrl}).
 The low initial noise ($\sigma_0 = 0.05$) further prevents the RL updates from overwriting the BC-learned policy.
 
-Raw point clouds achieve comparable clearing via both BC and BC+RL, matching or exceeding the segmented-PCD baseline (Table~\ref{tab:rl_ablation}).
+Raw point clouds achieve comparable clearing via both BC and BC+RL, matching or exceeding segmented PCD (Table~\ref{tab:results}).
 This has practical implications for sim-to-real transfer: removing the dependency on a trained segmentation model simplifies the perception pipeline and eliminates a potential failure mode.
 The PointNet encoder learns to extract task-relevant geometry directly from the raw depth signal.
 
