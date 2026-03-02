@@ -524,8 +524,8 @@ Higher noise causes gradual degradation ($\sigma_0 = 0.1$) or rapid collapse ($\
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=\textwidth]{episode_001_pipeline.png}
-\caption{Observation pipeline at three episode stages. Each row: (a)~RGB, (b)~depth, (c)~segmented depth, (d)~3D back-projection, (e)~FPS point cloud with predicted grasp target (green~=~hit, red~=~miss). Top: dense pile; middle: partially cleared; bottom: sparse endgame.}
+\includegraphics[width=\textwidth]{episode_001_pipeline_paper.png}
+\caption{Observation pipeline at two episode stages. Each row: (a)~RGB, (b)~depth, (c)~3D back-projection, (d)~FPS point cloud with predicted grasp target (green~=~hit, red~=~miss). Top: dense pile; bottom: sparse endgame.}
 \label{fig:pcd_pipeline}
 \end{figure*}
 
@@ -653,8 +653,8 @@ BC$\to$RL & Pile variation & $6.97 \pm 1.63$ & $0.861 \pm 0.081$ & $0.922 \pm 0.
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=\textwidth]{episode_001_progression.png}
-\caption{Grasp progression for a single BC (PCD) episode clearing 200 logs in 21 grasps. Each panel shows the FPS-downsampled point cloud with the predicted grasp target (green rectangle). Top row: early grasps into the dense pile; middle row: mid-episode with thinning pile; bottom row: endgame grasps targeting sparse remaining logs. The pile transitions from a dense ordered stack to a thin irregular layer.}
+\includegraphics[width=\textwidth]{episode_001_progression_paper.png}
+\caption{Grasp progression for a single BC (PCD) episode clearing 200 logs in 21 grasps. Each panel shows the FPS-downsampled point cloud with the predicted grasp target (green rectangle). Top row: early grasps into the dense pile; bottom row: endgame grasps targeting sparse remaining logs. The pile transitions from a dense ordered stack to a thin irregular layer.}
 \label{fig:progression}
 \end{figure*}
 

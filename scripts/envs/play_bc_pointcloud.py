@@ -1268,6 +1268,24 @@ def main():
                             bounds_max=ep_bounds_max,
                         )
 
+                        # --- Paper-compact variants (2-row, \textwidth) ---
+                        from eval_viz import save_paper_pipeline_viz, save_paper_progression_viz
+                        # Pipeline: first + last grasp (dense pile + sparse endgame)
+                        paper_rep = [trimmed[0]]
+                        if n_ep > 1:
+                            paper_rep.append(trimmed[-1])
+                        save_paper_pipeline_viz(
+                            paper_rep, episodes_done, paper_viz_dir,
+                            bounds_min=ep_bounds_min,
+                            bounds_max=ep_bounds_max,
+                        )
+                        # Progression: 2 rows x 5 cols (early + late)
+                        save_paper_progression_viz(
+                            trimmed, episodes_done, paper_viz_dir,
+                            bounds_min=ep_bounds_min,
+                            bounds_max=ep_bounds_max,
+                        )
+
                         # Reset for next episode
                         paper_episode_data = []
 
