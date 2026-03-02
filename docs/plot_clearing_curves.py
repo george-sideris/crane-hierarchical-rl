@@ -24,15 +24,15 @@ RUNS = {
     },
     "RL": {
         "json": os.path.join(REPO_ROOT, "crane_testbed/results/RL_Raw_PCD/2026-02-26_23-18-20/eval_metrics_20260301_150413.json"),
-        "color": "#d62728",   # red
+        "color": "#ff7f0e",   # orange
     },
     "BC": {
-        "json": os.path.join(REPO_ROOT, "crane_testbed/results/BC_Raw_PCD/eval_metrics_latest.json"),
+        "json": os.path.join(REPO_ROOT, "crane_testbed/results/BC_Raw_PCD/eval_metrics_20260301_224854.json"),
         "color": "#2ca02c",   # green
     },
     r"BC$\to$RL": {
-        "json": os.path.join(REPO_ROOT, "crane_testbed/results/BCRL_Raw_PCD_Sigma_0.05/2026-02-27_04-21-30/eval_metrics_latest.json"),
-        "color": "#ff7f0e",   # orange
+        "json": os.path.join(REPO_ROOT, "crane_testbed/results/BCRL_Raw_PCD_Sigma_0.05/2026-02-27_04-21-30/eval_metrics_20260301_211210.json"),
+        "color": "#d62728",   # red
     },
 }
 
