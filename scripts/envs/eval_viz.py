@@ -840,7 +840,7 @@ def save_paper_pipeline_viz(grasp_data_list, episode_idx, viz_dir,
                         transform=ax_rgb.transAxes, fontsize=7, color='gray')
         ax_rgb.text(0.02, 0.98, panel_labels[0], transform=ax_rgb.transAxes,
                     fontsize=6, fontweight='bold', va='top',
-                    bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
+)
         ax_rgb.set_xticks([])
         ax_rgb.set_yticks([])
 
@@ -852,10 +852,10 @@ def save_paper_pipeline_viz(grasp_data_list, episode_idx, viz_dir,
         im_d = ax_depth.imshow(depth_clipped, cmap='viridis',
                                vmin=depth_range[0], vmax=depth_range[1])
         cb_d = plt.colorbar(im_d, ax=ax_depth, fraction=0.046, pad=0.04)
-        cb_d.ax.tick_params(labelsize=4)
+        cb_d.ax.tick_params(labelsize=5)
         ax_depth.text(0.02, 0.98, panel_labels[1], transform=ax_depth.transAxes,
                       fontsize=6, fontweight='bold', va='top',
-                      bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
+  )
         ax_depth.set_xticks([])
         ax_depth.set_yticks([])
 
@@ -869,24 +869,24 @@ def save_paper_pipeline_viz(grasp_data_list, episode_idx, viz_dir,
             mask = np.any(base_pts != 0.0, axis=1)
             bg = base_pts[mask] if mask.any() else base_pts
             if len(bg) > 0:
-                ax_pcd.scatter(bg[:, 1], bg[:, 0], c='#aaaaaa', s=0.2, alpha=0.3, rasterized=True)
+                ax_pcd.scatter(bg[:, 1], bg[:, 0], c='#aaaaaa', s=0.3, alpha=0.3, rasterized=True)
 
         if len(log_pts) > 0:
             mask = np.any(log_pts != 0.0, axis=1)
             lp = log_pts[mask] if mask.any() else log_pts
             if len(lp) > 0:
                 sc_pcd = ax_pcd.scatter(lp[:, 1], lp[:, 0], c=lp[:, 2], cmap='viridis',
-                                        s=0.6, alpha=0.7, rasterized=True)
+                                        s=1.0, alpha=0.7, rasterized=True)
 
         if bounds_min is not None and bounds_max is not None:
             ax_pcd.set_xlim(bounds_min[1] - 0.5, bounds_max[1] + 0.5)
             ax_pcd.set_ylim(bounds_max[0] + 0.5, bounds_min[0] - 0.5)
         ax_pcd.text(0.02, 0.98, panel_labels[2], transform=ax_pcd.transAxes,
                     fontsize=6, fontweight='bold', va='top',
-                    bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
+)
         if sc_pcd is not None:
-            cb_pcd = plt.colorbar(sc_pcd, ax=ax_pcd, fraction=0.038, pad=0.04)
-            cb_pcd.ax.tick_params(labelsize=4)
+            cb_pcd = plt.colorbar(sc_pcd, ax=ax_pcd, fraction=0.046, pad=0.04)
+            cb_pcd.ax.tick_params(labelsize=5)
         ax_pcd.set_aspect('equal')
         ax_pcd.set_xticklabels([])
         ax_pcd.set_yticklabels([])
@@ -910,11 +910,11 @@ def save_paper_pipeline_viz(grasp_data_list, episode_idx, viz_dir,
 
             if floor_mask.any():
                 ax_fps.scatter(pts[floor_mask, 1], pts[floor_mask, 0],
-                               c='#aaaaaa', s=0.3, alpha=0.25, rasterized=True)
+                               c='#aaaaaa', s=0.5, alpha=0.25, rasterized=True)
             if log_mask.any():
                 sc_fps = ax_fps.scatter(pts[log_mask, 1], pts[log_mask, 0],
                                         c=pts[log_mask, 2], cmap='viridis',
-                                        s=1.2, alpha=0.7, rasterized=True)
+                                        s=2.0, alpha=0.7, rasterized=True)
 
         draw_grapple_footprint(ax_fps, y, x, np.pi / 2 - yaw, width=1.5, length=0.5,
                                success=success, alpha=0.25)
@@ -925,7 +925,7 @@ def save_paper_pipeline_viz(grasp_data_list, episode_idx, viz_dir,
             bh = bounds_max[0] - bounds_min[0]
             ax_fps.add_patch(Rectangle(
                 (bounds_min[1], bounds_max[0]), bw, -bh,
-                linewidth=0.5, edgecolor='#e67e22', facecolor='none',
+                linewidth=0.8, edgecolor='#e67e22', facecolor='none',
                 linestyle='--', alpha=0.6, zorder=3))
 
         # Result annotation
@@ -943,19 +943,19 @@ def save_paper_pipeline_viz(grasp_data_list, episode_idx, viz_dir,
         result_str = "\n".join(result_lines)
         result_color = '#27ae60' if success else '#c0392b'
         ax_fps.text(0.02, 0.98, result_str, transform=ax_fps.transAxes,
-                    fontsize=5, verticalalignment='top', color=result_color,
+                    fontsize=6, verticalalignment='top', color=result_color,
                     fontweight='bold',
-                    bbox=dict(boxstyle='round,pad=0.15', facecolor='white', alpha=0.8))
+                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8))
 
         if bounds_min is not None and bounds_max is not None:
             ax_fps.set_xlim(bounds_min[1] - 0.5, bounds_max[1] + 0.5)
             ax_fps.set_ylim(bounds_max[0] + 0.5, bounds_min[0] - 0.5)
         ax_fps.text(0.72, 0.98, panel_labels[3], transform=ax_fps.transAxes,
                     fontsize=6, fontweight='bold', va='top',
-                    bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
+)
         if sc_fps is not None:
-            cb_fps = plt.colorbar(sc_fps, ax=ax_fps, fraction=0.038, pad=0.04)
-            cb_fps.ax.tick_params(labelsize=4)
+            cb_fps = plt.colorbar(sc_fps, ax=ax_fps, fraction=0.046, pad=0.04)
+            cb_fps.ax.tick_params(labelsize=5)
         ax_fps.set_aspect('equal')
         ax_fps.set_xticklabels([])
         ax_fps.set_yticklabels([])
@@ -1019,9 +1019,9 @@ def _quadrant_result_annotation(ax, d):
     result_str = "\n".join(result_lines)
     result_color = '#27ae60' if success else '#c0392b'
     ax.text(0.02, 0.98, result_str, transform=ax.transAxes,
-            fontsize=5, verticalalignment='top', color=result_color,
+            fontsize=6, verticalalignment='top', color=result_color,
             fontweight='bold',
-            bbox=dict(boxstyle='round,pad=0.15', facecolor='white', alpha=0.8))
+            bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8))
 
 
 
@@ -1061,7 +1061,7 @@ def save_paper_pipeline_quadrant_single(grasp_data_list, episode_idx, viz_dir,
                 transform=ax.transAxes, fontsize=6, color='gray')
     ax.text(0.02, 0.98, '(a)', transform=ax.transAxes, fontsize=6,
             fontweight='bold', va='top',
-            bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
+)
     ax.set_xticks([]); ax.set_yticks([])
 
     # --- (b) Depth ---
@@ -1072,10 +1072,10 @@ def save_paper_pipeline_quadrant_single(grasp_data_list, episode_idx, viz_dir,
     im_d = ax.imshow(depth_clipped, cmap='viridis',
                      vmin=depth_range[0], vmax=depth_range[1])
     cb = plt.colorbar(im_d, ax=ax, fraction=0.046, pad=0.04)
-    cb.ax.tick_params(labelsize=3.5)
+    cb.ax.tick_params(labelsize=5)
     ax.text(0.02, 0.98, '(b)', transform=ax.transAxes, fontsize=6,
             fontweight='bold', va='top',
-            bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
+)
     ax.set_xticks([]); ax.set_yticks([])
 
     # --- (c) 3D PCD ---
@@ -1087,23 +1087,23 @@ def save_paper_pipeline_quadrant_single(grasp_data_list, episode_idx, viz_dir,
         mask = np.any(base_pts != 0.0, axis=1)
         bg = base_pts[mask] if mask.any() else base_pts
         if len(bg) > 0:
-            ax.scatter(bg[:, 1], bg[:, 0], c='#aaaaaa', s=0.15, alpha=0.3, rasterized=True)
+            ax.scatter(bg[:, 1], bg[:, 0], c='#aaaaaa', s=0.3, alpha=0.3, rasterized=True)
     if len(log_pts) > 0:
         mask = np.any(log_pts != 0.0, axis=1)
         lp = log_pts[mask] if mask.any() else log_pts
         if len(lp) > 0:
             sc_pcd = ax.scatter(lp[:, 1], lp[:, 0], c=lp[:, 2], cmap='viridis',
-                                s=0.4, alpha=0.7, rasterized=True)
+                                s=1.0, alpha=0.7, rasterized=True)
     if bounds_min is not None and bounds_max is not None:
         ax.set_xlim(bounds_min[1] - 0.5, bounds_max[1] + 0.5)
         ax.set_ylim(bounds_max[0] + 0.5, bounds_min[0] - 0.5)
     if sc_pcd is not None:
-        cb = plt.colorbar(sc_pcd, ax=ax, fraction=0.038, pad=0.04)
-        cb.ax.tick_params(labelsize=3.5)
+        cb = plt.colorbar(sc_pcd, ax=ax, fraction=0.046, pad=0.04)
+        cb.ax.tick_params(labelsize=5)
     ax.set_aspect('equal')
     ax.text(0.02, 0.98, '(c)', transform=ax.transAxes, fontsize=6,
             fontweight='bold', va='top',
-            bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
+)
     ax.set_xticklabels([]); ax.set_yticklabels([])
 
     # --- (d) FPS + prediction ---
@@ -1122,23 +1122,23 @@ def save_paper_pipeline_quadrant_single(grasp_data_list, episode_idx, viz_dir,
         log_mask = ~floor_mask
         if floor_mask.any():
             ax.scatter(pts[floor_mask, 1], pts[floor_mask, 0],
-                       c='#aaaaaa', s=0.2, alpha=0.25, rasterized=True)
+                       c='#aaaaaa', s=0.5, alpha=0.25, rasterized=True)
         if log_mask.any():
             sc_fps = ax.scatter(pts[log_mask, 1], pts[log_mask, 0],
                                 c=pts[log_mask, 2], cmap='viridis',
-                                s=0.8, alpha=0.7, rasterized=True)
+                                s=2.0, alpha=0.7, rasterized=True)
     draw_grapple_footprint(ax, y, x, np.pi / 2 - yaw, width=1.5, length=0.5,
                            success=success, alpha=0.25)
     if bounds_min is not None and bounds_max is not None:
         ax.set_xlim(bounds_min[1] - 0.5, bounds_max[1] + 0.5)
         ax.set_ylim(bounds_max[0] + 0.5, bounds_min[0] - 0.5)
     if sc_fps is not None:
-        cb = plt.colorbar(sc_fps, ax=ax, fraction=0.038, pad=0.04)
-        cb.ax.tick_params(labelsize=3.5)
+        cb = plt.colorbar(sc_fps, ax=ax, fraction=0.046, pad=0.04)
+        cb.ax.tick_params(labelsize=5)
     ax.set_aspect('equal')
     ax.text(0.72, 0.98, '(d)', transform=ax.transAxes, fontsize=6,
             fontweight='bold', va='top',
-            bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
+)
     ax.set_xticklabels([]); ax.set_yticklabels([])
     _quadrant_result_annotation(ax, d)
 
@@ -1192,7 +1192,7 @@ def save_paper_pipeline_quadrant_rgb_fps(grasp_data_list, episode_idx, viz_dir,
                     transform=ax.transAxes, fontsize=6, color='gray')
         ax.text(0.02, 0.98, lbl[0], transform=ax.transAxes, fontsize=6,
                 fontweight='bold', va='top',
-                bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
+    )
         ax.set_xticks([]); ax.set_yticks([])
 
         # --- FPS + prediction ---
@@ -1211,11 +1211,11 @@ def save_paper_pipeline_quadrant_rgb_fps(grasp_data_list, episode_idx, viz_dir,
             log_mask = ~floor_mask
             if floor_mask.any():
                 ax.scatter(pts[floor_mask, 1], pts[floor_mask, 0],
-                           c='#aaaaaa', s=0.2, alpha=0.25, rasterized=True)
+                           c='#aaaaaa', s=0.5, alpha=0.25, rasterized=True)
             if log_mask.any():
                 sc_fps = ax.scatter(pts[log_mask, 1], pts[log_mask, 0],
                                     c=pts[log_mask, 2], cmap='viridis',
-                                    s=0.8, alpha=0.7, rasterized=True)
+                                    s=2.0, alpha=0.7, rasterized=True)
         draw_grapple_footprint(ax, y, x, np.pi / 2 - yaw, width=1.5, length=0.5,
                                success=success, alpha=0.25)
         if bounds_min is not None and bounds_max is not None:
@@ -1223,10 +1223,10 @@ def save_paper_pipeline_quadrant_rgb_fps(grasp_data_list, episode_idx, viz_dir,
             ax.set_ylim(bounds_max[0] + 0.5, bounds_min[0] - 0.5)
         ax.text(0.72, 0.98, lbl[1], transform=ax.transAxes, fontsize=6,
                 fontweight='bold', va='top',
-                bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
+    )
         if sc_fps is not None:
-            cb = plt.colorbar(sc_fps, ax=ax, fraction=0.038, pad=0.04)
-            cb.ax.tick_params(labelsize=3.5)
+            cb = plt.colorbar(sc_fps, ax=ax, fraction=0.046, pad=0.04)
+            cb.ax.tick_params(labelsize=5)
         ax.set_aspect('equal')
         ax.set_xticklabels([]); ax.set_yticklabels([])
         _quadrant_result_annotation(ax, d)
@@ -1279,10 +1279,10 @@ def save_paper_pipeline_quadrant_depth_fps(grasp_data_list, episode_idx, viz_dir
         im_d = ax.imshow(depth_clipped, cmap='viridis',
                          vmin=depth_range[0], vmax=depth_range[1])
         cb = plt.colorbar(im_d, ax=ax, fraction=0.046, pad=0.04)
-        cb.ax.tick_params(labelsize=3.5)
+        cb.ax.tick_params(labelsize=5)
         ax.text(0.02, 0.98, lbl[0], transform=ax.transAxes, fontsize=6,
                 fontweight='bold', va='top',
-                bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
+    )
         ax.set_xticks([]); ax.set_yticks([])
 
         # --- FPS + prediction ---
@@ -1301,11 +1301,11 @@ def save_paper_pipeline_quadrant_depth_fps(grasp_data_list, episode_idx, viz_dir
             log_mask = ~floor_mask
             if floor_mask.any():
                 ax.scatter(pts[floor_mask, 1], pts[floor_mask, 0],
-                           c='#aaaaaa', s=0.2, alpha=0.25, rasterized=True)
+                           c='#aaaaaa', s=0.5, alpha=0.25, rasterized=True)
             if log_mask.any():
                 sc_fps = ax.scatter(pts[log_mask, 1], pts[log_mask, 0],
                                     c=pts[log_mask, 2], cmap='viridis',
-                                    s=0.8, alpha=0.7, rasterized=True)
+                                    s=2.0, alpha=0.7, rasterized=True)
         draw_grapple_footprint(ax, y, x, np.pi / 2 - yaw, width=1.5, length=0.5,
                                success=success, alpha=0.25)
         if bounds_min is not None and bounds_max is not None:
@@ -1313,10 +1313,10 @@ def save_paper_pipeline_quadrant_depth_fps(grasp_data_list, episode_idx, viz_dir
             ax.set_ylim(bounds_max[0] + 0.5, bounds_min[0] - 0.5)
         ax.text(0.72, 0.98, lbl[1], transform=ax.transAxes, fontsize=6,
                 fontweight='bold', va='top',
-                bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
+    )
         if sc_fps is not None:
-            cb = plt.colorbar(sc_fps, ax=ax, fraction=0.038, pad=0.04)
-            cb.ax.tick_params(labelsize=3.5)
+            cb = plt.colorbar(sc_fps, ax=ax, fraction=0.046, pad=0.04)
+            cb.ax.tick_params(labelsize=5)
         ax.set_aspect('equal')
         ax.set_xticklabels([]); ax.set_yticklabels([])
         _quadrant_result_annotation(ax, d)
