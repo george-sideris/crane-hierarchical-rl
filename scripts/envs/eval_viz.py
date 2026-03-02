@@ -791,7 +791,7 @@ def save_raw_episode_progression(episode_data, episode_idx, viz_dir,
     fig.tight_layout()
 
     out_path = os.path.join(viz_dir, f"episode_{episode_idx:03d}_progression.png")
-    fig.savefig(out_path, dpi=150, bbox_inches='tight', facecolor='white')
+    fig.savefig(out_path, dpi=300, bbox_inches='tight', facecolor='white')
     plt.close(fig)
     print(f"[PaperViz] Saved progression: {out_path}")
 
@@ -827,19 +827,9 @@ def save_paper_pipeline_viz(grasp_data_list, episode_idx, viz_dir,
 
     for row, d in enumerate(grasp_data_list):
         x, y, z, yaw = d["x"], d["y"], d["z"], d["yaw"]
-        step_idx = d["step_idx"]
         logs_grasped = d.get("logs_grasped")
         alignment = d.get("alignment")
         success = logs_grasped is not None and logs_grasped > 0
-
-        # Row label
-        result_tag = "HIT" if success else "MISS"
-        n_grabbed = logs_grasped if logs_grasped else 0
-        remaining = d.get("logs_remaining")
-        row_label = f"Grasp {step_idx + 1}"
-        if remaining is not None:
-            row_label += f" | {remaining} left"
-        row_label += f" | {result_tag} ({n_grabbed})"
 
         # --- (a) RGB ---
         ax_rgb = fig.add_subplot(gs[row, 0])
@@ -848,11 +838,11 @@ def save_paper_pipeline_viz(grasp_data_list, episode_idx, viz_dir,
         else:
             ax_rgb.text(0.5, 0.5, 'N/A', ha='center', va='center',
                         transform=ax_rgb.transAxes, fontsize=7, color='gray')
-        if row == 0:
-            ax_rgb.set_title(f'{panel_labels[0]} RGB', fontsize=7, fontweight='bold')
+        ax_rgb.text(0.02, 0.98, panel_labels[0], transform=ax_rgb.transAxes,
+                    fontsize=6, fontweight='bold', va='top',
+                    bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
         ax_rgb.set_xticks([])
         ax_rgb.set_yticks([])
-        ax_rgb.set_ylabel(row_label, fontsize=5.5, fontweight='bold', rotation=90, labelpad=5)
 
         # --- (b) Raw depth ---
         ax_depth = fig.add_subplot(gs[row, 1])
@@ -863,9 +853,9 @@ def save_paper_pipeline_viz(grasp_data_list, episode_idx, viz_dir,
                                vmin=depth_range[0], vmax=depth_range[1])
         cb_d = plt.colorbar(im_d, ax=ax_depth, fraction=0.046, pad=0.04)
         cb_d.ax.tick_params(labelsize=4)
-        cb_d.set_label('depth (m)', fontsize=5)
-        if row == 0:
-            ax_depth.set_title(f'{panel_labels[1]} Depth', fontsize=7, fontweight='bold')
+        ax_depth.text(0.02, 0.98, panel_labels[1], transform=ax_depth.transAxes,
+                      fontsize=6, fontweight='bold', va='top',
+                      bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
         ax_depth.set_xticks([])
         ax_depth.set_yticks([])
 
@@ -891,12 +881,12 @@ def save_paper_pipeline_viz(grasp_data_list, episode_idx, viz_dir,
         if bounds_min is not None and bounds_max is not None:
             ax_pcd.set_xlim(bounds_min[1] - 0.5, bounds_max[1] + 0.5)
             ax_pcd.set_ylim(bounds_max[0] + 0.5, bounds_min[0] - 0.5)
-        if row == 0:
-            ax_pcd.set_title(f'{panel_labels[2]} 3D points', fontsize=7, fontweight='bold')
+        ax_pcd.text(0.02, 0.98, panel_labels[2], transform=ax_pcd.transAxes,
+                    fontsize=6, fontweight='bold', va='top',
+                    bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
         if sc_pcd is not None:
             cb_pcd = plt.colorbar(sc_pcd, ax=ax_pcd, fraction=0.038, pad=0.04)
             cb_pcd.ax.tick_params(labelsize=4)
-            cb_pcd.set_label('Z (m)', fontsize=5)
         ax_pcd.set_aspect('equal')
         ax_pcd.set_xticklabels([])
         ax_pcd.set_yticklabels([])
@@ -960,18 +950,18 @@ def save_paper_pipeline_viz(grasp_data_list, episode_idx, viz_dir,
         if bounds_min is not None and bounds_max is not None:
             ax_fps.set_xlim(bounds_min[1] - 0.5, bounds_max[1] + 0.5)
             ax_fps.set_ylim(bounds_max[0] + 0.5, bounds_min[0] - 0.5)
-        if row == 0:
-            ax_fps.set_title(f'{panel_labels[3]} FPS + prediction', fontsize=7, fontweight='bold')
+        ax_fps.text(0.72, 0.98, panel_labels[3], transform=ax_fps.transAxes,
+                    fontsize=6, fontweight='bold', va='top',
+                    bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
         if sc_fps is not None:
             cb_fps = plt.colorbar(sc_fps, ax=ax_fps, fraction=0.038, pad=0.04)
             cb_fps.ax.tick_params(labelsize=4)
-            cb_fps.set_label('Z (m)', fontsize=5)
         ax_fps.set_aspect('equal')
         ax_fps.set_xticklabels([])
         ax_fps.set_yticklabels([])
 
     out_path = os.path.join(viz_dir, f"episode_{episode_idx:03d}_pipeline{suffix}.png")
-    fig.savefig(out_path, dpi=150, bbox_inches='tight', facecolor='white')
+    fig.savefig(out_path, dpi=300, bbox_inches='tight', facecolor='white')
     plt.close(fig)
     print(f"[PaperViz] Saved paper pipeline: {out_path}")
 
@@ -1034,17 +1024,6 @@ def _quadrant_result_annotation(ax, d):
             bbox=dict(boxstyle='round,pad=0.15', facecolor='white', alpha=0.8))
 
 
-def _quadrant_row_label(d):
-    """Build a concise row label string."""
-    step_idx = d["step_idx"]
-    logs_grasped = d.get("logs_grasped")
-    success = logs_grasped is not None and logs_grasped > 0
-    remaining = d.get("logs_remaining")
-    label = f"Grasp {step_idx + 1}"
-    if remaining is not None:
-        label += f" | {remaining} left"
-    return label
-
 
 def save_paper_pipeline_quadrant_single(grasp_data_list, episode_idx, viz_dir,
                                          depth_range=(1.0, 10.0),
@@ -1080,7 +1059,9 @@ def save_paper_pipeline_quadrant_single(grasp_data_list, episode_idx, viz_dir,
     else:
         ax.text(0.5, 0.5, 'N/A', ha='center', va='center',
                 transform=ax.transAxes, fontsize=6, color='gray')
-    ax.set_title('(a) RGB', fontsize=6, fontweight='bold')
+    ax.text(0.02, 0.98, '(a)', transform=ax.transAxes, fontsize=6,
+            fontweight='bold', va='top',
+            bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
     ax.set_xticks([]); ax.set_yticks([])
 
     # --- (b) Depth ---
@@ -1092,8 +1073,9 @@ def save_paper_pipeline_quadrant_single(grasp_data_list, episode_idx, viz_dir,
                      vmin=depth_range[0], vmax=depth_range[1])
     cb = plt.colorbar(im_d, ax=ax, fraction=0.046, pad=0.04)
     cb.ax.tick_params(labelsize=3.5)
-    cb.set_label('m', fontsize=4.5)
-    ax.set_title('(b) Depth', fontsize=6, fontweight='bold')
+    ax.text(0.02, 0.98, '(b)', transform=ax.transAxes, fontsize=6,
+            fontweight='bold', va='top',
+            bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
     ax.set_xticks([]); ax.set_yticks([])
 
     # --- (c) 3D PCD ---
@@ -1118,9 +1100,10 @@ def save_paper_pipeline_quadrant_single(grasp_data_list, episode_idx, viz_dir,
     if sc_pcd is not None:
         cb = plt.colorbar(sc_pcd, ax=ax, fraction=0.038, pad=0.04)
         cb.ax.tick_params(labelsize=3.5)
-        cb.set_label('Z (m)', fontsize=4.5)
     ax.set_aspect('equal')
-    ax.set_title('(c) 3D points', fontsize=6, fontweight='bold')
+    ax.text(0.02, 0.98, '(c)', transform=ax.transAxes, fontsize=6,
+            fontweight='bold', va='top',
+            bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
     ax.set_xticklabels([]); ax.set_yticklabels([])
 
     # --- (d) FPS + prediction ---
@@ -1152,14 +1135,15 @@ def save_paper_pipeline_quadrant_single(grasp_data_list, episode_idx, viz_dir,
     if sc_fps is not None:
         cb = plt.colorbar(sc_fps, ax=ax, fraction=0.038, pad=0.04)
         cb.ax.tick_params(labelsize=3.5)
-        cb.set_label('Z (m)', fontsize=4.5)
     ax.set_aspect('equal')
-    ax.set_title('(d) FPS + pred.', fontsize=6, fontweight='bold')
+    ax.text(0.72, 0.98, '(d)', transform=ax.transAxes, fontsize=6,
+            fontweight='bold', va='top',
+            bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
     ax.set_xticklabels([]); ax.set_yticklabels([])
     _quadrant_result_annotation(ax, d)
 
     out_path = os.path.join(viz_dir, f"episode_{episode_idx:03d}_pipeline{suffix}.png")
-    fig.savefig(out_path, dpi=150, bbox_inches='tight', facecolor='white')
+    fig.savefig(out_path, dpi=300, bbox_inches='tight', facecolor='white')
     plt.close(fig)
     print(f"[PaperViz] Saved quadrant (single): {out_path}")
 
@@ -1206,11 +1190,10 @@ def save_paper_pipeline_quadrant_rgb_fps(grasp_data_list, episode_idx, viz_dir,
         else:
             ax.text(0.5, 0.5, 'N/A', ha='center', va='center',
                     transform=ax.transAxes, fontsize=6, color='gray')
-        if row == 0:
-            ax.set_title(f'{lbl[0]} RGB', fontsize=6, fontweight='bold')
+        ax.text(0.02, 0.98, lbl[0], transform=ax.transAxes, fontsize=6,
+                fontweight='bold', va='top',
+                bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
         ax.set_xticks([]); ax.set_yticks([])
-        ax.set_ylabel(_quadrant_row_label(d), fontsize=4.5, fontweight='bold',
-                       rotation=90, labelpad=4)
 
         # --- FPS + prediction ---
         ax = fig.add_subplot(gs[row, 1])
@@ -1238,18 +1221,18 @@ def save_paper_pipeline_quadrant_rgb_fps(grasp_data_list, episode_idx, viz_dir,
         if bounds_min is not None and bounds_max is not None:
             ax.set_xlim(bounds_min[1] - 0.5, bounds_max[1] + 0.5)
             ax.set_ylim(bounds_max[0] + 0.5, bounds_min[0] - 0.5)
-        if row == 0:
-            ax.set_title(f'{lbl[1]} FPS + pred.', fontsize=6, fontweight='bold')
+        ax.text(0.72, 0.98, lbl[1], transform=ax.transAxes, fontsize=6,
+                fontweight='bold', va='top',
+                bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
         if sc_fps is not None:
             cb = plt.colorbar(sc_fps, ax=ax, fraction=0.038, pad=0.04)
             cb.ax.tick_params(labelsize=3.5)
-            cb.set_label('Z (m)', fontsize=4.5)
         ax.set_aspect('equal')
         ax.set_xticklabels([]); ax.set_yticklabels([])
         _quadrant_result_annotation(ax, d)
 
     out_path = os.path.join(viz_dir, f"episode_{episode_idx:03d}_pipeline{suffix}.png")
-    fig.savefig(out_path, dpi=150, bbox_inches='tight', facecolor='white')
+    fig.savefig(out_path, dpi=300, bbox_inches='tight', facecolor='white')
     plt.close(fig)
     print(f"[PaperViz] Saved quadrant (RGB+FPS): {out_path}")
 
@@ -1297,12 +1280,10 @@ def save_paper_pipeline_quadrant_depth_fps(grasp_data_list, episode_idx, viz_dir
                          vmin=depth_range[0], vmax=depth_range[1])
         cb = plt.colorbar(im_d, ax=ax, fraction=0.046, pad=0.04)
         cb.ax.tick_params(labelsize=3.5)
-        cb.set_label('m', fontsize=4.5)
-        if row == 0:
-            ax.set_title(f'{lbl[0]} Depth', fontsize=6, fontweight='bold')
+        ax.text(0.02, 0.98, lbl[0], transform=ax.transAxes, fontsize=6,
+                fontweight='bold', va='top',
+                bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
         ax.set_xticks([]); ax.set_yticks([])
-        ax.set_ylabel(_quadrant_row_label(d), fontsize=4.5, fontweight='bold',
-                       rotation=90, labelpad=4)
 
         # --- FPS + prediction ---
         ax = fig.add_subplot(gs[row, 1])
@@ -1330,18 +1311,18 @@ def save_paper_pipeline_quadrant_depth_fps(grasp_data_list, episode_idx, viz_dir
         if bounds_min is not None and bounds_max is not None:
             ax.set_xlim(bounds_min[1] - 0.5, bounds_max[1] + 0.5)
             ax.set_ylim(bounds_max[0] + 0.5, bounds_min[0] - 0.5)
-        if row == 0:
-            ax.set_title(f'{lbl[1]} FPS + pred.', fontsize=6, fontweight='bold')
+        ax.text(0.72, 0.98, lbl[1], transform=ax.transAxes, fontsize=6,
+                fontweight='bold', va='top',
+                bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.8))
         if sc_fps is not None:
             cb = plt.colorbar(sc_fps, ax=ax, fraction=0.038, pad=0.04)
             cb.ax.tick_params(labelsize=3.5)
-            cb.set_label('Z (m)', fontsize=4.5)
         ax.set_aspect('equal')
         ax.set_xticklabels([]); ax.set_yticklabels([])
         _quadrant_result_annotation(ax, d)
 
     out_path = os.path.join(viz_dir, f"episode_{episode_idx:03d}_pipeline{suffix}.png")
-    fig.savefig(out_path, dpi=150, bbox_inches='tight', facecolor='white')
+    fig.savefig(out_path, dpi=300, bbox_inches='tight', facecolor='white')
     plt.close(fig)
     print(f"[PaperViz] Saved quadrant (Depth+FPS): {out_path}")
 
@@ -1474,6 +1455,6 @@ def save_paper_progression_viz(episode_data, episode_idx, viz_dir,
     fig.tight_layout()
 
     out_path = os.path.join(viz_dir, f"episode_{episode_idx:03d}_progression{suffix}.png")
-    fig.savefig(out_path, dpi=150, bbox_inches='tight', facecolor='white')
+    fig.savefig(out_path, dpi=300, bbox_inches='tight', facecolor='white')
     plt.close(fig)
     print(f"[PaperViz] Saved paper progression: {out_path}")
