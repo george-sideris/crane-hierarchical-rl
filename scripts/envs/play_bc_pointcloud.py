@@ -1274,11 +1274,10 @@ def main():
                             save_paper_pipeline_quadrant_single,
                             save_paper_pipeline_quadrant_rgb_fps,
                             save_paper_pipeline_quadrant_depth_fps,
+                            pick_early_late_grasps,
                         )
-                        # Pipeline: first + last grasp (dense pile + sparse endgame)
-                        paper_rep = [trimmed[0]]
-                        if n_ep > 1:
-                            paper_rep.append(trimmed[-1])
+                        # Pipeline: random successful early + late grasp
+                        paper_rep = pick_early_late_grasps(trimmed)
                         save_paper_pipeline_viz(
                             paper_rep, episodes_done, paper_viz_dir,
                             bounds_min=ep_bounds_min,

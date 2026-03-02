@@ -976,6 +976,36 @@ def save_paper_pipeline_viz(grasp_data_list, episode_idx, viz_dir,
     print(f"[PaperViz] Saved paper pipeline: {out_path}")
 
 
+def pick_early_late_grasps(grasp_data_list, rng=None):
+    """Pick one random successful early grasp and one random successful late grasp.
+
+    Splits the episode into first-half (early/dense) and second-half (late/sparse).
+    Prefers successful grasps (logs_grasped > 0); falls back to any grasp in each half.
+    Returns a list of 1 or 2 grasp dicts suitable for paper_rep.
+    """
+    import random
+    if rng is None:
+        rng = random.Random()
+
+    n = len(grasp_data_list)
+    if n == 0:
+        return []
+
+    mid = max(n // 2, 1)
+    early = grasp_data_list[:mid]
+    late = grasp_data_list[mid:] if n > 1 else []
+
+    def _pick(candidates):
+        hits = [g for g in candidates if (g.get("logs_grasped") or 0) > 0]
+        pool = hits if hits else candidates
+        return rng.choice(pool)
+
+    result = [_pick(early)]
+    if late:
+        result.append(_pick(late))
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Quadrant variants (2x2, \columnwidth = 3.5 in)
 # ---------------------------------------------------------------------------

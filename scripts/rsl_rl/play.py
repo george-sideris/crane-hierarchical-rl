@@ -277,6 +277,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             save_paper_pipeline_quadrant_single,
             save_paper_pipeline_quadrant_rgb_fps,
             save_paper_pipeline_quadrant_depth_fps,
+            pick_early_late_grasps,
         )
         import numpy as np
         _use_raw_pcd = getattr(env_cfg, 'use_raw_pointcloud', False)
@@ -549,10 +550,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                                                      bounds_min=ep_bmin, bounds_max=ep_bmax)
 
                         # --- Paper-compact variants (2-row, \textwidth) ---
-                        # Pipeline: first + last grasp (dense pile + sparse endgame)
-                        paper_rep = [trimmed[0]]
-                        if n > 1:
-                            paper_rep.append(trimmed[-1])
+                        # Pipeline: random successful early + late grasp
+                        paper_rep = pick_early_late_grasps(trimmed)
                         save_paper_pipeline_viz(paper_rep, episodes_done, paper_viz_dir,
                                                 depth_range=_depth_range_viz, bounds_min=ep_bmin, bounds_max=ep_bmax)
                         # Quadrant variants (2x2, \columnwidth)
