@@ -45,7 +45,7 @@ parser.add_argument("--num_envs", type=int, default=1, help="Number of environme
 parser.add_argument("--num_episodes", type=int, default=10, help="Number of episodes to run")
 parser.add_argument("--seed", type=int, default=None, help="Random seed for deterministic evaluation")
 parser.add_argument("--domain_randomization", action="store_true", help="Enable domain randomization (variable pile sizes)")
-parser.add_argument("--obs_noise", type=float, default=0.0, help="Gaussian noise σ (meters) added to heuristic target position")
+parser.add_argument("--obs_noise", type=float, default=0.0, help="Gaussian noise σ (meters) added to heuristic target pose (yaw noise auto-derived)")
 parser.add_argument("--save_metrics", action="store_true", help="Save metrics to JSON file")
 parser.add_argument("--output_dir", type=str, default="logs/heuristic_baseline", help="Output directory for metrics")
 # Add standard AppLauncher args (--headless, --device, etc.)
@@ -80,7 +80,9 @@ def main():
     if args_cli.seed is not None:
         print(f"[Heuristic] Seed: {args_cli.seed}")
     if args_cli.obs_noise > 0:
-        print(f"[Heuristic] Observation noise σ: {args_cli.obs_noise}m")
+        import math
+        yaw_sigma = math.atan(args_cli.obs_noise / 1.5)
+        print(f"[Heuristic] Pose noise σ_pos: {args_cli.obs_noise}m, σ_yaw: {yaw_sigma:.3f} rad ({math.degrees(yaw_sigma):.1f}°)")
     print(f"[Heuristic] Running built-in heuristic FSM (target top log + optimal yaw)")
 
     # Run episodes

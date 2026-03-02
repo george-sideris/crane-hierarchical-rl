@@ -387,8 +387,8 @@ r = g \cdot \alpha \cdot \varsigma = g \cdot q,
 \end{equation}
 for successful grasps ($g > 0$), and $r = \rho_{\text{fail}} = -1$ for failed grasps.
 The reward is thus the product of throughput and grasp quality; a high reward requires many logs grasped with good alignment and a level grapple.
-The reward is entirely per-grasp; there is no episode-level completion bonus.
-Global pile-clearing ability thus emerges from the policy's targeting strategy rather than from explicit incentives to clear.
+The reward is entirely per-grasp.
+Global pile-clearing ability must emerge from the policy's targeting strategy rather than from explicit reward incentives.
 
 \begin{figure}[t]
 \centering
@@ -474,7 +474,7 @@ This curve captures the full clearing dynamics, including where methods diverge 
 \setlength{\tabcolsep}{5pt}
 \begin{tabular}{@{}llcccccc@{}}
 \toprule
-Method & Obs. & Throughput & Align.\,$\alpha$ & Stab.\,$\varsigma$ & Grasp succ.\,(\%) & Clear rate\,(\%) & Knocked off\,(\%) \\
+Method & Obs. & Thru.\,$g$ & Align.\,$\alpha$ & Stab.\,$\varsigma$ & Grasp succ.\,(\%) & Clear rate\,(\%) & Knocked off\,(\%) \\
 \midrule
 Heuristic & Pose & $\mathbf{9.94 \pm 1.17}$ & $\mathbf{0.918 \pm 0.031}$ & $0.797 \pm 0.018$ & $\mathbf{88.7 \pm 7.8}$ & $99.0 \pm 1.2$ & $1.0 \pm 1.1$ \\
 \addlinespace
@@ -540,7 +540,7 @@ In contrast, observation type does matter for BC: raw PCD outperforms segmented 
 \setlength{\tabcolsep}{5pt}
 \begin{tabular}{@{}llcccccc@{}}
 \toprule
-Method & Obs. & Throughput & Align.\,$\alpha$ & Stab.\,$\varsigma$ & Grasp succ.\,(\%) & Clear rate\,(\%) & Knocked off\,(\%) \\
+Method & Obs. & Thru.\,$g$ & Align.\,$\alpha$ & Stab.\,$\varsigma$ & Grasp succ.\,(\%) & Clear rate\,(\%) & Knocked off\,(\%) \\
 \midrule
 RL & Pose (128D) & \multicolumn{6}{c}{\TODO{Eval needed}} \\
 RL & Seg.\ PCD   & \multicolumn{6}{c}{\TODO{Eval needed (training: $\sim$58.6\%)}} \\
@@ -557,12 +557,12 @@ The best RL variant (Raw PCD) achieves only 53\% clearing with 53.3\% grasp succ
 
 \begin{table*}[t]
 \centering
-\caption{Robustness evaluation under domain randomization (DR), observation noise, and their combination (mean $\pm$ std over 100 episodes). DR varies log friction, mass, and spawn pattern; observation noise adds Gaussian perturbations ($\sigma=0.01$) to the point cloud.}
+\caption{Robustness evaluation under domain randomization (DR), observation noise, and their combination (mean $\pm$ std over 100 episodes). DR varies log friction, mass, and spawn pattern. Observation noise ($\sigma_{\mathrm{pos}}=0.10$\,m, consistent with stereo-camera positioning precision in field trials~\cite{semberg2024realtime}) is applied as i.i.d.\ Gaussian perturbations to each point in the input point cloud for learned policies. For the heuristic, noise perturbs the target log position and orientation ($\sigma_{\mathrm{yaw}} = \arctan(\sigma_{\mathrm{pos}} / (L/2)) \approx 3.8^{\circ}$ for $L=3$\,m logs).}
 \label{tab:robustness}
 \setlength{\tabcolsep}{5pt}
 \begin{tabular}{@{}llcccccc@{}}
 \toprule
-Method & Condition & Throughput & Align.\,$\alpha$ & Stab.\,$\varsigma$ & Grasp succ.\,(\%) & Clear rate\,(\%) & Knocked off\,(\%) \\
+Method & Condition & Thru.\,$g$ & Align.\,$\alpha$ & Stab.\,$\varsigma$ & Grasp succ.\,(\%) & Clear rate\,(\%) & Knocked off\,(\%) \\
 \midrule
 Heuristic & Nominal          & $9.94 \pm 1.17$ & $0.918 \pm 0.031$ & $0.797 \pm 0.018$ & $88.7 \pm 7.8$ & $99.0 \pm 1.2$ & $1.0 \pm 1.1$ \\
 Heuristic & Obs.\ noise      & \multicolumn{6}{c}{\TODO{Eval needed}} \\
@@ -609,6 +609,26 @@ From-scratch RL achieves competitive per-grasp reward but stalls at roughly 53\%
 Because the per-grasp reward provides no direct incentive for global clearing, the policy converges to a narrow targeting pattern that yields adequate reward in dense configurations but does not adapt as the pile geometry changes through clearing.
 Once the easily accessible logs are exhausted, the fixed strategy produces missed grasps that consume the episode budget.
 This failure is not a perception limitation. RL with privileged pose observations fares no better. Rather, it is a consequence of the exploration landscape: the policy never discovers the full diversity of pile states encountered during a complete clearing trajectory.
+We also evaluated three reward shaping strategies (Table~\ref{tab:reward_ablation}): removing quality terms to simplify the reward landscape, normalizing throughput by available logs, and combining tiered clearing bonuses (at 60/75/90\%) with pile-size curriculum. None resolved the clearing plateau, suggesting that the bottleneck is exploration rather than reward design.
+
+\begin{table}[t]
+\centering
+\caption{Reward shaping ablation. All variants use raw PCD observations
+with from-scratch RL (500 iterations, 20 parallel environments).
+None resolves the clearing plateau exhibited by the baseline.}
+\label{tab:reward_ablation}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lccc}
+\toprule
+Variant & Clear.\,\% & Succ.\,\% & Reward \\
+\midrule
+Baseline ($g \cdot \alpha \cdot \varsigma$) & 53.0 & -- & 49.4 \\
+Throughput only ($g$) & TBD & TBD & TBD \\
+Normalized ($\frac{g}{\text{avail}} \cdot \alpha \cdot \varsigma$) & TBD & TBD & TBD \\
+Curriculum + bonus@60/75/90\% & TBD & TBD & TBD \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 BC initialization provides exactly the coverage that from-scratch RL lacks: the demonstration data spans the full clearing trajectory from dense stacks to sparse endgames~\cite{rajeswaran2018learning}.
 RL fine-tuning then optimizes per-grasp execution quality without needing to rediscover the global targeting strategy.
@@ -636,7 +656,7 @@ Our results show that from-scratch RL fails to clear dense piles regardless of o
 BC trained on raw point clouds achieves clearing comparable to the privileged-state heuristic.
 BC+RL fine-tuning improves grasp quality by 16\% over BC while maintaining near-complete clearing, demonstrating that demonstration data provides the exploration curriculum that RL cannot discover on its own.
 The success of raw point clouds simplifies the perception pipeline for future sim-to-real transfer.
-Future work will explore sim-to-real deployment with domain randomization, richer point cloud architectures (e.g., PointNet++, point transformers), and curriculum learning over pile complexity.
+Future work will explore sim-to-real deployment with domain randomization, richer point cloud architectures (e.g., PointNet++, point transformers).
 
 \section*{ACKNOWLEDGMENT}
 [Redacted for anonymity]

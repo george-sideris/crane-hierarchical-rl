@@ -1309,6 +1309,24 @@ class CranePointCloudEnvCfg_CosSin_Raw_MR_ThroughputOnly(CraneDirectEnvCfgFull):
 
 
 ##
+# Point Cloud CosSin Raw PCD + Reward Shaping Ablation Variants
+##
+
+@configclass
+class CranePointCloudEnvCfg_CosSin_Raw_MR_Normalized(CranePointCloudEnvCfg_CosSin_Raw_MR):
+    """Raw PCD, multiplicative normalized reward: r = (g/avail)*10*α*ς."""
+    normalize_reward: bool = True
+    normalized_efficiency_scale: float = 10.0
+
+@configclass
+class CranePointCloudEnvCfg_CosSin_Raw_MR_CurrBonus(CranePointCloudEnvCfg_CosSin_Raw_MR):
+    """Raw PCD, multiplicative + curriculum + tiered clearing bonuses at 50/70/90%."""
+    clearing_bonus_scale: float = 50.0
+    clearing_bonus_thresholds: list[float] = [0.6, 0.75, 0.9]
+    curriculum_schedule = [(0, 20), (150, 60), (300, 120), (400, 200)]
+
+
+##
 # Point Cloud CosSin Raw PCD + Proportional Clearing Bonus
 ##
 
@@ -1572,6 +1590,26 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_Raw_MR_Asym,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-Raw-MR-Normalized-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_Raw_MR_Normalized,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-CosSin-Raw-MR-CurrBonus-v0",
+    entry_point="crane_pointcloud_direct_env:CranePointCloudDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_Raw_MR_CurrBonus,
         "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
     },
 )
