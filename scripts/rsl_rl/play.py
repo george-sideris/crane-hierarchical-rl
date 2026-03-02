@@ -274,6 +274,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             decode_action, save_step_viz, save_raw_pipeline_viz,
             save_raw_stacked_pipeline_viz, save_raw_episode_progression,
             save_paper_pipeline_viz, save_paper_progression_viz,
+            save_paper_pipeline_quadrant_single,
+            save_paper_pipeline_quadrant_rgb_fps,
+            save_paper_pipeline_quadrant_depth_fps,
         )
         import numpy as np
         _use_raw_pcd = getattr(env_cfg, 'use_raw_pointcloud', False)
@@ -552,6 +555,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                             paper_rep.append(trimmed[-1])
                         save_paper_pipeline_viz(paper_rep, episodes_done, paper_viz_dir,
                                                 depth_range=_depth_range_viz, bounds_min=ep_bmin, bounds_max=ep_bmax)
+                        # Quadrant variants (2x2, \columnwidth)
+                        save_paper_pipeline_quadrant_single(paper_rep, episodes_done, paper_viz_dir,
+                                                            depth_range=_depth_range_viz, bounds_min=ep_bmin, bounds_max=ep_bmax)
+                        save_paper_pipeline_quadrant_rgb_fps(paper_rep, episodes_done, paper_viz_dir,
+                                                             depth_range=_depth_range_viz, bounds_min=ep_bmin, bounds_max=ep_bmax)
+                        save_paper_pipeline_quadrant_depth_fps(paper_rep, episodes_done, paper_viz_dir,
+                                                               depth_range=_depth_range_viz, bounds_min=ep_bmin, bounds_max=ep_bmax)
                         # Progression: 2 rows x 5 cols (early + late)
                         save_paper_progression_viz(trimmed, episodes_done, paper_viz_dir,
                                                    bounds_min=ep_bmin, bounds_max=ep_bmax)

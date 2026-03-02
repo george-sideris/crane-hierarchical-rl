@@ -1269,7 +1269,12 @@ def main():
                         )
 
                         # --- Paper-compact variants (2-row, \textwidth) ---
-                        from eval_viz import save_paper_pipeline_viz, save_paper_progression_viz
+                        from eval_viz import (
+                            save_paper_pipeline_viz, save_paper_progression_viz,
+                            save_paper_pipeline_quadrant_single,
+                            save_paper_pipeline_quadrant_rgb_fps,
+                            save_paper_pipeline_quadrant_depth_fps,
+                        )
                         # Pipeline: first + last grasp (dense pile + sparse endgame)
                         paper_rep = [trimmed[0]]
                         if n_ep > 1:
@@ -1278,6 +1283,19 @@ def main():
                             paper_rep, episodes_done, paper_viz_dir,
                             bounds_min=ep_bounds_min,
                             bounds_max=ep_bounds_max,
+                        )
+                        # Quadrant variants (2x2, \columnwidth)
+                        save_paper_pipeline_quadrant_single(
+                            paper_rep, episodes_done, paper_viz_dir,
+                            bounds_min=ep_bounds_min, bounds_max=ep_bounds_max,
+                        )
+                        save_paper_pipeline_quadrant_rgb_fps(
+                            paper_rep, episodes_done, paper_viz_dir,
+                            bounds_min=ep_bounds_min, bounds_max=ep_bounds_max,
+                        )
+                        save_paper_pipeline_quadrant_depth_fps(
+                            paper_rep, episodes_done, paper_viz_dir,
+                            bounds_min=ep_bounds_min, bounds_max=ep_bounds_max,
                         )
                         # Progression: 2 rows x 5 cols (early + late)
                         save_paper_progression_viz(
