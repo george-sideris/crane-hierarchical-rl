@@ -219,13 +219,13 @@ The grapple jaws are controlled using a PD velocity law with saturation and disc
 After lifting (\texttt{LIFT}), the FSM holds the grapple at hover height and evaluates grasp outcome by measuring proximity and orientation of logs relative to the \texttt{basegrapple} body:
 \textbf{Logs grasped} ($g$): the number of active logs (i.e., logs not yet removed from the scene) whose centers lie within a proximity radius of the grapple (default 1.5\,m).
 
-\textbf{Alignment} ($\alpha$): for each grasped log $i$, we measure the angle between the grapple's jaw axis $\hat{y}_g$ and the log's length axis $\hat{y}_{\ell_i}$ via their dot product ($\hat{y}_g^\top \hat{y}_{\ell_i} = \cos\theta_a$, where $\theta_a$ is the misalignment angle).
+\textbf{Alignment} ($\alpha$): for each grasped log $i$, we measure the angle between the grapple's jaw axis $\hat{y}_g$ and the log's length axis $\hat{y}_{\ell_i}$ via their dot product ($\hat{y}_g^\top \hat{y}_{\ell_i} = \cos\theta_\alpha$, where $\theta_\alpha$ is the misalignment angle).
 Because a cylindrical log has no preferred length direction, the even exponent absorbs the sign; raising to the 8th power creates a sharp dropoff that penalizes moderate misalignment:
 \begin{equation}
     \alpha_i = \big(\hat{y}_g^\top \hat{y}_{\ell_i}\big)^{8}, \qquad \alpha = \frac{1}{g}\sum_{i=1}^{g} \alpha_i \;\in [0,1].
 \end{equation}
 
-\textbf{Stability} ($\varsigma$): the grapple's levelness after lifting, measured as $\hat{z}_g^\top \hat{z}_w = \cos\theta_s$, where $\theta_s$ is the tilt angle between the grapple's up vector and the world vertical.
+\textbf{Stability} ($\varsigma$): the grapple's levelness after lifting, measured as $\hat{z}_g^\top \hat{z}_w = \cos\theta_\varsigma$, where $\theta_\varsigma$ is the tilt angle between the grapple's up vector and the world vertical.
 Clamping to zero excludes the degenerate case of an inverted grapple; raising to the 4th power ensures high scores only when the grapple is nearly level:
 \begin{equation}
     \varsigma = \big(\max(0,\;\hat{z}_g^\top \hat{z}_w)\big)^{4} \;\in [0,1].
