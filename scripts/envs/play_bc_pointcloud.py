@@ -1268,6 +1268,41 @@ def main():
                             bounds_max=ep_bounds_max,
                         )
 
+                        # --- Paper-compact variants (2-row, \textwidth) ---
+                        from eval_viz import (
+                            save_paper_pipeline_viz, save_paper_progression_viz,
+                            save_paper_pipeline_quadrant_single,
+                            save_paper_pipeline_quadrant_rgb_fps,
+                            save_paper_pipeline_quadrant_depth_fps,
+                            pick_early_late_grasps,
+                        )
+                        # Pipeline: random successful early + late grasp
+                        paper_rep = pick_early_late_grasps(trimmed)
+                        save_paper_pipeline_viz(
+                            paper_rep, episodes_done, paper_viz_dir,
+                            bounds_min=ep_bounds_min,
+                            bounds_max=ep_bounds_max,
+                        )
+                        # Quadrant variants (2x2, \columnwidth)
+                        save_paper_pipeline_quadrant_single(
+                            paper_rep, episodes_done, paper_viz_dir,
+                            bounds_min=ep_bounds_min, bounds_max=ep_bounds_max,
+                        )
+                        save_paper_pipeline_quadrant_rgb_fps(
+                            paper_rep, episodes_done, paper_viz_dir,
+                            bounds_min=ep_bounds_min, bounds_max=ep_bounds_max,
+                        )
+                        save_paper_pipeline_quadrant_depth_fps(
+                            paper_rep, episodes_done, paper_viz_dir,
+                            bounds_min=ep_bounds_min, bounds_max=ep_bounds_max,
+                        )
+                        # Progression: 2 rows x 5 cols (early + late)
+                        save_paper_progression_viz(
+                            trimmed, episodes_done, paper_viz_dir,
+                            bounds_min=ep_bounds_min,
+                            bounds_max=ep_bounds_max,
+                        )
+
                         # Reset for next episode
                         paper_episode_data = []
 

@@ -16,12 +16,12 @@
 \usepackage{xcolor}
 \usepackage{algorithm}
 \usepackage{algorithmic}
-\usepackage{tikz}
-\usetikzlibrary{arrows.meta, positioning, fit, backgrounds, calc}
 
 % Floats & subfigures
 \usepackage{subcaption}
 \usepackage{dblfloatfix}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, fit, backgrounds, calc}
 
 \newcommand{\TODO}[1]{\textcolor{red}{\textbf{TODO:} #1}}
 
@@ -38,7 +38,7 @@ Clearing a dense pile of logs by sequential grasping is a contact-rich manipulat
 We study this problem in simulation for a forestry log loader that must clear piles of 200 logs using only depth-derived point clouds requiring no semantic segmentation.
 From-scratch reinforcement learning (RL) fails to discover effective clearing strategies regardless of observation type.
 Our framework first trains a PointNet-based policy via behavior cloning (BC) on demonstrations from a privileged-state heuristic, then fine-tunes with RL using an asymmetric actor-critic.
-BC provides the full-trajectory exploration curriculum that RL alone cannot discover, while RL optimizes per-grasp execution beyond what the demonstrator achieves.
+BC provides the full-trajectory exploration curriculum that RL alone cannot discover, while RL optimizes per-grasp quality beyond what the demonstrator achieves.
 The resulting policy maintains expert-level clearing ($98.2$\%) while improving grasp stability by $15$\% over the BC initialization, using only depth-derived point clouds.
 \end{abstract}
 
@@ -53,7 +53,7 @@ This setting is challenging because (i) the scene is densely cluttered with hund
 
 \begin{figure}[b]
 \centering
-\includegraphics[width=\columnwidth]{mill.png}
+\includegraphics[width=\columnwidth]{mill.pdf}
 \caption{A log loader clearing piles at a millyard infeed deck. Our work targets autonomous grasp selection for this task using only depth-derived point clouds.}
 \label{fig:mill}
 \end{figure}
@@ -81,9 +81,16 @@ Our main contributions are:
 \section{Related Work}
 
 \subsection{Grasping in Clutter}
-Learning-based grasp detection has progressed from single isolated objects to cluttered, multi-object scenes, with applications spanning industrial bin picking of manufactured parts~\cite{mahler2017dexnet}, warehouse depalletizing~\cite{zeng2018learning}, and natural-resource handling such as forestry log loading~\cite{wallin2024multilog}.
-Deep grasp prediction networks~\cite{morrison2018closing, kumra2017robotic} predict grasp pose directly from visual input.
-Sequential decluttering has been studied in bin picking~\cite{mahler2017dexnet, zeng2018learning}, including learning grasp sequences that account for how each pick changes the scene~\cite{mahler2017sequential}.
+Learning-based grasp detection has progressed from single isolated objects to cluttered, multi-object scenes.                                       
+Deep grasp prediction networks predict grasp pose directly from depth images~\cite{morrison2018closing, kumra2017robotic}, and large-scale
+synthetic datasets have enabled robust grasp planning without real-world
+training data~\cite{mahler2017dexnet}.
+Sequential decluttering has been studied in bin picking, where learned
+policies account for how each pick changes the
+heap~\cite{mahler2017sequential} and pushing is combined with grasping to
+handle dense clutter~\cite{zeng2018learning}.
+Applications extend to natural-resource handling such as forestry log loading~\cite{wallin2024multilog}.
+
 However, these works typically involve heterogeneous objects of varied shape and size in loose arrangements, where clutter arises from random placement rather than dense packing.
 The grasping primitive is almost always a precision or pinch grasp that isolates a single target object.
 Our setting differs in important ways: we perform power grasps from dense piles of cylindrical logs of uniform geometry that are initially stacked in ordered layers.
@@ -219,26 +226,28 @@ The grapple jaws are controlled using a PD velocity law with saturation and disc
 After lifting (\texttt{LIFT}), the FSM holds the grapple at hover height and evaluates grasp outcome by measuring proximity and orientation of logs relative to the \texttt{basegrapple} body:
 \textbf{Logs grasped} ($g$): the number of active logs (i.e., logs not yet removed from the scene) whose centers lie within a proximity radius of the grapple (default 1.5\,m).
 
-\textbf{Alignment} ($\alpha$): for each grasped log $i$, we measure the angle between the grapple's jaw axis $\hat{y}_g$ and the log's length axis $\hat{y}_{\ell_i}$ via their dot product ($\hat{y}_g^\top \hat{y}_{\ell_i} = \cos\theta_\alpha$, where $\theta_\alpha$ is the misalignment angle).
+\textbf{Alignment} ($\alpha$): for each grasped log $i$, we measure the angle between the grapple's jaw axis $\hat{y}_g$ and the log's length axis $\hat{y}_{\ell_i}$ via their dot product ($\hat{y}_g^\top \hat{y}_{\ell_i} = \cos\theta_a$, where $\theta_a$ is the misalignment angle).
 Because a cylindrical log has no preferred length direction, the even exponent absorbs the sign; raising to the 8th power creates a sharp dropoff that penalizes moderate misalignment:
 \begin{equation}
     \alpha_i = \big(\hat{y}_g^\top \hat{y}_{\ell_i}\big)^{8}, \qquad \alpha = \frac{1}{g}\sum_{i=1}^{g} \alpha_i \;\in [0,1].
 \end{equation}
 
-\textbf{Stability} ($\varsigma$): the grapple's levelness after lifting, measured as $\hat{z}_g^\top \hat{z}_w = \cos\theta_\varsigma$, where $\theta_\varsigma$ is the tilt angle between the grapple's up vector and the world vertical.
+\textbf{Stability} ($\varsigma$): the grapple's levelness after lifting, measured as $\hat{z}_g^\top \hat{z}_w = \cos\theta_s$, where $\theta_s$ is the tilt angle between the grapple's up vector and the world vertical.
 Clamping to zero excludes the degenerate case of an inverted grapple; raising to the 4th power ensures high scores only when the grapple is nearly level:
 \begin{equation}
     \varsigma = \big(\max(0,\;\hat{z}_g^\top \hat{z}_w)\big)^{4} \;\in [0,1].
 \end{equation}
+We define \textbf{grasp quality} as the product $q = \alpha \cdot \varsigma \in [0,1]$, capturing how well-aligned and stable a grasp is independently of how many logs were captured.
+
 Logs identified as grasped are marked inactive and teleported out of the scene.
 Logs that leave the workspace bounds during a grasp are removed and excluded from the grasp count $g$.
 Figure~\ref{fig:grasp_geometry} visualizes the shaped score curves for alignment and stability.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\columnwidth]{outcome_scores.pdf}
-% TODO: Add geometric diagram panel (crane/grapple with coordinate frames, action space bounding box) alongside the score curves.
-\caption{Grasp geometry and action space. Left: coordinate frames used to compute alignment ($\alpha$) and stability ($\varsigma$). The alignment score measures parallelism between the grapple jaw axis $\hat{y}_g$ and the log length axis $\hat{y}_\ell$; stability measures the grapple's levelness via $\hat{z}_g^\top \hat{z}_w$. Right: the 3D workspace bounds define the policy's action space over the rack.}
+\includegraphics[width=\columnwidth]{outcomes.png}
+
+\caption{Coordinate frames used to compute alignment ($\alpha$) and stability ($\varsigma$). The alignment score measures parallelism between the grapple jaw axis $\hat{y}_g$ and the log length axis $\hat{y}_\ell$; stability measures the grapple's levelness via $\hat{z}_g^\top \hat{z}_w$.}
 \label{fig:grasp_geometry}
 \end{figure}
 
@@ -324,13 +333,40 @@ We use BC~\cite{pomerleau1988alvinn} to train a policy from expert demonstration
 We collect demonstration pairs $(o_t, a_t)$ from successful expert grasps only (failed grasps are discarded), where $o_t$ is the point cloud observation and $a_t$ is the expert action in the pre-squashing space (positions via $\mathrm{arctanh}$, yaw via $\cos 2\psi, \sin 2\psi$ as described in Section~\ref{sec:actions}).
 
 The policy uses a PointNet encoder~\cite{qi2017pointnet}.
-A shared per-point MLP $h: \mathbb{R}^3 \to \mathbb{R}^{256}$ (layers $3 \!\to\! 64 \!\to\! 128 \!\to\! 256$ with batch normalization and ELU activations) maps each point independently; a symmetric max-pool aggregates the per-point features, and a post-pooling fully connected layer ($256 \!\to\! 256$, BN, ELU) yields the global latent vector:
+A shared per-point MLP $h: \mathbb{R}^3 \to \mathbb{R}^{256}$ (layers $3 \!\to\! 64 \!\to\! 128 \!\to\! 256$ with batch normalization and ELU activations) maps each point independently; a symmetric max-pool aggregates the per-point features into a global latent vector:
 \begin{equation}
-    \mathbf{z} = f_{\mathrm{fc}}\!\Big(\max_{i=1,\ldots,N_p} h\!\big(o_t^{(i)}\big)\Big) \;\in \mathbb{R}^{256},
+    \mathbf{z} = \max_{i=1,\ldots,N_p} h\!\big(o_t^{(i)}\big) \;\in \mathbb{R}^{256},
 \end{equation}
 where $o_t^{(i)} \in \mathbb{R}^3$ is the $i$-th point in the observation.
 An actor MLP $\mu_\theta: \mathbb{R}^{256} \to \mathbb{R}^{5}$ (layers $256 \!\to\! 128 \!\to\! 64 \!\to\! 5$) maps the latent to the action $\tilde{a}_t = \mu_\theta(\mathbf{z})$.
 For the privileged-pose ablation, we replace the PointNet encoder with a three-layer MLP ($128 \!\to\! 256 \!\to\! 128 \!\to\! 64$) with ELU activations.
+
+Table~\ref{tab:architecture} summarizes the network architecture for both observation types.
+
+\begin{table}[t]
+\centering
+\caption{Network architectures. All hidden layers use ELU activations. The PointNet encoder applies batch normalization. All policies output 5D actions: $(x,y,z,\cos 2\psi,\sin 2\psi)$.}
+\label{tab:architecture}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lp{2.4cm}p{2.4cm}p{2.0cm}@{}}
+\toprule
+& \textbf{BC / RL (PCD)} & \textbf{BC+RL (PCD)} & \textbf{RL (Pose)} \\
+\midrule
+Encoder
+  & PointNet: $3\!\to\!64\!\to\!128\!\to\!256$, BN, max-pool
+  & Same (frozen, init from BC)
+  & MLP: $128\!\to\!256\!\to\!128\!\to\!64$ \\[3pt]
+Actor
+  & $256\!\to\!128\!\to\!64\!\to\!5$
+  & Same (init from BC)
+  & Shared enc $\to$ $64\!\to\!5$ \\[3pt]
+Critic
+  & PointNet + MLP head
+  & MLP: $128\!\to\!256\!\to\!128\!\to\!1$ (state)
+  & MLP: $256\!\to\!128\!\to\!64\!\to\!1$ \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 We apply dropout (rate 0.2) after the encoder.
 The BC objective minimizes the mean-squared error between the predicted and expert actions over a dataset $\mathcal{D}$ of successful grasps:
@@ -363,10 +399,10 @@ Each iteration collects $N_{\text{env}} \times 4$ grasp cycles (one step per cyc
 The outcome components $(g,\alpha,\varsigma)$ from Section~\ref{sec:outcome} define the scalar reward:
 \label{eq:reward}
 \begin{equation}
-r = g \cdot \alpha \cdot \varsigma,
+r = g \cdot \alpha \cdot \varsigma = g \cdot q,
 \end{equation}
 for successful grasps ($g > 0$), and $r = \rho_{\text{fail}} = -1$ for failed grasps.
-The reward is thus the product of throughput, alignment, and stability; a high reward requires many logs grasped with good alignment and a level grapple.
+The reward is thus the product of throughput and grasp quality; a high reward requires many logs grasped with good alignment and a level grapple.
 The reward is entirely per-grasp.
 Global pile-clearing ability must emerge from the policy's targeting strategy rather than from explicit reward incentives.
 
@@ -392,7 +428,7 @@ into its per-grasp components.}
 \label{sec:bcrl}
 To combine BC's full-trajectory coverage with RL's ability to optimize per-grasp metrics, we initialize a PPO agent from the trained BC policy and fine-tune with on-policy experience~\cite{rajeswaran2018learning, nair2018overcoming}.
 
-The BC actor weights (PointNet encoder and actor MLP) are loaded into the PPO actor; the critic is initialized randomly and the optimizer starts fresh (Fig.~\ref{fig:bcrl_pipeline}).
+The BC actor weights (PointNet encoder and actor MLP) are loaded into the PPO actor; the critic is initialized randomly and the optimizer starts fresh.
 We use an \emph{asymmetric actor-critic}~\cite{pinto2018asymmetric}: the actor observes the raw point cloud (same as BC), while the critic is a trainable MLP that receives the privileged 128D pose state vector (top-$K$ log poses).
 This asymmetry allows the critic to learn a more accurate value function from compact state information, while the actor retains the vision-based input it will use at deployment.
 
@@ -453,7 +489,7 @@ All other PPO hyperparameters remain identical to the from-scratch RL configurat
 \node[trainable, below=0.25cm of b_state] (b_cenc)
   {Critic Encoder\\$128\!\to\!256\!\to\!256$\\ELU};
 \node[trainable, below=0.25cm of b_cenc] (b_cmlp)
-  {Critic MLP\\$256\!\to\!128\!\to\!64\!\to\!1$\\ELU};
+  {Critic MLP\\$256\!\to\!128\!\to\!64\!\to\!1$\\ELU $\to V(s)$};
 % PPO node spanning both columns (anchored below deepest column, centered)
 \path (b_policy.south) ++(0,-0.5) coordinate (ppo_y);
 \path (b_pcd.center) -- (b_state.center) coordinate[midway] (ppo_x);
@@ -515,19 +551,24 @@ All other PPO hyperparameters remain identical to the from-scratch RL configurat
 \end{figure*}
 Higher noise causes gradual degradation ($\sigma_0 = 0.1$) or rapid collapse ($\sigma_0 = 0.3$), as shown in Fig.~\ref{fig:bcrl_ablation}.
 
-\begin{figure*}[t]
-\centering
-\TODO{Insert screenshot of multiple parallel environments, each showing a crane above a rack with 200 logs in different randomized pile configurations (varying spawn patterns, row jitter, layer offsets). Should convey the domain randomization and parallelized training setup.}
-\caption{The grasp-and-remove crane environment. Each parallel environment contains a log loader crane positioned above a rack with 200 cylindrical logs spawned in randomized configurations. At each step, the policy selects a grasp target and a fixed FSM controller executes the pick sequence.}
+\begin{figure*}[t]                                                                                                                    
+\centering                         
+\includegraphics[width=\textwidth]{crane_env.png}                                                                             
+\caption{The grasp-and-remove crane environment. From left to right: parallelized training environments in Isaac Sim, each containing
+a log loader crane above a rack of 200 logs in randomized configurations; a single environment showing the relevant coordinate frames 
+and the action-space bounding box (wireframe); the crane link structure; the passive joints and grapple yaw angle. At each decision
+step the policy selects a grasp target within the action bounds, and a finite-state-machine controller executes the pick sequence.}
 \label{fig:environment}
 \end{figure*}
 
-\begin{figure*}[t]
-\centering
-\includegraphics[width=\textwidth]{episode_001_pipeline_paper.png}
-\caption{Observation pipeline at two episode stages. Each row: (a)~RGB, (b)~depth, (c)~3D back-projection, (d)~FPS point cloud with predicted grasp target (green~=~hit, red~=~miss). Top: dense pile; bottom: sparse endgame.}
-\label{fig:pcd_pipeline}
-\end{figure*}
+ \begin{figure}[t]                                                                                                                     
+  \centering                                                                                                                          
+  \includegraphics[width=\columnwidth]{episode_001_pipeline_quad_single.png}                                                            
+  \caption{Observation pipeline for a single grasp: RGB, raw depth, 3D back-projection in the crane base frame, and FPS-downsampled     
+  point cloud with the predicted grasp target and action-space bounds (dashed box).}                                                                 
+  \label{fig:pcd_pipeline}                                                                                                            
+  \end{figure}
+
 
 \section{Experiments}
 \subsection{Setup}
@@ -597,7 +638,7 @@ BC+RL uses an asymmetric actor-critic~\cite{pinto2018asymmetric} in which the ac
 \label{sec:bcrl_perf}
 BC+RL fine-tuning improves grasp stability by 15\% while preserving BC's full-trajectory clearing ability (Table~\ref{tab:results}).
 BC+RL surpasses both BC and the privileged-state heuristic in stability by a wide margin, suggesting that RL optimizes the vertical component of grasp targets to produce more level lifts.
-Alignment remains comparable to BC, so the improvement is driven entirely by more stable grasps.
+Alignment remains comparable to BC, so the quality improvement is driven entirely by more stable grasps.
 Throughput is slightly lower, indicating that BC+RL favors more conservative, reliable grasps over maximum-throughput grasps.
 
 Both the frozen encoder and conservative noise are critical.
@@ -651,6 +692,12 @@ BC$\to$RL & Pile variation & $6.97 \pm 1.63$ & $0.861 \pm 0.081$ & $0.922 \pm 0.
 \end{tabular}
 \end{table*}
 
+% \begin{figure*}[t]
+% \centering
+% \includegraphics[width=\textwidth]{episode_001_progression.png}
+% \caption{Grasp progression for a single BC (PCD) episode clearing 200 logs in 21 grasps. Each panel shows the FPS-downsampled point cloud with the predicted grasp target (green rectangle). Top row: early grasps into the dense pile; middle row: mid-episode with thinning pile; bottom row: endgame grasps targeting sparse remaining logs. The pile transitions from a dense ordered stack to a thin irregular layer.}
+% \label{fig:progression}
+% \end{figure*}
 
 \section{Discussion and Limitations}
 
@@ -660,7 +707,7 @@ From-scratch RL achieves competitive per-grasp reward but stalls at roughly 53\%
 Because the per-grasp reward provides no direct incentive for global clearing, the policy converges to a narrow targeting pattern that yields adequate reward in dense configurations but does not adapt as the pile geometry changes through clearing.
 Once the easily accessible logs are exhausted, the fixed strategy produces missed grasps that consume the episode budget.
 This failure is not a perception limitation. RL with privileged pose observations fares no better. Rather, it is a consequence of the exploration landscape: the policy never discovers the full diversity of pile states encountered during a complete clearing trajectory.
-We also evaluated three reward shaping strategies (Table~\ref{tab:reward_ablation}): removing alignment and stability terms to simplify the reward landscape, normalizing throughput by available logs, and combining tiered clearing bonuses (at 60/75/90\%) with pile-size curriculum. All variants achieved comparable or higher per-grasp reward but none resolved the clearing plateau, suggesting that the bottleneck is exploration rather than reward design.
+We also evaluated three reward shaping strategies (Table~\ref{tab:reward_ablation}): removing quality terms to simplify the reward landscape, normalizing throughput by available logs, and combining tiered clearing bonuses (at 60/75/90\%) with pile-size curriculum. All variants achieved comparable or higher per-grasp reward but none resolved the clearing plateau, suggesting that the bottleneck is exploration rather than reward design.
 
 \begin{table}[t]
 \centering
@@ -682,7 +729,7 @@ Curriculum + bonus@60/75/90\% & TBD \\
 \end{table}
 
 BC initialization provides exactly the coverage that from-scratch RL lacks: the demonstration data spans the full clearing trajectory from dense stacks to sparse endgames~\cite{rajeswaran2018learning}.
-RL fine-tuning then optimizes per-grasp alignment and stability without needing to rediscover the global targeting strategy.
+RL fine-tuning then optimizes per-grasp execution quality without needing to rediscover the global targeting strategy.
 The stability improvement suggests that RL learns to refine the vertical positioning of grasps, producing more level lifts.
 Freezing the BC-trained encoder is critical to prevent feature drift, since the state-based critic provides no gradient signal to the visual pathway (Section~\ref{sec:bcrl}).
 The low initial noise ($\sigma_0 = 0.05$) further prevents the RL updates from overwriting the BC-learned policy.
