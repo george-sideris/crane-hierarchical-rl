@@ -8,7 +8,7 @@
 # Copyright (c) 2022-2025
 
 from __future__ import annotations
-import os, math, argparse
+import os, math, argparse, collections, statistics
 from typing import List, Tuple, Optional, Sequence
 
 import numpy as np
@@ -925,6 +925,49 @@ class CraneDirectEnvCfgFull(DirectRLEnvCfg):
         height=360,
     )
 
+    # Video recording configuration
+    record_video: bool = False          # Enable in-loop frame capture for video export
+    video_capture_interval: int = 4     # Capture one frame every N physics steps
+    # World-space overview camera: isometric view positioned to see all envs at once.
+    # For num_envs=4 (2x2 grid, env_spacing=12), envs span ~±6m.
+    # Tune pos for more/fewer envs; increase distance for larger grids.
+    overview_camera_cfg: TiledCameraCfg = TiledCameraCfg(
+        prim_path="/World/envs/env_.*/OverviewCamera",
+        offset=TiledCameraCfg.OffsetCfg(
+            # Original overview angle (produced bcrl_overview.mp4)
+            pos=(-3.0, -5.0, 10.0),
+            rot=(0.864, 0.257, -0.131, -0.413),
+            convention="opengl"
+        ),
+        data_types=["rgb"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=5.0,
+            focus_distance=40.0,
+            horizontal_aperture=14.0,
+            clipping_range=(0.5, 150.0)
+        ),
+        width=1280,
+        height=720,
+    )
+    # Side-view camera: eye-level view of grapple during transport for stability comparison
+    sideview_camera_cfg: TiledCameraCfg = TiledCameraCfg(
+        prim_path="/World/envs/env_.*/SideviewCamera",
+        offset=TiledCameraCfg.OffsetCfg(
+            pos=(0.0, -4.0, 5.0),   # Side of crane, eye-level with grapple during transport
+            rot=(0.924, 0.383, 0.0, 0.0),  # Looking slightly up toward grapple area
+            convention="opengl"
+        ),
+        data_types=["rgb"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=8.0,
+            focus_distance=6.0,
+            horizontal_aperture=10.0,
+            clipping_range=(0.5, 50.0)
+        ),
+        width=640,
+        height=360,
+    )
+
 
 # ===== Env =====
 class CraneDirectEnvFull(DirectRLEnv):
@@ -1243,6 +1286,7 @@ class CraneDirectEnvFull(DirectRLEnv):
         self._episode_stability_sum_weighted = torch.zeros(self.num_envs, device=self.device, dtype=torch.float32)  # Sum of (logs * stability)
         self._prev_grasp_stability = torch.zeros(self.num_envs, device=self.device, dtype=torch.float32)  # Last grasp stability
         self._last_clearing_bonus = torch.zeros(self.num_envs, device=self.device, dtype=torch.float32)  # Last clearing bonus given
+        self._completed_ep_returns = collections.deque(maxlen=100)  # Rolling buffer of completed-episode returns
 
         # Logs available at target position (for normalized reward computation)
         self._logs_available_at_target = torch.zeros(self.num_envs, device=self.device, dtype=torch.int32)
@@ -1325,11 +1369,13 @@ class CraneDirectEnvFull(DirectRLEnv):
 
         self._cycle_complete_this_step = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
 
+        _record = getattr(self.cfg, 'record_video', False)
+        _capture_interval = getattr(self.cfg, 'video_capture_interval', 4)
+
         for step_count in range(MAX_STEPS):
             # Step physics simulation
-            # Only render during loop if GUI is open (for visual debugging)
-            # Camera sensors are updated once at end of cycle by the wrapper, not every 4 steps
-            should_render = self.sim.has_gui() and (step_count % 4 == 0)
+            # Only render during loop if GUI is open (for visual debugging) or recording video
+            should_render = (self.sim.has_gui() or _record) and (step_count % _capture_interval == 0)
             self.sim.step(render=should_render)
 
             # Update buffers
@@ -1340,6 +1386,47 @@ class CraneDirectEnvFull(DirectRLEnv):
 
             # Update heuristic state machine (handles grasp evaluation and transition to HOVER_UP)
             self._heuristic_step()
+
+            # Capture video frames — stream directly to disk via imageio writers
+            if _record and should_render:
+                # Policy view: tile all per-env camera frames into a grid
+                if self._camera is not None:
+                    self._camera.update(self.physics_dt)
+                    rgb = self._camera.data.output.get("rgb")
+                    if rgb is not None and rgb.shape[0] > 0:
+                        frames_np = rgb[:, :, :, :3].cpu().numpy()  # (N, H, W, 3)
+                        n = frames_np.shape[0]
+                        if n == 1:
+                            tiled = frames_np[0]
+                        else:
+                            cols = math.ceil(math.sqrt(n))
+                            rows_grid = math.ceil(n / cols)
+                            fH, fW = frames_np.shape[1], frames_np.shape[2]
+                            tiled = np.zeros((rows_grid * fH, cols * fW, 3), dtype=frames_np.dtype)
+                            for i, f in enumerate(frames_np):
+                                r, c = i // cols, i % cols
+                                tiled[r*fH:(r+1)*fH, c*fW:(c+1)*fW] = f
+                        if self._video_writer is not None:
+                            self._video_writer.append_data(tiled)
+                            self._video_frame_count += 1
+                # Overview: single world-space camera frame
+                if self._overview_camera is not None:
+                    self._overview_camera.update(self.physics_dt)
+                    rgb_ov = self._overview_camera.data.output.get("rgb")
+                    if rgb_ov is not None and rgb_ov.shape[0] > 0:
+                        frame_ov = rgb_ov[0, :, :, :3].cpu().numpy()
+                        if self._overview_writer is not None:
+                            self._overview_writer.append_data(frame_ov)
+                            self._overview_frame_count += 1
+                # Sideview: eye-level camera for stability comparison
+                if self._sideview_camera is not None:
+                    self._sideview_camera.update(self.physics_dt)
+                    rgb_sv = self._sideview_camera.data.output.get("rgb")
+                    if rgb_sv is not None and rgb_sv.shape[0] > 0:
+                        frame_sv = rgb_sv[0, :, :, :3].cpu().numpy()
+                        if self._sideview_writer is not None:
+                            self._sideview_writer.append_data(frame_sv)
+                            self._sideview_frame_count += 1
 
             # Exit as soon as all envs have completed their grasp
             if self._cycle_complete_this_step.all():
@@ -1417,6 +1504,8 @@ class CraneDirectEnvFull(DirectRLEnv):
         # Reset terminated envs
         reset_ids = terminated.nonzero(as_tuple=False).squeeze(-1)
         if len(reset_ids) > 0:
+            # Cache completed-episode returns before reset zeroes them
+            self._completed_ep_returns.extend(self._episode_return[reset_ids].tolist())
             self._reset_idx(reset_ids)
 
         # Periodic garbage collection to prevent memory leaks during long training runs
@@ -1488,10 +1577,30 @@ class CraneDirectEnvFull(DirectRLEnv):
 
         # Camera setup (if enabled)
         self._camera = None
-        if getattr(self.cfg, 'enable_camera', False):
+        if getattr(self.cfg, 'enable_camera', False) or getattr(self.cfg, 'record_video', False):
             self._camera = TiledCamera(self.cfg.camera_cfg)
             self.scene.sensors["camera"] = self._camera
             print(f"[INFO]: Camera enabled - {self.cfg.camera_cfg.width}x{self.cfg.camera_cfg.height}, data_types={self.cfg.camera_cfg.data_types}")
+
+        # Overview/sideview cameras and streaming video writers (for video recording)
+        self._overview_camera = None
+        self._sideview_camera = None
+        self._video_writer = None       # imageio writer for policy-view
+        self._overview_writer = None    # imageio writer for overview
+        self._sideview_writer = None    # imageio writer for sideview
+        self._video_frame_count = 0
+        self._overview_frame_count = 0
+        self._sideview_frame_count = 0
+        if getattr(self.cfg, 'record_video', False):
+            self._overview_camera = TiledCamera(self.cfg.overview_camera_cfg)
+            self._sideview_camera = TiledCamera(self.cfg.sideview_camera_cfg)
+            # NOTE: do NOT add to scene.sensors — world-space camera has 1 instance
+            # but scene.reset() would pass multi-env ids causing index OOB.
+            # We update it manually in the inner loop instead.
+            print(f"[INFO]: Overview camera enabled for video recording - "
+                  f"{self.cfg.overview_camera_cfg.width}x{self.cfg.overview_camera_cfg.height}")
+            print(f"[INFO]: Sideview camera enabled for video recording - "
+                  f"{self.cfg.sideview_camera_cfg.width}x{self.cfg.sideview_camera_cfg.height}")
 
         # done
         self._bootstrap_done = True
@@ -2712,8 +2821,12 @@ class CraneDirectEnvFull(DirectRLEnv):
                 torch.ones_like(total_logs)  # Default to 1.0 (stable) if no logs
             ).mean().item()
 
-            # Episode return (cumulative reward)
-            episode_return = self._episode_return.mean().item()
+            # Episode return (cumulative reward) — use completed-episode buffer
+            # to avoid bias from mid-episode partial sums and just-reset zeros
+            if len(self._completed_ep_returns) > 0:
+                episode_return = statistics.mean(self._completed_ep_returns)
+            else:
+                episode_return = self._episode_return.mean().item()
 
             # Pile clearing percentage
             if hasattr(self, '_per_env_log_counts') and self._per_env_log_counts is not None:

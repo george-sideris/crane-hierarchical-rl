@@ -39,6 +39,11 @@ parser.add_argument("--raw_pcd", action="store_true", help="Use raw (unmasked) p
 parser.add_argument("--seed", type=int, default=None, help="Random seed for deterministic evaluation")
 parser.add_argument("--obs_noise", type=float, default=0.0, help="Gaussian noise σ added to PCD coordinates (meters)")
 parser.add_argument("--action_noise", type=float, default=0.0, help="Gaussian noise σ added to policy action output")
+parser.add_argument("--record_video", action="store_true", help="Record video frames during episode (requires --num_envs 1)")
+parser.add_argument("--video_out", type=str, default="bc_policy_view.mp4", help="Output path for policy-view video")
+parser.add_argument("--overview_out", type=str, default="bc_overview.mp4", help="Output path for overview video")
+parser.add_argument("--sideview_out", type=str, default="bc_sideview.mp4", help="Output path for sideview video")
+parser.add_argument("--video_fps", type=int, default=30, help="Output video frame rate")
 args_cli, _ = parser.parse_known_args()
 
 # IsaacLab imports
@@ -203,6 +208,22 @@ def decode_action(raw_action, min_bounds, max_bounds):
     else:
         yaw = float(np.tanh(a[3]) * (np.pi / 2))
     return x, y, z, yaw
+
+
+def _write_video(frames: list, out_path: str, fps: int, label: str = "video"):
+    """Write a list of (H, W, 3) uint8 numpy frames to an MP4 using imageio."""
+    if not frames:
+        print(f"[Video] No {label} frames captured — skipping.")
+        return
+    try:
+        import imageio
+        writer = imageio.get_writer(out_path, fps=fps, codec="libx264", quality=8)
+        for frame in frames:
+            writer.append_data(frame)
+        writer.close()
+        print(f"[Video] Saved {len(frames)} {label} frames → {out_path}")
+    except Exception as e:
+        print(f"[Video] Failed to write {label} video: {e}")
 
 
 def save_step_viz(points_np, x, y, z, yaw, step_idx, viz_dir,
@@ -913,6 +934,20 @@ def main():
     cfg.enable_domain_randomization = args_cli.domain_randomization
     if args_cli.seed is not None:
         cfg.seed = args_cli.seed
+    if args_cli.record_video:
+        assert args_cli.num_envs == 1, "--record_video requires --num_envs 1"
+        cfg.record_video = True
+        cfg.camera_cfg.data_types = ["rgb", "depth", "semantic_segmentation"]
+        from datetime import datetime
+        _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        _media_dir = "/workspace/crane_testbed/media"
+        os.makedirs(_media_dir, exist_ok=True)
+        if args_cli.video_out == "bc_policy_view.mp4":
+            args_cli.video_out = f"{_media_dir}/bc_policy_view_{_ts}.mp4"
+        if args_cli.overview_out == "bc_overview.mp4":
+            args_cli.overview_out = f"{_media_dir}/bc_overview_{_ts}.mp4"
+        if args_cli.sideview_out == "bc_sideview.mp4":
+            args_cli.sideview_out = f"{_media_dir}/bc_sideview_{_ts}.mp4"
     cfg.sim.physx.solver_type = 1
     cfg.sim.physx.enable_stabilization = True
 
@@ -925,6 +960,20 @@ def main():
         print(f"[Play] Observation noise σ: {args_cli.obs_noise} m")
     if args_cli.action_noise > 0:
         print(f"[Play] Action noise σ: {args_cli.action_noise}")
+
+    # Open streaming video writers
+    if args_cli.record_video:
+        import imageio
+        env._video_writer = imageio.get_writer(
+            args_cli.video_out, fps=args_cli.video_fps, codec="libx264",
+            quality=8, macro_block_size=1)
+        env._overview_writer = imageio.get_writer(
+            args_cli.overview_out, fps=args_cli.video_fps, codec="libx264",
+            quality=8, macro_block_size=1)
+        env._sideview_writer = imageio.get_writer(
+            args_cli.sideview_out, fps=args_cli.video_fps, codec="libx264",
+            quality=8, macro_block_size=1)
+        print(f"[Video] Streaming writers opened -> {args_cli.video_out} / {args_cli.overview_out} / {args_cli.sideview_out}")
 
     # Set up visualization directory
     if args_cli.visualize:
@@ -1435,6 +1484,17 @@ def main():
         with open(metrics_file, "w") as f:
             json.dump(metrics, f, indent=2)
         print(f"\n[Play] Metrics saved to: {metrics_file}")
+
+    if args_cli.record_video:
+        if env._video_writer is not None:
+            env._video_writer.close()
+            print(f"[Video] Saved {env._video_frame_count} policy-view frames -> {args_cli.video_out}")
+        if env._overview_writer is not None:
+            env._overview_writer.close()
+            print(f"[Video] Saved {env._overview_frame_count} overview frames -> {args_cli.overview_out}")
+        if env._sideview_writer is not None:
+            env._sideview_writer.close()
+            print(f"[Video] Saved {env._sideview_frame_count} sideview frames -> {args_cli.sideview_out}")
 
     env.close()
 

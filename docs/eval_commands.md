@@ -62,7 +62,7 @@ Existing JSONs lack per-grasp `clearing_curves`. Re-run to get data for the clea
 ```bash
 ./isaaclab.sh -p crane_testbed/scripts/rsl_rl/play.py \
   --task Isaac-Crane-PointCloud-CosSin-Raw-MR-Asym-v0 \
-  --checkpoint crane_testbed/results/BCRL_Raw_PCD_Sigma_0.05/2026-02-27_04-21-30/model_350.pt \
+  --checkpoint crane_testbed/results/BCRL_Raw_PCD_Sigma_0.05/2026-02-27_04-21-30/model_360.pt \
   --num_envs 20 --num_episodes 100 --seed 42 --headless --save_metrics
 ```
 
@@ -108,19 +108,19 @@ Existing JSONs lack per-grasp `clearing_curves`. Re-run to get data for the clea
 # DR
 ./isaaclab.sh -p crane_testbed/scripts/rsl_rl/play.py \
   --task Isaac-Crane-PointCloud-CosSin-Raw-MR-Asym-v0 \
-  --checkpoint crane_testbed/results/BCRL_Raw_PCD_Sigma_0.05/2026-02-27_04-21-30/model_350.pt \
+  --checkpoint crane_testbed/results/BCRL_Raw_PCD_Sigma_0.05/2026-02-27_04-21-30/model_360.pt \
   --num_envs 20 --num_episodes 100 --seed 42 --domain_randomization --headless --save_metrics
 
 # Obs noise
 ./isaaclab.sh -p crane_testbed/scripts/rsl_rl/play.py \
   --task Isaac-Crane-PointCloud-CosSin-Raw-MR-Asym-v0 \
-  --checkpoint crane_testbed/results/BCRL_Raw_PCD_Sigma_0.05/2026-02-27_04-21-30/model_350.pt \
+  --checkpoint crane_testbed/results/BCRL_Raw_PCD_Sigma_0.05/2026-02-27_04-21-30/model_360.pt \
   --num_envs 20 --num_episodes 100 --seed 42 --obs_noise 0.01 --headless --save_metrics
 
 # DR + obs noise
 ./isaaclab.sh -p crane_testbed/scripts/rsl_rl/play.py \
   --task Isaac-Crane-PointCloud-CosSin-Raw-MR-Asym-v0 \
-  --checkpoint crane_testbed/results/BCRL_Raw_PCD_Sigma_0.05/2026-02-27_04-21-30/model_350.pt \
+  --checkpoint crane_testbed/results/BCRL_Raw_PCD_Sigma_0.05/2026-02-27_04-21-30/model_360.pt \
   --num_envs 20 --num_episodes 100 --seed 42 --domain_randomization --obs_noise 0.01 --headless --save_metrics
 ```
 

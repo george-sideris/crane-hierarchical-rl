@@ -22,13 +22,13 @@ OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 RUNS = {
     "RL (Pose)": {
         "logdir": os.path.join(REPO_ROOT, "crane_testbed/results/RL_Pose/2026-02-23_20-19-49"),
-        "ckpt_step": 940,
+        "ckpt_step": 650,
         "color": "#1f77b4",  # blue
         "linestyle": "-",
     },
     "RL (Seg PCD)": {
         "logdir": os.path.join(REPO_ROOT, "crane_testbed/results/RL_Seg_PCD/2026-02-22_11-02-21"),
-        "ckpt_step": 880,
+        "ckpt_step": 710,
         "color": "#ff7f0e",  # orange
         "linestyle": "-",
     },
@@ -56,7 +56,7 @@ SUBPLOT_TAGS = [
 ]
 
 SMOOTH_WINDOW = 20
-X_MAX = 1000
+X_MAX = 800
 
 
 # ── Style ──────────────────────────────────────────────────────────────

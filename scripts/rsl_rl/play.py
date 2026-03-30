@@ -50,6 +50,19 @@ parser.add_argument("--obs_noise", type=float, default=0.0,
                     help="Gaussian noise σ added to PCD coordinates before PointNet (meters)")
 parser.add_argument("--action_noise", type=float, default=0.0,
                     help="Gaussian noise σ added to policy action output before workspace scaling")
+parser.add_argument("--stochastic", action="store_true", default=False,
+                    help="Use stochastic actions (sample from learned distribution) instead of deterministic mean")
+parser.add_argument("--record_video", action="store_true", default=False,
+                    help="Record video frames during episode (requires --num_envs 1)")
+parser.add_argument("--video_out", type=str, default=None,
+                    help="Output path for policy-view video (default: auto-timestamped in crane_testbed/media/)")
+parser.add_argument("--overview_out", type=str, default=None,
+                    help="Output path for overview video (default: auto-timestamped in crane_testbed/media/)")
+parser.add_argument("--sideview_out", type=str, default=None,
+                    help="Output path for sideview video (default: auto-timestamped in crane_testbed/media/)")
+parser.add_argument("--video_fps", type=int, default=30, help="Output video frame rate")
+parser.add_argument("--video_width", type=int, default=None, help="Override camera width for video recording")
+parser.add_argument("--video_height", type=int, default=None, help="Override camera height for video recording")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -119,6 +132,22 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 import crane_testbed.tasks  # noqa: F401
 
 
+def _write_video(frames: list, out_path: str, fps: int, label: str = "video"):
+    """Write a list of (H, W, 3) uint8 numpy frames to an MP4 using imageio."""
+    if not frames:
+        print(f"[Video] No {label} frames captured — skipping.")
+        return
+    try:
+        import imageio
+        writer = imageio.get_writer(out_path, fps=fps, codec="libx264", quality=8)
+        for frame in frames:
+            writer.append_data(frame)
+        writer.close()
+        print(f"[Video] Saved {len(frames)} {label} frames → {out_path}")
+    except Exception as e:
+        print(f"[Video] Failed to write {label} video: {e}")
+
+
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlOnPolicyRunnerCfg):
     """Play with RSL-RL agent."""
@@ -139,6 +168,30 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if args_cli.domain_randomization and hasattr(env_cfg, 'enable_domain_randomization'):
         env_cfg.enable_domain_randomization = True
         print(f"[INFO] Domain randomization enabled")
+
+    if args_cli.record_video:
+        env_cfg.record_video = True
+        env_cfg.enable_camera = True
+        if "rgb" not in env_cfg.camera_cfg.data_types:
+            env_cfg.camera_cfg.data_types = list(env_cfg.camera_cfg.data_types) + ["rgb"]
+        if args_cli.video_width is not None:
+            env_cfg.camera_cfg.width = args_cli.video_width
+            env_cfg.overview_camera_cfg.width = args_cli.video_width
+        if args_cli.video_height is not None:
+            env_cfg.camera_cfg.height = args_cli.video_height
+            env_cfg.overview_camera_cfg.height = args_cli.video_height
+        # Auto-generate timestamped output paths in crane_testbed/media/
+        from datetime import datetime
+        _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        _media_dir = "/workspace/crane_testbed/media"
+        os.makedirs(_media_dir, exist_ok=True)
+        if args_cli.video_out is None:
+            args_cli.video_out = f"{_media_dir}/rl_policy_view_{_ts}.mp4"
+        if args_cli.overview_out is None:
+            args_cli.overview_out = f"{_media_dir}/rl_overview_{_ts}.mp4"
+        if args_cli.sideview_out is None:
+            args_cli.sideview_out = f"{_media_dir}/rl_sideview_{_ts}.mp4"
+        print(f"[INFO] Video recording enabled → {args_cli.video_out} / {args_cli.overview_out} / {args_cli.sideview_out}")
 
     # noise injection info
     if args_cli.obs_noise > 0:
@@ -206,6 +259,21 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print_dict(video_kwargs, nesting=4)
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
+    # Open streaming video writers (frames written directly to disk to avoid OOM)
+    if args_cli.record_video:
+        import imageio
+        _base_env = env.unwrapped if not hasattr(env.unwrapped, 'env') else env.unwrapped.env
+        _base_env._video_writer = imageio.get_writer(
+            args_cli.video_out, fps=args_cli.video_fps, codec="libx264",
+            quality=8, macro_block_size=1)
+        _base_env._overview_writer = imageio.get_writer(
+            args_cli.overview_out, fps=args_cli.video_fps, codec="libx264",
+            quality=8, macro_block_size=1)
+        _base_env._sideview_writer = imageio.get_writer(
+            args_cli.sideview_out, fps=args_cli.video_fps, codec="libx264",
+            quality=8, macro_block_size=1)
+        print(f"[Video] Streaming writers opened → {args_cli.video_out} / {args_cli.overview_out} / {args_cli.sideview_out}")
+
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
@@ -240,8 +308,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # dimensions; calling act_inference on the module itself is more robust.
     policy_nn.eval()
     _policy_device = env.unwrapped.device
-    def policy(obs):
-        return policy_nn.act_inference(obs.to(_policy_device))
+    if args_cli.stochastic:
+        def policy(obs):
+            return policy_nn.act(obs.to(_policy_device))
+    else:
+        def policy(obs):
+            return policy_nn.act_inference(obs.to(_policy_device))
 
     # export policy to onnx/jit
     try:
@@ -722,6 +794,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 json.dump(metrics, f, indent=2)
 
             print(f"\n[Eval] Metrics saved to: {metrics_file}")
+
+    if args_cli.record_video:
+        _base_env = env.unwrapped if not hasattr(env.unwrapped, 'env') else env.unwrapped.env
+        if _base_env._video_writer is not None:
+            _base_env._video_writer.close()
+            print(f"[Video] Saved {_base_env._video_frame_count} policy-view frames → {args_cli.video_out}")
+        if _base_env._overview_writer is not None:
+            _base_env._overview_writer.close()
+            print(f"[Video] Saved {_base_env._overview_frame_count} overview frames → {args_cli.overview_out}")
+        if _base_env._sideview_writer is not None:
+            _base_env._sideview_writer.close()
+            print(f"[Video] Saved {_base_env._sideview_frame_count} sideview frames → {args_cli.sideview_out}")
 
     # close the simulator
     env.close()

@@ -1,54 +1,78 @@
 % ===== Simulation Platforms =====
-@inproceedings{mittal2023orbit,
-  title={Orbit: A Unified Simulation Framework for Interactive Robot Learning Environments},
-  author={Mittal, Mayank and Yu, Calvin and Yu, Qinxi and Liu, Jingzhou and Rudin, Nikita and Hoeller, David and Yuan, Jia Lin and Singh, Ritvik and Guo, Yunrong and Mazhar, Hammad and others},
-  booktitle={IEEE Robotics and Automation Letters},
-  year={2023}
+@article{mittal2025isaaclab,
+   title={Isaac Lab: A GPU-Accelerated Simulation Framework for Multi-Modal Robot Learning},
+   author={Mittal, Mayank and Roth, Pascal and Tigue, James and others},
+   journal={arXiv preprint arXiv:2511.04831},
+   year={2025},
+   url={https://arxiv.org/abs/2511.04831}
 }
 
 % ===== RL Algorithms =====
 @article{schulman2017ppo,
-  title={Proximal Policy Optimization Algorithms},
-  author={Schulman, John and Wolski, Filip and Dhariwal, Prafulla and Radford, Alec and Klimov, Oleg},
-  journal={arXiv preprint arXiv:1707.06347},
-  year={2017}
+  author       = {John Schulman and
+                  Filip Wolski and
+                  Prafulla Dhariwal and
+                  Alec Radford and
+                  Oleg Klimov},
+  title        = {Proximal Policy Optimization Algorithms},
+  journal      = {CoRR},
+  volume       = {abs/1707.06347},
+  year         = {2017},
+  url          = {http://arxiv.org/abs/1707.06347},
+  eprinttype    = {arXiv},
+  eprint       = {1707.06347},
+  timestamp    = {Mon, 13 Aug 2018 16:47:34 +0200},
+  biburl       = {https://dblp.org/rec/journals/corr/SchulmanWDRK17.bib},
+  bibsource    = {dblp computer science bibliography, https://dblp.org}
 }
 
-@inproceedings{rudin2022learning,
-  title={Learning to Walk in Minutes Using Massively Parallel Deep Reinforcement Learning},
-  author={Rudin, Nikita and Hoeller, David and Reist, Philipp and Hutter, Marco},
-  booktitle={Conference on Robot Learning},
-  year={2022}
+@misc{schwarke2025rslrl,
+      title={RSL-RL: A Learning Library for Robotics Research}, 
+      author={Clemens Schwarke and Mayank Mittal and Nikita Rudin and David Hoeller and Marco Hutter},
+      year={2025},
+      eprint={2509.10771},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2509.10771}, 
 }
 
 % ===== Grasp Detection =====
-@article{morrison2018closing,
-  title={Closing the Loop for Robotic Grasping: A Real-time, Generative Grasp Synthesis Approach},
-  author={Morrison, Douglas and Corke, Peter and Leitner, J{\"u}rgen},
-  journal={Robotics: Science and Systems},
-  year={2018}
+@inproceedings{morrison2018closing,
+	title={{Closing the Loop for Robotic Grasping: A Real-time, Generative Grasp Synthesis Approach}},
+	author={Morrison, Douglas and Corke, Peter and Leitner, J\"urgen},
+	booktitle={Proc.\ of Robotics: Science and Systems (RSS)},
+	year={2018}
 }
 
-@inproceedings{kumra2017robotic,
-  title={Robotic Grasp Detection using Deep Convolutional Neural Networks},
+@INPROCEEDINGS{kumra2017robotic,
   author={Kumra, Sulabh and Kanan, Christopher},
-  booktitle={IEEE/RSJ International Conference on Intelligent Robots and Systems},
-  year={2017}
-}
+  booktitle={2017 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)}, 
+  title={Robotic grasp detection using deep convolutional neural networks}, 
+  year={2017},
+  volume={},
+  number={},
+  pages={769-776},
+  keywords={Feature extraction;Robot kinematics;Machine learning;Grippers;Training},
+  doi={10.1109/IROS.2017.8202237}}
 
-@article{mahler2017dexnet,
+
+@inproceedings{mahler2017dexnet,
   title={Dex-Net 2.0: Deep Learning to Plan Robust Grasps with Synthetic Point Clouds and Analytic Grasp Metrics},
   author={Mahler, Jeffrey and Liang, Jacky and Niyaz, Sherdil and Laskey, Michael and Doan, Richard and Liu, Xinyu and Ojea, Juan Aparicio and Goldberg, Ken},
-  journal={Robotics: Science and Systems},
+  booktitle={Robotics: Science and Systems (RSS)},
   year={2017}
 }
-
-@inproceedings{zeng2018learning,
-  title={Learning Synergies Between Pushing and Grasping with Self-Supervised Deep Reinforcement Learning},
+@INPROCEEDINGS{zeng2018learning,
   author={Zeng, Andy and Song, Shuran and Welker, Stefan and Lee, Johnny and Rodriguez, Alberto and Funkhouser, Thomas},
-  booktitle={IEEE/RSJ International Conference on Intelligent Robots and Systems},
-  year={2018}
-}
+  booktitle={2018 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)}, 
+  title={Learning Synergies Between Pushing and Grasping with Self-Supervised Deep Reinforcement Learning}, 
+  year={2018},
+  volume={},
+  number={},
+  pages={4238-4245},
+  keywords={Grasping;Training;Three-dimensional displays;Reinforcement learning;Planning;Manipulators},
+  doi={10.1109/IROS.2018.8593986}}
+
 
 % ===== RL for Contact-Rich Manipulation =====
 @article{andrychowicz2020learning,
@@ -69,6 +93,18 @@
 }
 
 % ===== Heavy Machinery / Forestry =====
+@article{oliveira2021advances,
+  title={Advances in Forest Robotics: A State-of-the-Art Survey},
+  author={Oliveira, Luiz F. P. and Moreira, Ant{\'o}nio Paulo and Silva, Manuel F.},
+  journal={Robotics},
+  volume={10},
+  number={2},
+  pages={53},
+  year={2021},
+  publisher={MDPI}
+}
+
+
 @inproceedings{egli2022towards,
   title={Towards RL-Based Hydraulic Excavator Automation},
   author={Egli, Pascal and Gaschen, Robin and Kerscher, Simon and Jud, Dominic and Hutter, Marco},
@@ -83,62 +119,94 @@
   year={2023}
 }
 
-@article{lindroos2015forestry,
-  title={Drivers of Advances in Mechanized Timber Harvesting -- A Selective Review of Technology Innovation},
-  author={Lindroos, Ola and La Hera, Pedro and Ringdahl, Ola},
+@techreport{huq2007skills,
+  title={Skills Shortages in Canada's Forest Sector},
+  author={Huq, F.},
+  institution={Canadian Forest Service, Natural Resources Canada},
+  year={2007}
+}
+
+@article{lindroos2017forestry,
+  title={Drivers of Advances in Mechanized Timber Harvesting -- A Selective Review of Technological Innovation},
+  author={Lindroos, Ola and La Hera, Pedro and H{\"a}ggstr{\"o}m, Carola},
   journal={Croatian Journal of Forest Engineering},
-  volume={36},
-  number={1},
-  pages={11--22},
-  year={2015}
+  volume={38},
+  number={2},
+  pages={243--258},
+  year={2017}
 }
 
 % ===== Log Grasping and Loading =====
-@article{wallin2024multilog,
-  title={Multi-Log Grasping Using Reinforcement Learning and Virtual Visual Servoing},
-  author={Wallin, Erik and Wiberg, Viktor and Servin, Martin},
-  journal={Robotics},
-  volume={13},
-  number={1},
-  pages={3},
-  year={2024}
+
+@Article{wallin2024multilog,
+AUTHOR = {Wallin, Erik and Wiberg, Viktor and Servin, Martin},
+TITLE = {Multi-Log Grasping Using Reinforcement Learning and Virtual Visual Servoing},
+JOURNAL = {Robotics},
+VOLUME = {13},
+YEAR = {2024},
+NUMBER = {1},
+ARTICLE-NUMBER = {3},
+URL = {https://www.mdpi.com/2218-6581/13/1/3},
+ISSN = {2218-6581},
+ABSTRACT = {We explore multi-log grasping using reinforcement learning and virtual visual servoing for automated forwarding in a simulated environment. Automation of forest processes is a major challenge, and many techniques regarding robot control pose different challenges due to the unstructured and harsh outdoor environment. Grasping multiple logs involves various problems of dynamics and path planning, where understanding the interaction between the grapple, logs, terrain, and obstacles requires visual information. To address these challenges, we separate image segmentation from crane control and utilise a virtual camera to provide an image stream from reconstructed 3D data. We use Cartesian control to simplify domain transfer to real-world applications. Because log piles are static, visual servoing using a 3D reconstruction of the pile and its surroundings is equivalent to using real camera data until the point of grasping. This relaxes the limits on computational resources and time for the challenge of image segmentation, and allows for data collection in situations where the log piles are not occluded. The disadvantage is the lack of information during grasping. We demonstrate that this problem is manageable and present an agent that is 95% successful in picking one or several logs from challenging piles of 2–5 logs.},
+DOI = {10.3390/robotics13010003}
 }
 
-@article{falldin2025synthesizing,
-  title={Synthesizing Multi-Log Grasp Poses in Cluttered Environments},
-  author={F{\"a}lldin, Arvid and L{\"o}fstedt, Tommy and Semberg, Tobias and Wallin, Erik and Servin, Martin},
-  journal={arXiv preprint arXiv:2403.11623},
-  year={2025}
+
+
+
+@misc{falldin2025synthesizing,
+      title={Synthesizing multi-log grasp poses in cluttered environments}, 
+      author={Arvid Fälldin and Tommy Löfstedt and Tobias Semberg and Erik Wallin and Martin Servin},
+      year={2025},
+      eprint={2403.11623},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2403.11623}
 }
 
-@inproceedings{ayoub2023grasp,
-  title={Grasp Planning with {CNN} for Log-loading Forestry Machine},
+@INPROCEEDINGS{ayoub2023grasp,
   author={Ayoub, Elie and Levesque, Patrick and Sharf, Inna},
-  booktitle={IEEE International Conference on Robotics and Automation},
-  pages={11802--11808},
-  year={2023}
+  booktitle={2023 IEEE International Conference on Robotics and Automation (ICRA)}, 
+  title={Grasp Planning with CNN for Log-loading Forestry Machine}, 
+  year={2023},
+  volume={},
+  number={},
+  pages={11802-11808},
+  keywords={Training;Uncertainty;Automation;Pipelines;Virtual environments;Grasping;Forestry},
+  doi={10.1109/ICRA48891.2023.10161562}}
+
+
+@misc{vu2025autonomous,
+      title={Towards Autonomous Wood-Log Grasping with a Forestry Crane: Simulator and Benchmarking}, 
+      author={Minh Nhat Vu and Alexander Wachter and Gerald Ebmer and Marc-Philip Ecker and Tobias Glück and Anh Nguyen and Wolfgang Kemmetmueller and Andreas Kugi},
+      year={2025},
+      eprint={2502.01304},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2502.01304}, 
 }
 
-@article{vu2025autonomous,
-  title={Towards Autonomous Wood-Log Grasping with a Forestry Crane: Simulator and Benchmarking},
-  author={Vu, Minh Nhat and Wachter, Alexander and Ebmer, Gerald and Ecker, Marc-Philip and Gl{\"u}ck, Tobias and Nguyen, Anh and Kemmetm{\"u}ller, Wolfgang and Kugi, Andreas},
-  journal={arXiv preprint arXiv:2502.01304},
-  year={2025}
-}
-
-@inproceedings{jebellat2025designing,
-  title={Designing Experimental Setup Emulating Log-Loader Manipulator and Implementing Anti-Sway Trajectory Planner},
+@INPROCEEDINGS{jebellat2025designing,
   author={Jebellat, Iman and Sideris, George and Saif, Rafid and Sharf, Inna},
-  booktitle={IEEE International Conference on Robotics and Automation},
-  pages={1488--1494},
-  year={2025}
-}
+  booktitle={2025 IEEE International Conference on Robotics and Automation (ICRA)}, 
+  title={Designing Experimental Setup Emulating Log-Loader Manipulator and Implementing Anti-Sway Trajectory Planner}, 
+  year={2025},
+  volume={},
+  number={},
+  pages={1488-1494},
+  keywords={Cranes;Forestry;End effectors;Trajectory;Manufacturing;Dynamic programming;Reliability;Mobile robots},
+  doi={10.1109/ICRA55743.2025.11128481}}
 
-@article{kurinov2025reinforcement,
-  title={Towards Reinforcement Learning Based Log Loading Automation},
-  author={Kurinov, Ilya and Ivanov, Miroslav and Orzechowski, Grzegorz and Mikkola, Aki},
-  journal={arXiv preprint arXiv:2510.26363},
-  year={2025}
+
+@misc{kurinov2025reinforcement,
+      title={Towards Reinforcement Learning Based Log Loading Automation}, 
+      author={Ilya Kurinov and Miroslav Ivanov and Grzegorz Orzechowski and Aki Mikkola},
+      year={2025},
+      eprint={2510.26363},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2510.26363}, 
 }
 
 @inproceedings{spinelli2024reinforcement,
@@ -165,12 +233,23 @@
 }
 
 % ===== Sequential Bin Picking =====
-@inproceedings{mahler2017sequential,
-  title={Learning Deep Policies for Robot Bin Picking by Simulating Robust Grasping Sequences},
-  author={Mahler, Jeffrey and Goldberg, Ken},
-  booktitle={Conference on Robot Learning},
-  year={2017}
+
+@InProceedings{mahler2017sequential,
+  title = 	 {Learning Deep Policies for Robot Bin Picking by Simulating Robust Grasping Sequences},
+  author = 	 {Mahler, Jeffrey and Goldberg, Ken},
+  booktitle = 	 {Proceedings of the 1st Annual Conference on Robot Learning},
+  pages = 	 {515--524},
+  year = 	 {2017},
+  editor = 	 {Levine, Sergey and Vanhoucke, Vincent and Goldberg, Ken},
+  volume = 	 {78},
+  series = 	 {Proceedings of Machine Learning Research},
+  month = 	 {13--15 Nov},
+  publisher =    {PMLR},
+  pdf = 	 {http://proceedings.mlr.press/v78/mahler17a/mahler17a.pdf},
+  url = 	 {https://proceedings.mlr.press/v78/mahler17a.html},
+  abstract = 	 {Recent results suggest that it is possible to grasp a variety of singulated objects with high precision using Convolutional Neural Networks (CNNs) trained on synthetic data. This paper considers the task of bin picking, where multiple objects are randomly arranged in a heap and the objective is to sequentially grasp and transport each into a packing box. We model bin picking with a discrete-time Partially Observable Markov Decision Process that specifies states of the heap, point cloud observations, and rewards. We collect synthetic demonstrations of bin picking from an algorithmic supervisor uses full state information to optimize for the most robust collision-free grasp in a forward simulator based on pybullet to model dynamic object-object interactions and robust wrench space analysis from the Dexterity Network (Dex-Net) to model quasi-static contact between the gripper and object. We learn a policy by fine-tuning a Grasp Quality CNN on Dex-Net 2.1 to classify the supervisor’s actions from a dataset of 10,000 rollouts of the supervisor in the simulator with noise injection. In 2,192 physical trials of bin picking with an ABB YuMi on a dataset of 50 novel objects, we find that the resulting policies can achieve 94$%$ success rate and 96$%$ average precision (very few false positives) on heaps of 5-10 objects and can clear heaps of 10 objects in under three minutes. Datasets, experiments, and supplemental material are available at \urlhttp://berkeleyautomation.github.io/dex-net.}
 }
+
 
 % ===== Imitation Learning =====
 @inproceedings{pomerleau1988alvinn,
@@ -187,25 +266,37 @@
   year={2011}
 }
 
-@inproceedings{rajeswaran2018learning,
-  title={Learning Complex Dexterous Manipulation with Deep Reinforcement Learning and Demonstrations},
-  author={Rajeswaran, Aravind and Kumar, Vikash and Gupta, Abhishek and Vezzani, Giulia and Schulman, John and Todorov, Emanuel and Levine, Sergey},
-  booktitle={Robotics: Science and Systems},
-  year={2018}
+@INPROCEEDINGS{rajeswaran2018learning,
+
+    AUTHOR    = {Aravind Rajeswaran AND Vikash Kumar AND Abhishek Gupta AND
+
+                 Giulia Vezzani AND John Schulman AND Emanuel Todorov AND Sergey Levine},
+
+    TITLE     = "{Learning Complex Dexterous Manipulation with Deep Reinforcement Learning and Demonstrations}",
+
+    BOOKTITLE = {Proceedings of Robotics: Science and Systems (RSS)},
+
+    YEAR      = {2018},
+
 }
 
-@inproceedings{nair2018overcoming,
-  title={Overcoming Exploration in Reinforcement Learning with Demonstrations},
+@INPROCEEDINGS{nair2018overcoming,
   author={Nair, Ashvin and McGrew, Bob and Andrychowicz, Marcin and Zaremba, Wojciech and Abbeel, Pieter},
-  booktitle={IEEE International Conference on Robotics and Automation},
-  year={2018}
-}
+  booktitle={2018 IEEE International Conference on Robotics and Automation (ICRA)}, 
+  title={Overcoming Exploration in Reinforcement Learning with Demonstrations}, 
+  year={2018},
+  volume={},
+  number={},
+  pages={6292-6299},
+  keywords={Task analysis;Robots;Learning (artificial intelligence);Stacking;Training;Mathematical model;Games},
+  doi={10.1109/ICRA.2018.8463162}}
+
 
 % ===== Asymmetric Actor-Critic =====
-@inproceedings{pinto2018asymmetric,
-  title={Asymmetric Actor Critic for Image-Based Robot Learning},
+@article{pinto2018asymmetric,
+  title={Asymmetric actor critic for image-based robot learning},
   author={Pinto, Lerrel and Andrychowicz, Marcin and Welinder, Peter and Zaremba, Wojciech and Abbeel, Pieter},
-  booktitle={Robotics: Science and Systems},
+  journal={RSS},
   year={2018}
 }
 
@@ -218,12 +309,17 @@
 }
 
 % ===== Point Cloud Processing =====
-@inproceedings{qi2017pointnet,
-  title={{PointNet}: Deep Learning on Point Sets for {3D} Classification and Segmentation},
-  author={Qi, Charles R and Su, Hao and Mo, Kaichun and Guibas, Leonidas J},
-  booktitle={IEEE Conference on Computer Vision and Pattern Recognition},
-  year={2017}
-}
+@INPROCEEDINGS{qi2017pointnet,
+  author={Charles, R. Qi and Su, Hao and Kaichun, Mo and Guibas, Leonidas J.},
+  booktitle={2017 IEEE Conference on Computer Vision and Pattern Recognition (CVPR)}, 
+  title={PointNet: Deep Learning on Point Sets for 3D Classification and Segmentation}, 
+  year={2017},
+  volume={},
+  number={},
+  pages={77-85},
+  keywords={Three-dimensional displays;Shape;Computer architecture;Feature extraction;Machine learning;Semantics},
+  doi={10.1109/CVPR.2017.16}}
+
 
 @inproceedings{qi2017pointnetplusplus,
   title={{PointNet++}: Deep Hierarchical Feature Learning on Point Sets in a Metric Space},
@@ -250,9 +346,18 @@
   year={2015}
 }
 
-@inproceedings{loshchilov2019adamw,
-  title={Decoupled Weight Decay Regularization},
-  author={Loshchilov, Ilya and Hutter, Frank},
-  booktitle={International Conference on Learning Representations},
-  year={2019}
+@article{loshchilov2019adamw,
+  author       = {Ilya Loshchilov and
+                  Frank Hutter},
+  title        = {Fixing Weight Decay Regularization in Adam},
+  journal      = {CoRR},
+  volume       = {abs/1711.05101},
+  year         = {2017},
+  url          = {http://arxiv.org/abs/1711.05101},
+  eprinttype    = {arXiv},
+  eprint       = {1711.05101},
+  timestamp    = {Mon, 13 Aug 2018 16:48:18 +0200},
+  biburl       = {https://dblp.org/rec/journals/corr/abs-1711-05101.bib},
+  bibsource    = {dblp computer science bibliography, https://dblp.org}
+}
 }

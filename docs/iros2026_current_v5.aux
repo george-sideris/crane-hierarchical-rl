@@ -1,0 +1,120 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{lindroos2015forestry}
+\citation{mittal2023orbit}
+\citation{morrison2018closing,kumra2017robotic}
+\citation{mahler2017dexnet}
+\citation{mahler2017sequential}
+\citation{zeng2018learning}
+\citation{wallin2024multilog}
+\@writefile{toc}{\contentsline {section}{\numberline {I}INTRODUCTION}{1}{section.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces A log loader clearing piles at a millyard infeed deck.}}{1}{figure.caption.1}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{fig:mill}{{1}{1}{A log loader clearing piles at a millyard infeed deck}{figure.caption.1}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {II}RELATED WORK}{1}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {II-A}Grasping in Clutter}{1}{subsection.2.1}\protected@file@percent }
+\citation{qi2017pointnet}
+\citation{wallin2024multilog}
+\citation{falldin2025synthesizing}
+\citation{ayoub2023grasp}
+\citation{vu2025autonomous}
+\citation{kurinov2025reinforcement}
+\citation{jebellat2025designing}
+\citation{rajeswaran2018learning,nair2018overcoming}
+\citation{pinto2018asymmetric}
+\citation{morrison2018closing}
+\@writefile{toc}{\contentsline {subsection}{\numberline {II-B}Learning for Log Grasping and Forestry Crane Control}{2}{subsection.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {III}TASK FORMULATION}{2}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {III-A}Grasp-and-Remove Formulation}{2}{subsection.3.1}\protected@file@percent }
+\newlabel{sec:formulation}{{III-A}{2}{Grasp-and-Remove Formulation}{subsection.3.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {III-B}Observations}{2}{subsection.3.2}\protected@file@percent }
+\newlabel{sec:obs}{{III-B}{2}{Observations}{subsection.3.2}{}}
+\citation{morrison2018closing}
+\citation{mittal2023orbit}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Observation pipeline for a single grasp: RGB, raw depth, 3D back-projection in the crane base frame, and FPS-downsampled point cloud with the predicted grasp target and action-space bounds (dashed box).}}{3}{figure.caption.2}\protected@file@percent }
+\newlabel{fig:pcd_pipeline}{{2}{3}{Observation pipeline for a single grasp: RGB, raw depth, 3D back-projection in the crane base frame, and FPS-downsampled point cloud with the predicted grasp target and action-space bounds (dashed box)}{figure.caption.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {III-C}Actions and Workspace Scaling}{3}{subsection.3.3}\protected@file@percent }
+\newlabel{sec:actions}{{III-C}{3}{Actions and Workspace Scaling}{subsection.3.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {IV}ENVIRONMENT AND CONTROLLER}{3}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {IV-A}Low-level Execution FSM}{3}{subsection.4.1}\protected@file@percent }
+\citation{avallone2006marks}
+\citation{pomerleau1988alvinn}
+\citation{qi2017pointnet}
+\@writefile{toc}{\contentsline {subsection}{\numberline {IV-B}Outcome Evaluation}{4}{subsection.4.2}\protected@file@percent }
+\newlabel{sec:outcome}{{IV-B}{4}{Outcome Evaluation}{subsection.4.2}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {V}BASELINE AND LEARNED POLICIES}{4}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {V-A}Heuristic Expert}{4}{subsection.5.1}\protected@file@percent }
+\newlabel{sec:expert}{{V-A}{4}{Heuristic Expert}{subsection.5.1}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Coordinate frames used to compute alignment ($\alpha $) and stability ($\varsigma $).}}{4}{figure.caption.3}\protected@file@percent }
+\newlabel{fig:grasp_geometry}{{3}{4}{Coordinate frames used to compute alignment ($\alpha $) and stability ($\varsigma $)}{figure.caption.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {V-B}Behavior Cloning}{4}{subsection.5.2}\protected@file@percent }
+\newlabel{sec:bc}{{V-B}{4}{Behavior Cloning}{subsection.5.2}{}}
+\citation{loshchilov2019adamw}
+\citation{schulman2017ppo}
+\citation{rudin2022learning}
+\citation{schulman2017ppo}
+\citation{rajeswaran2018learning,nair2018overcoming}
+\@writefile{lot}{\contentsline {table}{\numberline {I}{\ignorespaces Simulation and controller parameters. Actuator gains are implicit PhysX joint-drive values; IK gains are the PD velocity controller used by the FSM.}}{5}{table.caption.4}\protected@file@percent }
+\newlabel{tab:sim_params}{{I}{5}{Simulation and controller parameters. Actuator gains are implicit PhysX joint-drive values; IK gains are the PD velocity controller used by the FSM}{table.caption.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {V-C}Reinforcement Learning}{5}{subsection.5.3}\protected@file@percent }
+\newlabel{sec:rl}{{V-C}{5}{Reinforcement Learning}{subsection.5.3}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces PPO training curves. Mean episode return vs.\ PPO iteration (bold: 20-iteration rolling average; shading: raw). Diamond markers indicate the evaluation checkpoint. All three from-scratch RL variants plateau below full clearing (Table~\ref {tab:results}). BC$\to $RL reaches the highest return but degrades after $\sim $500 iterations, motivating early stopping. Bottom panels decompose the reward into per-grasp components.}}{5}{figure.caption.5}\protected@file@percent }
+\newlabel{fig:reward_curves}{{4}{5}{PPO training curves. Mean episode return vs.\ PPO iteration (bold: 20-iteration rolling average; shading: raw). Diamond markers indicate the evaluation checkpoint. All three from-scratch RL variants plateau below full clearing (Table~\ref {tab:results}). BC$\to $RL reaches the highest return but degrades after $\sim $500 iterations, motivating early stopping. Bottom panels decompose the reward into per-grasp components}{figure.caption.5}{}}
+\newlabel{eq:reward}{{V-C}{5}{Reinforcement Learning}{equation.11}{}}
+\citation{pinto2018asymmetric}
+\citation{pinto2018asymmetric}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces BC+RL training sensitivity. Mean episode return vs.\ PPO iteration for four configurations varying encoder freezing and initial policy noise $\sigma _0$.}}{6}{figure.caption.6}\protected@file@percent }
+\newlabel{fig:bcrl_ablation}{{5}{6}{BC+RL training sensitivity. Mean episode return vs.\ PPO iteration for four configurations varying encoder freezing and initial policy noise $\sigma _0$}{figure.caption.6}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {V-D}BC-Initialized RL Fine-Tuning}{6}{subsection.5.4}\protected@file@percent }
+\newlabel{sec:bcrl}{{V-D}{6}{BC-Initialized RL Fine-Tuning}{subsection.5.4}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {VI}EXPERIMENTS}{6}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {VI-A}Setup}{6}{subsection.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {VI-B}Metrics}{6}{subsection.6.2}\protected@file@percent }
+\newlabel{sec:metrics}{{VI-B}{6}{Metrics}{subsection.6.2}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {VII}RESULTS}{6}{section.7}\protected@file@percent }
+\newlabel{sec:results}{{VII}{6}{RESULTS}{section.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {VII-A}BC+RL Performance}{6}{subsection.7.1}\protected@file@percent }
+\newlabel{sec:bcrl_perf}{{VII-A}{6}{BC+RL Performance}{subsection.7.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {VII-B}BC Performance}{6}{subsection.7.2}\protected@file@percent }
+\newlabel{sec:bc_perf}{{VII-B}{6}{BC Performance}{subsection.7.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {VII-C}RL Performance}{6}{subsection.7.3}\protected@file@percent }
+\newlabel{sec:rl_perf}{{VII-C}{6}{RL Performance}{subsection.7.3}{}}
+\citation{rajeswaran2018learning}
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces The BC$\to $RL pipeline. (a)~The PointNet encoder and actor MLP are trained end-to-end on expert demonstrations with MSE loss. (b)~The encoder is frozen and the actor MLP is fine-tuned with PPO alongside a state-based asymmetric critic. (c)~At inference the critic is discarded; the encoder and actor run deterministically.}}{7}{figure.caption.7}\protected@file@percent }
+\newlabel{fig:bcrl_pipeline}{{6}{7}{The BC$\to $RL pipeline. (a)~The PointNet encoder and actor MLP are trained end-to-end on expert demonstrations with MSE loss. (b)~The encoder is frozen and the actor MLP is fine-tuned with PPO alongside a state-based asymmetric critic. (c)~At inference the critic is discarded; the encoder and actor run deterministically}{figure.caption.7}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces The grasp-and-remove crane environment. From left to right: parallelized training environments in Isaac Sim, each containing a log loader crane above a rack of 200 logs in randomized configurations; a single environment showing the relevant coordinate frames and the action-space bounding box; the crane link structure; the passive joints and grapple yaw.}}{7}{figure.caption.8}\protected@file@percent }
+\newlabel{fig:environment}{{7}{7}{The grasp-and-remove crane environment. From left to right: parallelized training environments in Isaac Sim, each containing a log loader crane above a rack of 200 logs in randomized configurations; a single environment showing the relevant coordinate frames and the action-space bounding box; the crane link structure; the passive joints and grapple yaw}{figure.caption.8}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {II}{\ignorespaces Evaluation metrics (mean $\pm $ std, 100 episodes). Upper rows: fixed 200-log piles. Lower rows: randomized pile variation (log count 20--200, grid dimensions, spacing, offsets, and placement jitter). The heuristic uses privileged pose state. Best per column among point-cloud methods in \textbf  {bold}.}}{7}{table.caption.9}\protected@file@percent }
+\newlabel{tab:results}{{II}{7}{Evaluation metrics (mean $\pm $ std, 100 episodes). Upper rows: fixed 200-log piles. Lower rows: randomized pile variation (log count 20--200, grid dimensions, spacing, offsets, and placement jitter). The heuristic uses privileged pose state. Best per column among point-cloud methods in \textbf {bold}}{table.caption.9}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {VIII}DISCUSSION}{7}{section.8}\protected@file@percent }
+\citation{qi2017pointnetplusplus}
+\bibstyle{IEEEtran}
+\bibdata{references}
+\bibcite{lindroos2015forestry}{1}
+\bibcite{mittal2023orbit}{2}
+\bibcite{morrison2018closing}{3}
+\bibcite{kumra2017robotic}{4}
+\bibcite{mahler2017dexnet}{5}
+\bibcite{mahler2017sequential}{6}
+\bibcite{zeng2018learning}{7}
+\bibcite{wallin2024multilog}{8}
+\bibcite{qi2017pointnet}{9}
+\bibcite{falldin2025synthesizing}{10}
+\bibcite{ayoub2023grasp}{11}
+\bibcite{vu2025autonomous}{12}
+\bibcite{kurinov2025reinforcement}{13}
+\bibcite{jebellat2025designing}{14}
+\bibcite{rajeswaran2018learning}{15}
+\bibcite{nair2018overcoming}{16}
+\bibcite{pinto2018asymmetric}{17}
+\bibcite{avallone2006marks}{18}
+\bibcite{pomerleau1988alvinn}{19}
+\bibcite{loshchilov2019adamw}{20}
+\bibcite{schulman2017ppo}{21}
+\bibcite{rudin2022learning}{22}
+\bibcite{qi2017pointnetplusplus}{23}
+\@writefile{toc}{\contentsline {section}{\numberline {IX}CONCLUSION}{8}{section.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{References}{8}{section*.11}\protected@file@percent }
+\gdef \@abspage@last{8}

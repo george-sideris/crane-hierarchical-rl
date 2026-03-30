@@ -48,9 +48,18 @@ parser.add_argument("--domain_randomization", action="store_true", help="Enable 
 parser.add_argument("--obs_noise", type=float, default=0.0, help="Gaussian noise σ (meters) added to heuristic target pose (yaw noise auto-derived)")
 parser.add_argument("--save_metrics", action="store_true", help="Save metrics to JSON file")
 parser.add_argument("--output_dir", type=str, default="logs/heuristic_baseline", help="Output directory for metrics")
+parser.add_argument("--record_video", action="store_true", help="Record video frames during episode (requires --num_envs 1)")
+parser.add_argument("--video_out", type=str, default="heuristic_policy_view.mp4", help="Output path for policy-view video")
+parser.add_argument("--overview_out", type=str, default="heuristic_overview.mp4", help="Output path for overview video")
+parser.add_argument("--sideview_out", type=str, default="heuristic_sideview.mp4", help="Output path for sideview video")
+parser.add_argument("--video_fps", type=int, default=30, help="Output video frame rate")
 # Add standard AppLauncher args (--headless, --device, etc.)
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
+
+# Enable cameras when recording video
+if args_cli.record_video:
+    args_cli.enable_cameras = True
 
 # Launch simulator with full args
 app_launcher = AppLauncher(args_cli)
@@ -59,6 +68,22 @@ simulation_app = app_launcher.app
 # Import the environment
 import crane_rl_env_full
 from crane_rl_env_full import CraneDirectEnvFull, CraneDirectEnvCfgFull
+
+
+def _write_video(frames: list, out_path: str, fps: int, label: str = "video"):
+    """Write a list of (H, W, 3) uint8 numpy frames to an MP4 using imageio."""
+    if not frames:
+        print(f"[Video] No {label} frames captured — skipping.")
+        return
+    try:
+        import imageio
+        writer = imageio.get_writer(out_path, fps=fps, codec="libx264", quality=8)
+        for frame in frames:
+            writer.append_data(frame)
+        writer.close()
+        print(f"[Video] Saved {len(frames)} {label} frames → {out_path}")
+    except Exception as e:
+        print(f"[Video] Failed to write {label} video: {e}")
 
 
 def main():
@@ -73,6 +98,19 @@ def main():
     cfg.heuristic_target_noise = args_cli.obs_noise
     cfg.sim.physx.solver_type = 1
     cfg.sim.physx.enable_stabilization = True
+    if args_cli.record_video:
+        assert args_cli.num_envs == 1, "--record_video requires --num_envs 1"
+        cfg.record_video = True
+        from datetime import datetime
+        _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        _media_dir = "/workspace/crane_testbed/media"
+        os.makedirs(_media_dir, exist_ok=True)
+        if args_cli.video_out == "heuristic_policy_view.mp4":
+            args_cli.video_out = f"{_media_dir}/heuristic_policy_view_{_ts}.mp4"
+        if args_cli.overview_out == "heuristic_overview.mp4":
+            args_cli.overview_out = f"{_media_dir}/heuristic_overview_{_ts}.mp4"
+        if args_cli.sideview_out == "heuristic_sideview.mp4":
+            args_cli.sideview_out = f"{_media_dir}/heuristic_sideview_{_ts}.mp4"
 
     env = CraneDirectEnvFull(cfg)
     print(f"[Heuristic] Environment created with {env.num_envs} envs")
@@ -84,6 +122,20 @@ def main():
         yaw_sigma = math.atan(args_cli.obs_noise / 1.5)
         print(f"[Heuristic] Pose noise σ_pos: {args_cli.obs_noise}m, σ_yaw: {yaw_sigma:.3f} rad ({math.degrees(yaw_sigma):.1f}°)")
     print(f"[Heuristic] Running built-in heuristic FSM (target top log + optimal yaw)")
+
+    # Open streaming video writers
+    if args_cli.record_video:
+        import imageio
+        env._video_writer = imageio.get_writer(
+            args_cli.video_out, fps=args_cli.video_fps, codec="libx264",
+            quality=8, macro_block_size=1)
+        env._overview_writer = imageio.get_writer(
+            args_cli.overview_out, fps=args_cli.video_fps, codec="libx264",
+            quality=8, macro_block_size=1)
+        env._sideview_writer = imageio.get_writer(
+            args_cli.sideview_out, fps=args_cli.video_fps, codec="libx264",
+            quality=8, macro_block_size=1)
+        print(f"[Video] Streaming writers opened -> {args_cli.video_out} / {args_cli.overview_out} / {args_cli.sideview_out}")
 
     # Run episodes
     episodes_done = 0
@@ -347,6 +399,17 @@ def main():
             json.dump(metrics, f, indent=2)
 
         print(f"\n[Heuristic] Metrics saved to: {metrics_file}")
+
+    if args_cli.record_video:
+        if env._video_writer is not None:
+            env._video_writer.close()
+            print(f"[Video] Saved {env._video_frame_count} policy-view frames -> {args_cli.video_out}")
+        if env._overview_writer is not None:
+            env._overview_writer.close()
+            print(f"[Video] Saved {env._overview_frame_count} overview frames -> {args_cli.overview_out}")
+        if env._sideview_writer is not None:
+            env._sideview_writer.close()
+            print(f"[Video] Saved {env._sideview_frame_count} sideview frames -> {args_cli.sideview_out}")
 
     env.close()
 

@@ -37,6 +37,18 @@ def add_rsl_rl_args(parser: argparse.ArgumentParser):
     arg_group.add_argument(
         "--log_project_name", type=str, default=None, help="Name of the logging project when using wandb or neptune."
     )
+    # -- PPO hyperparameter overrides (for sweeps)
+    ppo_group = parser.add_argument_group("ppo_overrides", description="PPO hyperparameter overrides.")
+    ppo_group.add_argument("--learning_rate", type=float, default=None, help="PPO learning rate.")
+    ppo_group.add_argument("--clip_param", type=float, default=None, help="PPO clip range.")
+    ppo_group.add_argument("--entropy_coef", type=float, default=None, help="Entropy bonus coefficient.")
+    ppo_group.add_argument("--num_learning_epochs", type=int, default=None, help="PPO epochs per update.")
+    ppo_group.add_argument("--num_mini_batches", type=int, default=None, help="Number of minibatches per epoch.")
+    ppo_group.add_argument("--num_steps_per_env", type=int, default=None, help="Rollout length per env.")
+    ppo_group.add_argument("--gae_lambda", type=float, default=None, help="GAE lambda.")
+    ppo_group.add_argument("--desired_kl", type=float, default=None, help="Desired KL for adaptive LR.")
+    ppo_group.add_argument("--gamma", type=float, default=None, help="Discount factor.")
+    ppo_group.add_argument("--init_noise_std", type=float, default=None, help="Initial action noise std.")
 
 
 def parse_rsl_rl_cfg(task_name: str, args_cli: argparse.Namespace) -> RslRlOnPolicyRunnerCfg:
@@ -87,5 +99,27 @@ def update_rsl_rl_cfg(agent_cfg: RslRlOnPolicyRunnerCfg, args_cli: argparse.Name
     if agent_cfg.logger in {"wandb", "neptune"} and args_cli.log_project_name:
         agent_cfg.wandb_project = args_cli.log_project_name
         agent_cfg.neptune_project = args_cli.log_project_name
+
+    # -- PPO hyperparameter overrides
+    if hasattr(args_cli, "learning_rate") and args_cli.learning_rate is not None:
+        agent_cfg.algorithm.learning_rate = args_cli.learning_rate
+    if hasattr(args_cli, "clip_param") and args_cli.clip_param is not None:
+        agent_cfg.algorithm.clip_param = args_cli.clip_param
+    if hasattr(args_cli, "entropy_coef") and args_cli.entropy_coef is not None:
+        agent_cfg.algorithm.entropy_coef = args_cli.entropy_coef
+    if hasattr(args_cli, "num_learning_epochs") and args_cli.num_learning_epochs is not None:
+        agent_cfg.algorithm.num_learning_epochs = args_cli.num_learning_epochs
+    if hasattr(args_cli, "num_mini_batches") and args_cli.num_mini_batches is not None:
+        agent_cfg.algorithm.num_mini_batches = args_cli.num_mini_batches
+    if hasattr(args_cli, "num_steps_per_env") and args_cli.num_steps_per_env is not None:
+        agent_cfg.num_steps_per_env = args_cli.num_steps_per_env
+    if hasattr(args_cli, "gae_lambda") and args_cli.gae_lambda is not None:
+        agent_cfg.algorithm.lam = args_cli.gae_lambda
+    if hasattr(args_cli, "desired_kl") and args_cli.desired_kl is not None:
+        agent_cfg.algorithm.desired_kl = args_cli.desired_kl
+    if hasattr(args_cli, "gamma") and args_cli.gamma is not None:
+        agent_cfg.algorithm.gamma = args_cli.gamma
+    if hasattr(args_cli, "init_noise_std") and args_cli.init_noise_std is not None:
+        agent_cfg.policy.init_noise_std = args_cli.init_noise_std
 
     return agent_cfg

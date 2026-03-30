@@ -88,7 +88,101 @@ from datetime import datetime
 
 import omni
 import rsl_rl.modules
+import statistics as _statistics
 from rsl_rl.runners import OnPolicyRunner
+
+
+class OnPolicyRunnerEnvSteps(OnPolicyRunner):
+    """OnPolicyRunner that logs Episode/* and Train/* at total env steps.
+
+    SB3 (SAC) logs at total timesteps. This subclass does the same so that
+    Episode/* tags align on the x-axis when comparing PPO and SAC in TensorBoard.
+    """
+
+    def log(self, locs, width=80, pad=35):
+        # Update total timesteps and time (same as parent)
+        collection_size = self.num_steps_per_env * self.env.num_envs * self.gpu_world_size
+        self.tot_timesteps += collection_size
+        self.tot_time += locs["collection_time"] + locs["learn_time"]
+
+        # -- Episode info: log at tot_timesteps (not iteration)
+        ep_string = ""
+        if locs["ep_infos"]:
+            for key in locs["ep_infos"][0]:
+                infotensor = torch.tensor([], device=self.device)
+                for ep_info in locs["ep_infos"]:
+                    if key not in ep_info:
+                        continue
+                    if not isinstance(ep_info[key], torch.Tensor):
+                        ep_info[key] = torch.Tensor([ep_info[key]])
+                    if len(ep_info[key].shape) == 0:
+                        ep_info[key] = ep_info[key].unsqueeze(0)
+                    infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
+                value = torch.mean(infotensor)
+                if "/" in key:
+                    self.writer.add_scalar(key, value, self.tot_timesteps)
+                    ep_string += f"""{f'{key}:':>{pad}} {value:.4f}\n"""
+                else:
+                    self.writer.add_scalar("Episode/" + key, value, self.tot_timesteps)
+                    ep_string += f"""{f'Mean episode {key}:':>{pad}} {value:.4f}\n"""
+
+        mean_std = self.alg.policy.action_std.mean()
+        fps = int(collection_size / (locs["collection_time"] + locs["learn_time"]))
+
+        # -- Losses (keep at iteration — these are PPO-specific)
+        for key, value in locs["loss_dict"].items():
+            self.writer.add_scalar(f"Loss/{key}", value, locs["it"])
+        self.writer.add_scalar("Loss/learning_rate", self.alg.learning_rate, locs["it"])
+
+        # -- Policy
+        self.writer.add_scalar("Policy/mean_noise_std", mean_std.item(), locs["it"])
+
+        # -- Performance
+        self.writer.add_scalar("Perf/total_fps", fps, locs["it"])
+        self.writer.add_scalar("Perf/collection time", locs["collection_time"], locs["it"])
+        self.writer.add_scalar("Perf/learning_time", locs["learn_time"], locs["it"])
+
+        # -- Training: log at tot_timesteps
+        if len(locs["rewbuffer"]) > 0:
+            if self.alg.rnd:
+                self.writer.add_scalar("Rnd/mean_extrinsic_reward", _statistics.mean(locs["erewbuffer"]), self.tot_timesteps)
+                self.writer.add_scalar("Rnd/mean_intrinsic_reward", _statistics.mean(locs["irewbuffer"]), self.tot_timesteps)
+                self.writer.add_scalar("Rnd/weight", self.alg.rnd.weight, self.tot_timesteps)
+            self.writer.add_scalar("Train/mean_reward", _statistics.mean(locs["rewbuffer"]), self.tot_timesteps)
+            self.writer.add_scalar("Train/mean_episode_length", _statistics.mean(locs["lenbuffer"]), self.tot_timesteps)
+            if self.logger_type != "wandb":
+                self.writer.add_scalar("Train/mean_reward/time", _statistics.mean(locs["rewbuffer"]), self.tot_time)
+                self.writer.add_scalar("Train/mean_episode_length/time", _statistics.mean(locs["lenbuffer"]), self.tot_time)
+
+        # -- Terminal log
+        str_title = f" \033[1m Learning iteration {locs['it']}/{locs['tot_iter']} \033[0m "
+        if len(locs["rewbuffer"]) > 0:
+            log_string = (
+                f"""{'#' * width}\n"""
+                f"""{str_title.center(width, ' ')}\n\n"""
+                f"""{'Computation:':>{pad}} {fps:.0f} steps/s (collection: {locs['collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
+                f"""{'Total timesteps:':>{pad}} {self.tot_timesteps}\n"""
+                f"""{'Iteration time:':>{pad}} {locs['collection_time'] + locs['learn_time']:.3f}s\n"""
+                f"""{'Total time:':>{pad}} {self.tot_time:.3f}s\n"""
+                f"""{'Mean reward:':>{pad}} {_statistics.mean(locs['rewbuffer']):.2f}\n"""
+                f"""{'Mean episode length:':>{pad}} {_statistics.mean(locs['lenbuffer']):.2f}\n"""
+            )
+        else:
+            log_string = (
+                f"""{'#' * width}\n"""
+                f"""{str_title.center(width, ' ')}\n\n"""
+                f"""{'Computation:':>{pad}} {fps:.0f} steps/s (collection: {locs['collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
+                f"""{'Total timesteps:':>{pad}} {self.tot_timesteps}\n"""
+            )
+        log_string += ep_string
+        log_string += (
+            f"""{'-' * width}\n"""
+            f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
+        )
+        curr_it = locs["it"] - locs.get("start_iter", 0)
+        eta = self.tot_time / (curr_it + 1) * (locs["tot_iter"] - locs["it"])
+        log_string += f"""{'ETA:':>{pad}} {eta / 60:.1f} min\n"""
+        print(log_string)
 
 # Register custom CNN actor-critic with RSL-RL so OnPolicyRunner can find it
 from crane_testbed.agents.cnn_actor_critic import CNNActorCritic
@@ -268,8 +362,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
-    # create runner from rsl-rl
-    runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+    # create runner from rsl-rl (subclass logs Episode/* at total env steps for SAC comparison)
+    runner = OnPolicyRunnerEnvSteps(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     # write git state to logs
     runner.add_git_repo_to_log(__file__)
 

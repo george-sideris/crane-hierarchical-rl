@@ -16,7 +16,7 @@ CKPT_RL_SEG="crane_testbed/results/RL_Seg_PCD/2026-02-22_11-02-21/model_880.pt"
 CKPT_RL_RAW="crane_testbed/results/RL_Raw_PCD/2026-02-26_23-18-20/model_650.pt"
 CKPT_BC_SEG="logs/bc_pointcloud/bc_20260222_225331/bc_pointcloud_policy_rsl_rl.pt"
 CKPT_BC_RAW="crane_testbed/results/BC_Raw_PCD/bc_pointcloud_policy_rsl_rl.pt"
-CKPT_BCRL="logs/rsl_rl/crane_pointcloud_cossin_raw_mr_asym_v0/2026-02-27_04-21-30/model_350.pt"
+CKPT_BCRL="logs/rsl_rl/crane_pointcloud_cossin_raw_mr_asym_v0/2026-02-27_04-21-30/model_360.pt"
 CKPT_BCRL_SIGMA="logs/rsl_rl/crane_pointcloud_cossin_raw_mr_asym_v0/2026-02-28_16-53-26/model_BEST.pt"
 
 GROUP="${1:-all}"
@@ -37,7 +37,7 @@ run_group1() {
     ./isaaclab.sh -p crane_testbed/scripts/envs/play_bc_pointcloud.py \
         --checkpoint "$CKPT_BC_RAW" --raw_pcd $COMMON
 
-    run_header "1d. BC+RL headline (model_350)"
+    run_header "1d. BC+RL headline (model_360)"
     ./isaaclab.sh -p crane_testbed/scripts/rsl_rl/play.py \
         --task Isaac-Crane-PointCloud-CosSin-Raw-MR-Asym-v0 \
         --checkpoint "$CKPT_BCRL" $COMMON
