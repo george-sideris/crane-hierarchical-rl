@@ -1,0 +1,491 @@
+---
+header:
+  stamp:
+    sec: 1783095605
+    nanosec: 256816000
+  frame_id: zed_0_imu_link
+orientation:
+  x: -0.029771756380796432
+  y: 0.18217270076274872
+  z: 0.11017423868179321
+  w: 0.9766209125518799
+orientation_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+angular_velocity:
+  x: -0.007494319646238149
+  y: 0.11443287268441202
+  z: 0.12300119425325204
+angular_velocity_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+linear_acceleration:
+  x: -7.885918617248535
+  y: -1.5918372869491577
+  z: 5.784890651702881
+linear_acceleration_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+---
+header:
+  stamp:
+    sec: 1783095605
+    nanosec: 261771000
+  frame_id: zed_0_imu_link
+orientation:
+  x: -0.029771756380796432
+  y: 0.18217270076274872
+  z: 0.11017423868179321
+  w: 0.9766209125518799
+orientation_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+angular_velocity:
+  x: -0.09591126922849942
+  y: -0.3574793187471924
+  z: -0.04797375243253899
+angular_velocity_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+linear_acceleration:
+  x: -3.184903144836426
+  y: -0.047577157616615295
+  z: 9.936436653137207
+linear_acceleration_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+---
+header:
+  stamp:
+    sec: 0
+    nanosec: 0
+  frame_id: zed_0_imu_link
+orientation:
+  x: 0.0
+  y: 1.0
+  z: 0.0
+  w: 0.0
+orientation_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+angular_velocity:
+  x: 0.0
+  y: 0.0
+  z: 0.0
+angular_velocity_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+linear_acceleration:
+  x: 0.0
+  y: 0.0
+  z: 0.0
+linear_acceleration_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+---
+header:
+  stamp:
+    sec: 1783095605
+    nanosec: 266770000
+  frame_id: zed_0_imu_link
+orientation:
+  x: -0.030503181740641594
+  y: 0.18193235993385315
+  z: 0.11528584361076355
+  w: 0.9760529398918152
+orientation_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+angular_velocity:
+  x: 0.017006764096695902
+  y: 0.03294013484472764
+  z: 0.10702222727327157
+angular_velocity_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+linear_acceleration:
+  x: 0.449494868516922
+  y: 1.3027526140213013
+  z: 13.527738571166992
+linear_acceleration_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+---
+header:
+  stamp:
+    sec: 1783095605
+    nanosec: 341778000
+  frame_id: zed_0_imu_link
+orientation:
+  x: -0.030503181740641594
+  y: 0.18193235993385315
+  z: 0.11528584361076355
+  w: 0.9760529398918152
+orientation_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+angular_velocity:
+  x: -0.06395333526853848
+  y: -0.12578426424796105
+  z: 0.017007378912417593
+angular_velocity_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+linear_acceleration:
+  x: -7.533970832824707
+  y: -2.2490456104278564
+  z: 4.83678674697876
+linear_acceleration_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+---
+header:
+  stamp:
+    sec: 1783095605
+    nanosec: 377805000
+  frame_id: zed_0_imu_link
+orientation:
+  x: -0.030503181740641594
+  y: 0.18193235993385315
+  z: 0.11528584361076355
+  w: 0.9760529398918152
+orientation_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+angular_velocity:
+  x: -0.06395333526853848
+  y: -0.2983571409212647
+  z: -0.03678847554655266
+angular_velocity_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+linear_acceleration:
+  x: 0.19810369610786438
+  y: 1.2704309225082397
+  z: 12.72687816619873
+linear_acceleration_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+---
+header:
+  stamp:
+    sec: 1783095605
+    nanosec: 382646000
+  frame_id: zed_0_imu_link
+orientation:
+  x: -0.030503181740641594
+  y: 0.18193235993385315
+  z: 0.11528584361076355
+  w: 0.9760529398918152
+orientation_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+angular_velocity:
+  x: -0.01708169983422643
+  y: -0.03363889423852432
+  z: 0.04949794614534188
+angular_velocity_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+linear_acceleration:
+  x: -3.199268341064453
+  y: 0.25050094723701477
+  z: 9.771236419677734
+linear_acceleration_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+---
+header:
+  stamp:
+    sec: 1783095605
+    nanosec: 387489000
+  frame_id: zed_0_imu_link
+orientation:
+  x: -0.030503181740641594
+  y: 0.18193235993385315
+  z: 0.11528584361076355
+  w: 0.9760529398918152
+orientation_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+angular_velocity:
+  x: 0.047899433591324814
+  y: 0.3392036415799561
+  z: 0.19863497129182628
+angular_velocity_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+linear_acceleration:
+  x: -8.104988098144531
+  y: -1.95096755027771
+  z: 5.210282325744629
+linear_acceleration_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+---
+header:
+  stamp:
+    sec: 1783095605
+    nanosec: 392330000
+  frame_id: zed_0_imu_link
+orientation:
+  x: -0.030503181740641594
+  y: 0.18193235993385315
+  z: 0.11528584361076355
+  w: 0.9760529398918152
+orientation_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+angular_velocity:
+  x: -0.03838698810056973
+  y: -0.17318853295523645
+  z: 0.02712739237336922
+angular_velocity_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+linear_acceleration:
+  x: -1.3928433656692505
+  y: 0.922074556350708
+  z: 11.35859203338623
+linear_acceleration_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+---
+header:
+  stamp:
+    sec: 0
+    nanosec: 0
+  frame_id: zed_0_imu_link
+orientation:
+  x: 0.0
+  y: 1.0
+  z: 0.0
+  w: 0.0
+orientation_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+angular_velocity:
+  x: 0.0
+  y: 0.0
+  z: 0.0
+angular_velocity_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+linear_acceleration:
+  x: 0.0
+  y: 0.0
+  z: 0.0
+linear_acceleration_covariance:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+---

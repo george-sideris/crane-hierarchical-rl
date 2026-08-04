@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot name="logloader">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <mesh filename="package://liebherr_urdf/meshes/log_loader/udc_light.stl"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0.0 0.0 -0.6570000000000001"/>
+      <material name="gray"/>
+    </visual>
+    <collision name="cropbox">
+      <geometry>
+        <box size="6.5 5.0 2.0"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.09299999999999986"/>
+    </collision>
+  </link>
+  <link name="rotation_deck">
+    <visual>
+      <geometry>
+        <mesh filename="package://liebherr_urdf/meshes/log_loader/upc.stl"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 -0.9650000000000001"/>
+      <material name="yellow"/>
+    </visual>
+    <collision name="cropbox">
+      <geometry>
+        <box size="2.75 3.2 2.9"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 -0.335"/>
+    </collision>
+  </link>
+  <link name="boom">
+    <visual>
+      <geometry>
+        <mesh filename="package://liebherr_urdf/meshes/log_loader/boom.stl"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
+      <material name="yellow"/>
+    </visual>
+    <collision name="cropbox">
+      <geometry>
+        <box size="9.7 2.2 2.1"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="4.6 -0.25 0.0"/>
+    </collision>
+  </link>
+  <link name="stick">
+    <visual>
+      <geometry>
+        <mesh filename="package://liebherr_urdf/meshes/log_loader/stick.stl"/>
+      </geometry>
+      <origin rpy="0 0 0.08053" xyz="0.0 0.0 0.0"/>
+      <material name="yellow"/>
+    </visual>
+    <collision name="cropbox">
+      <geometry>
+        <box size="7.5 2.0 2.1"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="3.5 0.0 0.0"/>
+    </collision>
+  </link>
+  <link name="hanger">
+    <visual>
+      <geometry>
+        <mesh filename="package://liebherr_urdf/meshes/log_loader/hanger.stl"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
+      <material name="gray"/>
+    </visual>
+  </link>
+  <!-- JOINTS -->
+  <joint name="slew_joint" type="revolute">
+    <parent link="base_link"/>
+    <child link="rotation_deck"/>
+    <origin rpy="0 0 0" xyz="0 0 1.7890000000000001"/>
+    <axis xyz="0 0 -1"/>
+    <limit effort="1000.0" lower="-6.283185307179586" upper="6.283185307179586" velocity="0.5"/>
+  </joint>
+  <joint name="boom_joint" type="revolute">
+    <parent link="rotation_deck"/>
+    <child link="boom"/>
+    <origin rpy="1.5707963267948966 0 0" xyz="0.11499999999999999 -0.061 0.0"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="1000.0" lower="-0.3" upper="2" velocity="0.5"/>
+  </joint>
+  <joint name="stick_joint" type="revolute">
+    <parent link="boom"/>
+    <child link="stick"/>
+    <origin rpy="0 0 0" xyz="9.1 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="1000.0" lower="-3" upper="0" velocity="0.5"/>
+  </joint>
+  <joint name="hanger_joint" type="revolute">
+    <parent link="stick"/>
+    <child link="hanger"/>
+    <origin rpy="0 0 0" xyz="6.8 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="1000.0" lower="-3.141592653589793" upper="3.141592653589793" velocity="0.5"/>
+  </joint>
+</robot>

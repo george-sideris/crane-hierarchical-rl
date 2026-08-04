@@ -1,0 +1,9 @@
+sim_interface/Waypoint[] waypoints
+string path_type                        # "linear", "cubic_spline"
+float32 resolution                      # used for interpolation if needed
+
+---
+bool success
+
+---
+float32 percent_complete

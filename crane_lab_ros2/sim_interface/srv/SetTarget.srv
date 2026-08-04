@@ -1,0 +1,6 @@
+float64[3] target_xyz
+float64 target_yaw
+float64 grapple_opening
+---
+bool target_set
+

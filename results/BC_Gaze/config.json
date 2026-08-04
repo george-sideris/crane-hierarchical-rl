@@ -1,0 +1,15 @@
+{
+  "timestamp": "20260622_060221",
+  "num_envs": 20,
+  "num_episodes": 100,
+  "num_points": 1024,
+  "depth_range": [
+    1.0,
+    10.0
+  ],
+  "domain_randomization": false,
+  "batch_size": 64,
+  "lr": 0.0001,
+  "epochs": 100,
+  "dropout": 0.2
+}

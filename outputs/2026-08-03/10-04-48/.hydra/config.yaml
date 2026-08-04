@@ -1,0 +1,748 @@
+env:
+  viewer:
+    eye:
+    - 7.5
+    - 7.5
+    - 7.5
+    lookat:
+    - 0.0
+    - 0.0
+    - 0.0
+    cam_prim_path: /OmniverseKit_Persp
+    resolution:
+    - 1280
+    - 720
+    origin_type: world
+    env_index: 0
+    asset_name: null
+    body_name: null
+  sim:
+    physics_prim_path: /physicsScene
+    device: cuda:0
+    dt: 0.008333333333333333
+    render_interval: 2
+    gravity:
+    - 0.0
+    - 0.0
+    - -9.81
+    enable_scene_query_support: false
+    use_fabric: true
+    physx:
+      solver_type: 1
+      min_position_iteration_count: 1
+      max_position_iteration_count: 255
+      min_velocity_iteration_count: 0
+      max_velocity_iteration_count: 255
+      enable_ccd: false
+      enable_stabilization: false
+      enable_enhanced_determinism: false
+      bounce_threshold_velocity: 0.5
+      friction_offset_threshold: 0.04
+      friction_correlation_distance: 0.025
+      gpu_max_rigid_contact_count: 8388608
+      gpu_max_rigid_patch_count: 163840
+      gpu_found_lost_pairs_capacity: 2097152
+      gpu_found_lost_aggregate_pairs_capacity: 33554432
+      gpu_total_aggregate_pairs_capacity: 2097152
+      gpu_collision_stack_size: 67108864
+      gpu_heap_capacity: 67108864
+      gpu_temp_buffer_capacity: 16777216
+      gpu_max_num_partitions: 8
+      gpu_max_soft_body_contacts: 1048576
+      gpu_max_particle_contacts: 1048576
+    physics_material:
+      func: isaaclab.sim.spawners.materials.physics_materials:spawn_rigid_body_material
+      static_friction: 0.5
+      dynamic_friction: 0.5
+      restitution: 0.0
+      friction_combine_mode: average
+      restitution_combine_mode: average
+      compliant_contact_stiffness: 0.0
+      compliant_contact_damping: 0.0
+    render:
+      enable_translucency: null
+      enable_reflections: null
+      enable_global_illumination: null
+      antialiasing_mode: null
+      enable_dlssg: null
+      enable_dl_denoiser: null
+      dlss_mode: null
+      enable_direct_lighting: null
+      samples_per_pixel: null
+      enable_shadows: null
+      enable_ambient_occlusion: null
+      carb_settings: null
+      rendering_mode: null
+    create_stage_in_memory: false
+  ui_window_class_type: isaaclab.envs.ui.base_env_window:BaseEnvWindow
+  seed: null
+  decimation: 2
+  is_finite_horizon: false
+  episode_length_s: 600.0
+  scene:
+    num_envs: 1024
+    env_spacing: 12.0
+    lazy_sensor_update: true
+    replicate_physics: true
+    filter_collisions: true
+    clone_in_fabric: false
+    crane:
+      class_type: isaaclab.assets.articulation.articulation:Articulation
+      prim_path: '{ENV_REGEX_NS}/Crane'
+      spawn:
+        func: isaaclab.sim.spawners.from_files.from_files:spawn_from_usd
+        visible: true
+        semantic_tags: null
+        copy_from_source: true
+        mass_props: null
+        deformable_props: null
+        rigid_props:
+          rigid_body_enabled: null
+          kinematic_enabled: null
+          disable_gravity: false
+          linear_damping: null
+          angular_damping: null
+          max_linear_velocity: null
+          max_angular_velocity: null
+          max_depenetration_velocity: 5.0
+          max_contact_impulse: null
+          enable_gyroscopic_forces: null
+          retain_accelerations: null
+          solver_position_iteration_count: null
+          solver_velocity_iteration_count: null
+          sleep_threshold: null
+          stabilization_threshold: null
+        collision_props: null
+        activate_contact_sensors: false
+        scale: null
+        articulation_props:
+          articulation_enabled: null
+          enabled_self_collisions: true
+          solver_position_iteration_count: 16
+          solver_velocity_iteration_count: 1
+          sleep_threshold: null
+          stabilization_threshold: null
+          fix_root_link: null
+        fixed_tendons_props: null
+        spatial_tendons_props: null
+        joint_drive_props: null
+        visual_material_path: material
+        visual_material: null
+        usd_path: /workspace/crane_testbed/assets/scenes/crane.usd
+        variants: null
+      init_state:
+        pos:
+        - 6.0
+        - 0.0
+        - 1.423
+        rot:
+        - 1.0
+        - 0.0
+        - 0.0
+        - 0.0
+        lin_vel:
+        - 0.0
+        - 0.0
+        - 0.0
+        ang_vel:
+        - 0.0
+        - 0.0
+        - 0.0
+        joint_pos:
+          basemast_to_mast: 0.0
+          mast_to_mainboom: 1.0
+          mainboom_to_stick: -0.9
+          stick_to_telescope: 0.13
+          telescope_to_upperpassive: 0.0
+          upperpassive_to_lowerpassive: 0.0
+          lowerpassive_to_basegrapple: 0.0
+          basegrapple_to_gripperleft: 0.0
+          basegrapple_to_gripperright: 0.0
+        joint_vel:
+          .*: 0.0
+      collision_group: 0
+      debug_vis: false
+      articulation_root_prim_path: null
+      soft_joint_pos_limit_factor: 1.0
+      actuators:
+        crane_base:
+          class_type: isaaclab.actuators.actuator_pd:ImplicitActuator
+          joint_names_expr:
+          - basemast_to_mast
+          effort_limit: null
+          velocity_limit: null
+          effort_limit_sim: 800000.0
+          velocity_limit_sim: 1.0
+          stiffness: 1000000.0
+          damping: 100000.0
+          armature: null
+          friction: null
+          dynamic_friction: null
+          viscous_friction: null
+        crane_boom:
+          class_type: isaaclab.actuators.actuator_pd:ImplicitActuator
+          joint_names_expr:
+          - mast_to_mainboom
+          effort_limit: null
+          velocity_limit: null
+          effort_limit_sim: 1000000.0
+          velocity_limit_sim: 2.0
+          stiffness: 1000000.0
+          damping: 100000.0
+          armature: null
+          friction: null
+          dynamic_friction: null
+          viscous_friction: null
+        crane_stick:
+          class_type: isaaclab.actuators.actuator_pd:ImplicitActuator
+          joint_names_expr:
+          - mainboom_to_stick
+          effort_limit: null
+          velocity_limit: null
+          effort_limit_sim: 600000.0
+          velocity_limit_sim: 2.0
+          stiffness: 1000000.0
+          damping: 100000.0
+          armature: null
+          friction: null
+          dynamic_friction: null
+          viscous_friction: null
+        crane_telescope:
+          class_type: isaaclab.actuators.actuator_pd:ImplicitActuator
+          joint_names_expr:
+          - stick_to_telescope
+          effort_limit: null
+          velocity_limit: null
+          effort_limit_sim: 500000.0
+          velocity_limit_sim: 2.0
+          stiffness: 1000000.0
+          damping: 100000.0
+          armature: null
+          friction: null
+          dynamic_friction: null
+          viscous_friction: null
+        passive_chain:
+          class_type: isaaclab.actuators.actuator_pd:ImplicitActuator
+          joint_names_expr:
+          - telescope_to_upperpassive
+          - upperpassive_to_lowerpassive
+          effort_limit: null
+          velocity_limit: null
+          effort_limit_sim: 10000.0
+          velocity_limit_sim: 2.0
+          stiffness: 0.0
+          damping: 100.0
+          armature: null
+          friction: null
+          dynamic_friction: null
+          viscous_friction: null
+        grapple_rotate:
+          class_type: isaaclab.actuators.actuator_pd:ImplicitActuator
+          joint_names_expr:
+          - lowerpassive_to_basegrapple
+          effort_limit: null
+          velocity_limit: null
+          effort_limit_sim: 20000.0
+          velocity_limit_sim: 5.0
+          stiffness: 50000.0
+          damping: 20000.0
+          armature: null
+          friction: null
+          dynamic_friction: null
+          viscous_friction: null
+        grippers:
+          class_type: isaaclab.actuators.actuator_pd:ImplicitActuator
+          joint_names_expr:
+          - basegrapple_to_gripper.*
+          effort_limit: null
+          velocity_limit: null
+          effort_limit_sim: 7500.0
+          velocity_limit_sim: 25.0
+          stiffness: 0.0
+          damping: 500.0
+          armature: null
+          friction: null
+          dynamic_friction: null
+          viscous_friction: null
+      actuator_value_resolution_debug_print: false
+    rack:
+      class_type: null
+      prim_path: '{ENV_REGEX_NS}/Rack'
+      spawn:
+        func: isaaclab.sim.spawners.from_files.from_files:spawn_from_usd
+        visible: true
+        semantic_tags: null
+        copy_from_source: true
+        mass_props: null
+        deformable_props: null
+        rigid_props: null
+        collision_props: null
+        activate_contact_sensors: false
+        scale:
+        - 1.0
+        - 1.0
+        - 1.0583333333333333
+        articulation_props: null
+        fixed_tendons_props: null
+        spatial_tendons_props: null
+        joint_drive_props: null
+        visual_material_path: material
+        visual_material: null
+        usd_path: /workspace/crane_testbed/assets/scenes/rack.usd
+        variants: null
+      init_state:
+        pos:
+        - 1.6360000000000001
+        - 1.816
+        - 0.0
+        rot:
+        - 0.999994
+        - 0.0
+        - 0.0
+        - -0.003491
+      collision_group: 0
+      debug_vis: false
+  events: null
+  observation_space: '{"type": "python", "space": "Box", "value": 3072}'
+  num_observations: null
+  state_space: '{"type": "python", "space": "Box", "value": 0}'
+  num_states: null
+  observation_noise_model: null
+  action_space: '{"type": "python", "space": "Box", "value": 5}'
+  num_actions: null
+  action_noise_model: null
+  rerender_on_reset: false
+  wait_for_textures: true
+  xr: null
+  max_logs_obs: 64
+  settle_time: 2.0
+  use_hierarchical_rl: true
+  gripper_close_step: 0.1
+  gripper_close_delay_s: 0.02
+  gripper_max_velocity: 10.0
+  gripper_kp: 8.0
+  crane_cfg:
+    class_type: isaaclab.assets.articulation.articulation:Articulation
+    prim_path: /World/envs/env_.*/Crane
+    spawn:
+      func: isaaclab.sim.spawners.from_files.from_files:spawn_from_usd
+      visible: true
+      semantic_tags: null
+      copy_from_source: true
+      mass_props: null
+      deformable_props: null
+      rigid_props:
+        rigid_body_enabled: null
+        kinematic_enabled: null
+        disable_gravity: false
+        linear_damping: null
+        angular_damping: null
+        max_linear_velocity: null
+        max_angular_velocity: null
+        max_depenetration_velocity: 5.0
+        max_contact_impulse: null
+        enable_gyroscopic_forces: null
+        retain_accelerations: null
+        solver_position_iteration_count: null
+        solver_velocity_iteration_count: null
+        sleep_threshold: null
+        stabilization_threshold: null
+      collision_props: null
+      activate_contact_sensors: false
+      scale: null
+      articulation_props:
+        articulation_enabled: null
+        enabled_self_collisions: true
+        solver_position_iteration_count: 16
+        solver_velocity_iteration_count: 1
+        sleep_threshold: null
+        stabilization_threshold: null
+        fix_root_link: null
+      fixed_tendons_props: null
+      spatial_tendons_props: null
+      joint_drive_props: null
+      visual_material_path: material
+      visual_material: null
+      usd_path: /workspace/crane_testbed/assets/scenes/crane.usd
+      variants: null
+    init_state:
+      pos:
+      - 6.0
+      - 0.0
+      - 1.423
+      rot:
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      lin_vel:
+      - 0.0
+      - 0.0
+      - 0.0
+      ang_vel:
+      - 0.0
+      - 0.0
+      - 0.0
+      joint_pos:
+        basemast_to_mast: 0.0
+        mast_to_mainboom: 1.0
+        mainboom_to_stick: -0.9
+        stick_to_telescope: 0.13
+        telescope_to_upperpassive: 0.0
+        upperpassive_to_lowerpassive: 0.0
+        lowerpassive_to_basegrapple: 0.0
+        basegrapple_to_gripperleft: 0.0
+        basegrapple_to_gripperright: 0.0
+      joint_vel:
+        .*: 0.0
+    collision_group: 0
+    debug_vis: false
+    articulation_root_prim_path: null
+    soft_joint_pos_limit_factor: 1.0
+    actuators:
+      crane_base:
+        class_type: isaaclab.actuators.actuator_pd:ImplicitActuator
+        joint_names_expr:
+        - basemast_to_mast
+        effort_limit: null
+        velocity_limit: null
+        effort_limit_sim: 800000.0
+        velocity_limit_sim: 1.0
+        stiffness: 1000000.0
+        damping: 100000.0
+        armature: null
+        friction: null
+        dynamic_friction: null
+        viscous_friction: null
+      crane_boom:
+        class_type: isaaclab.actuators.actuator_pd:ImplicitActuator
+        joint_names_expr:
+        - mast_to_mainboom
+        effort_limit: null
+        velocity_limit: null
+        effort_limit_sim: 1000000.0
+        velocity_limit_sim: 2.0
+        stiffness: 1000000.0
+        damping: 100000.0
+        armature: null
+        friction: null
+        dynamic_friction: null
+        viscous_friction: null
+      crane_stick:
+        class_type: isaaclab.actuators.actuator_pd:ImplicitActuator
+        joint_names_expr:
+        - mainboom_to_stick
+        effort_limit: null
+        velocity_limit: null
+        effort_limit_sim: 600000.0
+        velocity_limit_sim: 2.0
+        stiffness: 1000000.0
+        damping: 100000.0
+        armature: null
+        friction: null
+        dynamic_friction: null
+        viscous_friction: null
+      crane_telescope:
+        class_type: isaaclab.actuators.actuator_pd:ImplicitActuator
+        joint_names_expr:
+        - stick_to_telescope
+        effort_limit: null
+        velocity_limit: null
+        effort_limit_sim: 500000.0
+        velocity_limit_sim: 2.0
+        stiffness: 1000000.0
+        damping: 100000.0
+        armature: null
+        friction: null
+        dynamic_friction: null
+        viscous_friction: null
+      passive_chain:
+        class_type: isaaclab.actuators.actuator_pd:ImplicitActuator
+        joint_names_expr:
+        - telescope_to_upperpassive
+        - upperpassive_to_lowerpassive
+        effort_limit: null
+        velocity_limit: null
+        effort_limit_sim: 10000.0
+        velocity_limit_sim: 2.0
+        stiffness: 0.0
+        damping: 100.0
+        armature: null
+        friction: null
+        dynamic_friction: null
+        viscous_friction: null
+      grapple_rotate:
+        class_type: isaaclab.actuators.actuator_pd:ImplicitActuator
+        joint_names_expr:
+        - lowerpassive_to_basegrapple
+        effort_limit: null
+        velocity_limit: null
+        effort_limit_sim: 20000.0
+        velocity_limit_sim: 5.0
+        stiffness: 50000.0
+        damping: 20000.0
+        armature: null
+        friction: null
+        dynamic_friction: null
+        viscous_friction: null
+      grippers:
+        class_type: isaaclab.actuators.actuator_pd:ImplicitActuator
+        joint_names_expr:
+        - basegrapple_to_gripper.*
+        effort_limit: null
+        velocity_limit: null
+        effort_limit_sim: 7500.0
+        velocity_limit_sim: 25.0
+        stiffness: 0.0
+        damping: 500.0
+        armature: null
+        friction: null
+        dynamic_friction: null
+        viscous_friction: null
+    actuator_value_resolution_debug_print: false
+  control_joint_names:
+  - basemast_to_mast
+  - mast_to_mainboom
+  - mainboom_to_stick
+  - stick_to_telescope
+  rack_x: 1.6360000000000001
+  rack_y: 1.816
+  center_y_world: 1.816
+  rows: 40
+  layers: 8
+  spacing_y: 0.16
+  spacing_z: 0.12
+  base_z: 0.1
+  num_logs: 200
+  rack_usd: /workspace/crane_testbed/assets/scenes/rack.usd
+  zed_noise: false
+  zed_axial_coeff: 0.0014
+  zed_dropout: 0.06
+  log_usd: /workspace/crane_testbed/assets/scenes/testbed_log_taper.usd
+  log_mass: 15.0
+  log_density: 850.0
+  log_roll: 0.0
+  log_pitch: 0.0
+  log_yaw: 90.0
+  row_y_jitter: 0.0
+  layer_y_offset: 0.08
+  spawn_height: 0.12
+  jitter_xy: 0.0
+  jitter_height: 0.0
+  jitter_ang: 0.0
+  enable_domain_randomization: false
+  heuristic_target_noise: 0.0
+  heuristic_yaw_noise_auto: true
+  reward_formula: multiplicative
+  normalize_reward: false
+  max_graspable_logs: 15
+  normalized_efficiency_scale: 10.0
+  failure_penalty: -1.0
+  use_alignment_reward: true
+  use_stability_reward: true
+  stability_snapshot: false
+  stability_exponent: 4
+  debug_reward: false
+  platform_bed_margin: 0.0
+  platform_floor_expert: true
+  cycle_cost: 5.0
+  clearing_bonus_scale: 0.0
+  proportional_clearing_bonus: false
+  clearing_bonus_threshold: 1.0
+  clearing_bonus_thresholds: null
+  curriculum_schedule: null
+  enable_camera: true
+  camera_cfg:
+    class_type: isaaclab.sensors.camera.tiled_camera:TiledCamera
+    prim_path: /World/envs/env_.*/Crane/mast/BasemastCam
+    update_period: 0.0
+    history_length: 0
+    debug_vis: false
+    offset:
+      pos:
+      - -0.4484
+      - -0.0567
+      - 1.279
+      rot:
+      - 0.5513
+      - -0.83
+      - -0.0751
+      - 0.0393
+      convention: ros
+    spawn:
+      func: isaaclab.sim.spawners.sensors.sensors:spawn_camera
+      visible: true
+      semantic_tags: null
+      copy_from_source: true
+      projection_type: pinhole
+      clipping_range:
+      - 0.3
+      - 20.0
+      focal_length: 2.2
+      focus_distance: 5.0
+      f_stop: 0.0
+      horizontal_aperture: 5.656
+      vertical_aperture: null
+      horizontal_aperture_offset: 0.0
+      vertical_aperture_offset: 0.0
+      lock_camera: true
+    depth_clipping_behavior: none
+    data_types:
+    - rgb
+    - depth
+    - semantic_segmentation
+    width: 1920
+    height: 1080
+    update_latest_camera_pose: false
+    semantic_filter: '*:*'
+    colorize_semantic_segmentation: true
+    colorize_instance_id_segmentation: true
+    colorize_instance_segmentation: true
+    semantic_segmentation_mapping: {}
+  record_video: false
+  video_capture_interval: 4
+  overview_camera_cfg:
+    class_type: isaaclab.sensors.camera.tiled_camera:TiledCamera
+    prim_path: /World/envs/env_.*/OverviewCamera
+    update_period: 0.0
+    history_length: 0
+    debug_vis: false
+    offset:
+      pos:
+      - -3.0
+      - -5.0
+      - 10.0
+      rot:
+      - 0.864
+      - 0.257
+      - -0.131
+      - -0.413
+      convention: opengl
+    spawn:
+      func: isaaclab.sim.spawners.sensors.sensors:spawn_camera
+      visible: true
+      semantic_tags: null
+      copy_from_source: true
+      projection_type: pinhole
+      clipping_range:
+      - 0.5
+      - 150.0
+      focal_length: 5.0
+      focus_distance: 40.0
+      f_stop: 0.0
+      horizontal_aperture: 14.0
+      vertical_aperture: null
+      horizontal_aperture_offset: 0.0
+      vertical_aperture_offset: 0.0
+      lock_camera: true
+    depth_clipping_behavior: none
+    data_types:
+    - rgb
+    width: 1280
+    height: 720
+    update_latest_camera_pose: false
+    semantic_filter: '*:*'
+    colorize_semantic_segmentation: true
+    colorize_instance_id_segmentation: true
+    colorize_instance_segmentation: true
+    semantic_segmentation_mapping: {}
+  sideview_camera_cfg:
+    class_type: isaaclab.sensors.camera.tiled_camera:TiledCamera
+    prim_path: /World/envs/env_.*/SideviewCamera
+    update_period: 0.0
+    history_length: 0
+    debug_vis: false
+    offset:
+      pos:
+      - 0.0
+      - -4.0
+      - 5.0
+      rot:
+      - 0.924
+      - 0.383
+      - 0.0
+      - 0.0
+      convention: opengl
+    spawn:
+      func: isaaclab.sim.spawners.sensors.sensors:spawn_camera
+      visible: true
+      semantic_tags: null
+      copy_from_source: true
+      projection_type: pinhole
+      clipping_range:
+      - 0.5
+      - 50.0
+      focal_length: 8.0
+      focus_distance: 6.0
+      f_stop: 0.0
+      horizontal_aperture: 10.0
+      vertical_aperture: null
+      horizontal_aperture_offset: 0.0
+      vertical_aperture_offset: 0.0
+      lock_camera: true
+    depth_clipping_behavior: none
+    data_types:
+    - rgb
+    width: 640
+    height: 360
+    update_latest_camera_pose: false
+    semantic_filter: '*:*'
+    colorize_semantic_segmentation: true
+    colorize_instance_id_segmentation: true
+    colorize_instance_segmentation: true
+    semantic_segmentation_mapping: {}
+  action_scale: 1.0
+  rew_alive: 0.1
+  rew_pos_l2: -0.25
+  rew_vel_l1: -0.01
+  num_points: 1024
+  depth_range_min: 1.0
+  depth_range_max: 10.0
+  use_raw_pointcloud: true
+  asymmetric_critic: true
+agent:
+  seed: 42
+  device: cuda:0
+  num_steps_per_env: 4
+  max_iterations: 5000
+  empirical_normalization: false
+  policy:
+    class_name: rsl_rl.modules.PointNetActorCritic
+    init_noise_std: 1.0
+    noise_std_type: scalar
+    actor_hidden_dims:
+    - 128
+    - 64
+    critic_hidden_dims:
+    - 128
+    - 64
+    activation: elu
+    norm_type: batchnorm
+    encoder_lr_scale: 0.2
+  algorithm:
+    class_name: PPO
+    num_learning_epochs: 5
+    num_mini_batches: 4
+    learning_rate: 0.0003
+    schedule: adaptive
+    gamma: 0.99
+    lam: 0.95
+    entropy_coef: 0.01
+    desired_kl: 0.01
+    max_grad_norm: 1.0
+    value_loss_coef: 1.0
+    use_clipped_value_loss: true
+    clip_param: 0.2
+    normalize_advantage_per_mini_batch: false
+    symmetry_cfg: null
+    rnd_cfg: null
+  clip_actions: null
+  save_interval: 10
+  experiment_name: crane_pointcloud
+  run_name: ''
+  logger: tensorboard
+  neptune_project: null
+  wandb_project: null
+  resume: false
+  load_run: null
+  load_checkpoint: null

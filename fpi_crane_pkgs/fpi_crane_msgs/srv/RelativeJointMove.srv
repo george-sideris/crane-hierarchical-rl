@@ -1,0 +1,11 @@
+uint32 sequence_id
+string[] joint_names
+float64[] delta_positions
+float64 velocity
+float64 min_duration
+---
+uint32 sequence_id
+bool success
+string message
+float64 duration
+float64[] target_positions

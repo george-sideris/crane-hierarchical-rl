@@ -1,0 +1,65 @@
+# Measure crane stability over the WAIT_STABILITY interval:
+# measurement_start <= sample stamp <= measurement_end.
+# All angles are radians; all variances are radians squared.
+builtin_interfaces/Time measurement_start
+float64 timeout_sec
+float64 required_window_sec
+float64 required_dwell_sec
+uint32 min_samples
+float64 max_sample_gap_sec
+float64 stability_variance_threshold_rad2
+float64 gravity_variance_threshold_rad2
+float64 grapple_variance_threshold_rad2
+float64 reward_exponent
+---
+bool success
+string failure_reason
+
+builtin_interfaces/Time measurement_start
+builtin_interfaces/Time measurement_end
+
+float64 t_settle_sec
+float64 theta_max_rad
+float64 theta_rms_rad
+# Arithmetic mean of theta_i in the accepted rolling settle window.
+float64 theta_settle_rad
+# Angle between representative mean vectors from the accepted window.
+float64 theta_from_mean_vectors_rad
+
+geometry_msgs/Vector3 settle_z_grapple_base
+geometry_msgs/Vector3 settle_z_up_base
+float64 settle_dot_product
+float64 settle_reward
+float64 reward_exponent
+
+builtin_interfaces/Time accepted_window_start
+builtin_interfaces/Time accepted_window_end
+
+uint32 measurement_sample_count
+uint32 accepted_window_sample_count
+
+float64 final_stability_variance_rad2
+float64 final_gravity_variance_rad2
+float64 final_grapple_variance_rad2
+
+# Full measurement time series (offsets relative to measurement_start),
+# for angle-vs-time plots; empty when no samples arrived.
+float64[] sample_offsets_sec
+float64[] sample_theta_rad
+---
+builtin_interfaces/Time stamp
+string status
+float64 elapsed_sec
+float64 current_theta_rad
+float64 theta_max_rad
+float64 theta_rms_rad
+
+float64 current_stability_variance_rad2
+float64 current_gravity_variance_rad2
+float64 current_grapple_variance_rad2
+
+float64 candidate_dwell_sec
+uint32 window_sample_count
+
+builtin_interfaces/Time window_start
+builtin_interfaces/Time window_end

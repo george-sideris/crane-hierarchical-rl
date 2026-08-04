@@ -63,7 +63,7 @@ SAC_RUN = {
 
 SMOOTH_WINDOW = 20
 SAC_SMOOTH_WINDOW = 5
-X_MAX_TRANSITIONS = 150_000
+X_MAX_TRANSITIONS = 50_000
 
 
 # ── Style ─────────────────────────────────────────────────────────────
@@ -152,7 +152,7 @@ def smooth(values, window):
 
 # ── Plot ──────────────────────────────────────────────────────────────
 def main():
-    fig, ax = plt.subplots(figsize=(5, 3.2))
+    fig, ax = plt.subplots(figsize=(3.5, 2.4))  # single-column IEEE width
 
     # Plot PPO runs
     for label, cfg in PPO_RUNS.items():
@@ -162,8 +162,8 @@ def main():
         mask = steps <= X_MAX_TRANSITIONS
         steps, values = steps[mask], values[mask]
         smoothed = smooth(values, SMOOTH_WINDOW)
-        ax.plot(steps, values, color=cfg["color"], alpha=0.12, linewidth=0.3)
-        ax.plot(steps, smoothed, color=cfg["color"], linewidth=1.0,
+        ax.plot(steps, values, color=cfg["color"], alpha=0.15, linewidth=0.3)
+        ax.plot(steps, smoothed, color=cfg["color"], linewidth=0.8,
                 linestyle=cfg["linestyle"], label=label)
 
     # Plot SAC
@@ -175,19 +175,19 @@ def main():
     steps, values = steps[mask], values[mask]
     smoothed = smooth(values, SAC_SMOOTH_WINDOW)
     ax.plot(steps, values, color=sac["color"], alpha=0.15, linewidth=0.3)
-    ax.plot(steps, smoothed, color=sac["color"], linewidth=1.0,
+    ax.plot(steps, smoothed, color=sac["color"], linewidth=0.8,
             linestyle=sac["linestyle"], label=sac["label"])
 
-    # Style
+    # Style (matching paper figure)
     ax.set_xlabel("Environment Steps (all envs)")
     ax.set_ylabel("Mean Episode Return")
     ax.set_xlim(0, X_MAX_TRANSITIONS)
     ax.grid(True, alpha=0.25, linewidth=0.4)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    ax.legend(loc="center right", framealpha=0.9, edgecolor="none",
-              fontsize=6.5, handlelength=1.5, handletextpad=0.4,
-              borderpad=0.4, labelspacing=0.3)
+    ax.legend(loc="lower right", framealpha=0.9, edgecolor="none",
+              fontsize=6, handlelength=1.2, handletextpad=0.4,
+              borderpad=0.3, labelspacing=0.25)
 
     ax.xaxis.set_major_formatter(
         plt.FuncFormatter(lambda x, _: f"{x/1000:.0f}k" if x > 0 else "0"))

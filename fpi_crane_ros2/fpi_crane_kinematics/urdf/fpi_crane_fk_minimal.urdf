@@ -1,0 +1,61 @@
+<?xml version="1.0" ?>
+<robot name="crane_robot_fk_minimal">
+  <!-- Minimal kinematic chain for base_link -> grapplecarrier FK/IKPy -->
+  <link name="base_link"/>
+  <link name="mast"/>
+  <link name="mainboom"/>
+  <link name="stick"/>
+  <link name="telescope"/>
+  <link name="upperpassive"/>
+  <link name="lowerpassive"/>
+  <link name="grapplecarrier"/>
+  <joint name="slew_joint" type="revolute">
+    <parent link="base_link"/>
+    <child link="mast"/>
+    <origin xyz="0 0 0.26881"/>
+    <axis rpy="0 0 0" xyz="0 0 1"/>
+    <limit effort="500.0" lower="-1.74533" upper="1.74533" velocity="0.1745"/>
+  </joint>
+  <joint name="boom_joint" type="revolute">
+    <parent link="mast"/>
+    <child link="mainboom"/>
+    <origin xyz="0 -0.0601374 1.09553"/>
+    <axis rpy="0 0 0" xyz="1 0 0"/>
+    <limit effort="500.0" lower="-0.383972" upper="1.309" velocity="0.1745"/>
+  </joint>
+  <joint name="stick_joint" type="revolute">
+    <parent link="mainboom"/>
+    <child link="stick"/>
+    <origin xyz="0 3.04904 -0.00649"/>
+    <axis rpy="0 0 0" xyz="1 0 0"/>
+    <limit effort="500.0" lower="-3.08574" upper="0.035" velocity="0.1745"/>
+  </joint>
+  <joint name="telescope_joint" type="prismatic">
+    <parent link="stick"/>
+    <child link="telescope"/>
+    <origin xyz="0 0.1256771629 0.21905106705"/>
+    <axis rpy="0 0 0" xyz="0 0.997833966 -0.065782793"/>
+    <limit effort="500.0" lower="0.13" upper="1.8" velocity="0.1"/>
+  </joint>
+  <joint name="hanger_joint" type="revolute">
+    <parent link="telescope"/>
+    <child link="upperpassive"/>
+    <origin xyz="0 2.03711 -0.20229"/>
+    <axis rpy="0 0 0" xyz="1 0 0"/>
+    <limit effort="500.0" lower="-3.14159" upper="3.14159" velocity="0.1745"/>
+  </joint>
+  <joint name="bearingfork_joint" type="revolute">
+    <parent link="upperpassive"/>
+    <child link="lowerpassive"/>
+    <origin xyz="0 0 -0.154"/>
+    <axis rpy="0 0 0" xyz="0 1 0"/>
+    <limit effort="500.0" lower="-3.14159" upper="3.14159" velocity="0.1745"/>
+  </joint>
+  <joint name="grapplecarrier_joint" type="revolute">
+    <parent link="lowerpassive"/>
+    <child link="grapplecarrier"/>
+    <origin xyz="0 0 -0.261"/>
+    <axis rpy="0 -1.22173 0" xyz="0 0 1"/>
+    <limit effort="500.0" lower="-3.1241" upper="3.1241" velocity="0.1745"/>
+  </joint>
+</robot>

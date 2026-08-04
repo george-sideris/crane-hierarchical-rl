@@ -24,26 +24,67 @@ sys.path.insert(0, str(crane_scripts_path))
 
 # Parse args before IsaacLab imports
 parser = argparse.ArgumentParser(description="Play BC pointcloud policy")
-parser.add_argument("--checkpoint", type=str, required=True, help="Path to BC policy checkpoint")
+parser.add_argument("--checkpoint", type=str, default=None,
+                    help="Path to BC policy checkpoint (required for --policy_type bc)")
+parser.add_argument("--policy_type", type=str, default="bc", choices=["bc", "heuristic", "scoring"],
+                    help="'bc' = neural policy from --checkpoint. 'heuristic' = the DEPLOYED "
+                         "real-crane HeuristicPolicy (policy_loader.py: supported-highest-point, "
+                         "surface - dig, gated-PCA yaw) ported into sim eval. This is the bridge "
+                         "row between the sim and real tables: the same baseline controller "
+                         "measured in both domains.")
+parser.add_argument("--heuristic_dig", type=float, default=0.25,
+                    help="Dig below the perceived surface for --policy_type heuristic "
+                         "(0.25 = current real-crane setting)")
 parser.add_argument("--num_envs", type=int, default=1, help="Number of environments")
 parser.add_argument("--num_episodes", type=int, default=10, help="Number of episodes to run")
+parser.add_argument("--cam_width", type=int, default=1280, help="camera render width (match training; VRAM)")
+parser.add_argument("--cam_height", type=int, default=720, help="camera render height (match training; VRAM)")
 parser.add_argument("--device", type=str, default="cuda:0", help="Device")
 parser.add_argument("--domain_randomization", action="store_true", help="Enable domain randomization")
 parser.add_argument("--headless", action="store_true", help="Run without visualization")
 parser.add_argument("--save_metrics", action="store_true", help="Save metrics to JSON")
+parser.add_argument("--save_decisions", action="store_true",
+                    help="Save one record per grasp cycle (policy input cloud, raw action, decoded "
+                         "target, outcome) to decisions_<timestamp>.npz next to the metrics JSON. "
+                         "With a fixed --seed, records are paired across policies (same piles) for "
+                         "state-vs-decision analysis and offline counterfactual replay.")
 parser.add_argument("--output_dir", type=str, default=None, help="Output directory for metrics")
 parser.add_argument("--visualize", action="store_true", help="Save per-step visualization PNGs")
 parser.add_argument("--viz_dir", type=str, default=None, help="Directory for viz PNGs (default: checkpoint dir / viz)")
 parser.add_argument("--paper_viz", action="store_true", help="Save paper-quality pipeline and progression figures")
 parser.add_argument("--raw_pcd", action="store_true", help="Use raw (unmasked) point cloud instead of segmented log-only points")
+parser.add_argument("--support_gate", type=float, default=0.0,
+                    help="drop cloud points with 0.5m xy support < frac*max BEFORE the policy "
+                         "(policy-agnostic outlier gate; parity layer for the noise sweep)")
+parser.add_argument("--crop_margin", type=float, default=0.0,
+                    help="Widen the OBSERVATION crop by this many metres in x/y and BELOW in z (action box "
+                         "unchanged), so the bed plane / rails / pole corners are visible. Must match the "
+                         "value the policy was TRAINED with.")
+parser.add_argument("--crop_to_bounds", action="store_true",
+                    help="Crop the point cloud to the action-bounds box before FPS (removes grapple/trailer/"
+                         "background). MUST be matched at deployment for sim2real.")
 parser.add_argument("--seed", type=int, default=None, help="Random seed for deterministic evaluation")
 parser.add_argument("--obs_noise", type=float, default=0.0, help="Gaussian noise σ added to PCD coordinates (meters)")
+parser.add_argument("--zed_noise", action="store_true",
+                    help="ZED-realistic sensor degradation: axial noise sigma = coeff*depth^2 applied to the "
+                         "DEPTH IMAGE before unprojection (so it lies along the camera ray, like the real "
+                         "stereo error) plus random pixel dropout. Unlike --obs_noise (isotropic on the "
+                         "cloud) this is the physical process, which is what makes it the right x-axis for "
+                         "an observation-degradation sweep.")
+parser.add_argument("--zed_axial_coeff", type=float, default=0.0014,
+                    help="axial sigma = coeff * depth^2 (m). 0.0014 = the characterised real ZED X; "
+                         "multiples of it degrade observation quality along the physically correct axis.")
+parser.add_argument("--zed_dropout", type=float, default=0.06,
+                    help="fraction of depth pixels randomly dropped (holes)")
 parser.add_argument("--action_noise", type=float, default=0.0, help="Gaussian noise σ added to policy action output")
 parser.add_argument("--record_video", action="store_true", help="Record video frames during episode (requires --num_envs 1)")
 parser.add_argument("--video_out", type=str, default="bc_policy_view.mp4", help="Output path for policy-view video")
 parser.add_argument("--overview_out", type=str, default="bc_overview.mp4", help="Output path for overview video")
 parser.add_argument("--sideview_out", type=str, default="bc_sideview.mp4", help="Output path for sideview video")
 parser.add_argument("--video_fps", type=int, default=30, help="Output video frame rate")
+parser.add_argument("--gaze", action="store_true",
+                    help="Load the gaze env (basemast cam + PH_GAZE phase) instead of the full env. "
+                         "(store_true to avoid argparse abbreviation clashing with the env's --env_spacing)")
 args_cli, _ = parser.parse_known_args()
 
 # IsaacLab imports
@@ -51,8 +92,11 @@ from isaaclab.app import AppLauncher
 app_launcher = AppLauncher(headless=args_cli.headless, enable_cameras=True)
 simulation_app = app_launcher.app
 
-# Import the environment
-from crane_rl_env_full import CraneDirectEnvFull, CraneDirectEnvCfgFull
+# Import the environment (same class names; gaze variant mounts the cam on the basemast)
+if args_cli.gaze:
+    from crane_rl_env_gaze import CraneDirectEnvFull, CraneDirectEnvCfgFull
+else:
+    from crane_rl_env_full import CraneDirectEnvFull, CraneDirectEnvCfgFull
 
 
 class PointNetEncoder(nn.Module):
@@ -146,28 +190,61 @@ def get_log_pointcloud_base_frame(env, env_idx: int, num_points: int,
                                    raw_pcd: bool = False) -> torch.Tensor:
     """Get point cloud in crane base frame (masked or raw)."""
     if raw_pcd:
-        pc_world = env.get_pointcloud_world(env_idx, max_points=5000, depth_range=depth_range)
+        # raw / sim2real: straight optical -> base (no world pivot), mirrors the real tf chain.
+        # High cap so the rack survives the crop (basemast scene is wide, rack ~8%); FPS-to-num_points
+        # after the crop is the real downsampler. Must match train_bc_pointcloud.py.
+        pc_base = env.get_pointcloud_base(env_idx, max_points=50000, depth_range=depth_range)
     else:
+        # segmented log-only (sim-only): world cloud, then world -> base.
         pc_world = env.get_log_pointcloud_world(env_idx, max_points=5000, depth_range=depth_range)
+        if pc_world.shape[0] == 0:
+            return torch.zeros((num_points, 3), device=env.device)
+        base_pos_w = env.crane.data.root_pos_w[env_idx]
+        base_quat_w = env.crane.data.root_quat_w[env_idx]
+        w, x, y, z = base_quat_w[0], base_quat_w[1], base_quat_w[2], base_quat_w[3]
+        R = torch.stack([
+            torch.stack([1 - 2*y*y - 2*z*z, 2*x*y - 2*w*z, 2*x*z + 2*w*y]),
+            torch.stack([2*x*y + 2*w*z, 1 - 2*x*x - 2*z*z, 2*y*z - 2*w*x]),
+            torch.stack([2*x*z - 2*w*y, 2*y*z + 2*w*x, 1 - 2*x*x - 2*y*y]),
+        ])
+        pc_base = (pc_world - base_pos_w) @ R
 
-    if pc_world.shape[0] == 0:
+    if pc_base.shape[0] == 0:
         return torch.zeros((num_points, 3), device=env.device)
 
-    # Transform to base frame
-    base_pos_w = env.crane.data.root_pos_w[env_idx]
-    base_quat_w = env.crane.data.root_quat_w[env_idx]
+    # Optionally crop to the action-bounds box (removes grapple/trailer/background; sim2real consistency).
+    # The SAME crop must be applied at deployment (pointcloud_pipeline.py) for a matching input.
+    # --crop_margin widens the OBSERVATION crop only (bed plane / rails / pole corners enter the
+    # cloud); the action box is untouched. Must match the value used at collection AND deployment.
+    if getattr(args_cli, "crop_to_bounds", False) and getattr(env, "_action_bounds_min", None) is not None:
+        bmin = env._action_bounds_min[env_idx]
+        bmax = env._action_bounds_max[env_idx]
+        g = float(getattr(args_cli, "crop_margin", 0.0))
+        m = ((pc_base[:, 0] >= bmin[0] - g) & (pc_base[:, 0] <= bmax[0] + g) &
+             (pc_base[:, 1] >= bmin[1] - g) & (pc_base[:, 1] <= bmax[1] + g) &
+             (pc_base[:, 2] >= bmin[2] - g) & (pc_base[:, 2] <= bmax[2]))
+        pc_base = pc_base[m]
+        if pc_base.shape[0] == 0:
+            return torch.zeros((num_points, 3), device=env.device)
 
-    pc_translated = pc_world - base_pos_w
-
-    w, x, y, z = base_quat_w[0], base_quat_w[1], base_quat_w[2], base_quat_w[3]
-    R = torch.stack([
-        torch.stack([1 - 2*y*y - 2*z*z, 2*x*y - 2*w*z, 2*x*z + 2*w*y]),
-        torch.stack([2*x*y + 2*w*z, 1 - 2*x*x - 2*z*z, 2*y*z - 2*w*x]),
-        torch.stack([2*x*z - 2*w*y, 2*y*z + 2*w*x, 1 - 2*x*x - 2*y*y]),
-    ])
-
-    pc_base = pc_translated @ R
     pc_sampled = farthest_point_sampling(pc_base, num_points)
+
+    # --support_gate: policy-agnostic cloud preprocessing - zero out points whose 0.5 m xy
+    # support is below frac * (cloud max). Parity layer for the sweep: the DEPLOYED heuristic
+    # already has ROR + a supported-candidate walk, the sim path has neither, so without this
+    # the sim heuristic's high-noise collapse conflates outlier-vulnerability with policy
+    # quality. Verified on the 26 real trial clouds: a support gate moves ZERO deployed-
+    # heuristic targets (structure is well-supported), so this is processing, not learning.
+    g = float(getattr(args_cli, "support_gate", 0.0))
+    if g > 0:
+        vmask = pc_sampled.abs().sum(1) > 1e-6
+        if int(vmask.sum()) > 2:
+            q = pc_sampled[vmask]
+            cnt = (torch.cdist(q[:, :2], q[:, :2]) < 0.5).sum(1).float()
+            drop = cnt < g * cnt.max()
+            if bool(drop.any()):
+                idx = torch.nonzero(vmask, as_tuple=False).squeeze(1)
+                pc_sampled[idx[drop]] = 0.0
 
     return pc_sampled
 
@@ -323,6 +400,53 @@ def save_step_viz(points_np, x, y, z, yaw, step_idx, viz_dir,
     fig.savefig(os.path.join(viz_dir, f"step_{step_idx:04d}.png"),
                 dpi=100, bbox_inches='tight')
     plt.close(fig)
+
+
+def save_gaze_rgbd(env, env_idx, pc, out_dir, pick_idx):
+    """ONE-SHOT: save the FULL raw SIM point cloud (base frame, no crop, no FPS) so it can be
+    compared interactively against the real ZED cloud (see calibration/compare_pcd.py)."""
+    if getattr(save_gaze_rgbd, "_done", False):
+        return
+    # raw SIM cloud (full, no FPS / no downsample), world -> base frame
+    pc_world = env.get_pointcloud_world(env_idx, max_points=400000, depth_range=(0.3, 20.0))
+    base_pos = env.crane.data.root_pos_w[env_idx]
+    bq = env.crane.data.root_quat_w[env_idx]
+    pcw = pc_world - base_pos
+    w, x, y, z = bq[0], bq[1], bq[2], bq[3]
+    Rm = torch.stack([
+        torch.stack([1 - 2*y*y - 2*z*z, 2*x*y - 2*w*z, 2*x*z + 2*w*y]),
+        torch.stack([2*x*y + 2*w*z, 1 - 2*x*x - 2*z*z, 2*y*z - 2*w*x]),
+        torch.stack([2*x*z - 2*w*y, 2*y*z + 2*w*x, 1 - 2*x*x - 2*y*y]),
+    ])
+    sim = (pcw @ Rm).cpu().numpy().astype(np.float32)
+    saved = None
+    for outp in ("/workspace/crane_testbed/calibration/out/sim_full_pcd.npy",
+                 os.path.join(out_dir, "sim_full_pcd.npy")):
+        try:
+            os.makedirs(os.path.dirname(outp), exist_ok=True)
+            np.save(outp, sim); saved = outp; break
+        except Exception:
+            pass
+    # SIM camera pose in the BASE frame — compare directly with the real ZED:
+    #   real ZED at gaze: pos (-0.08,-0.15,1.17)  look (-0.79,0.55,-0.28)
+    try:
+        cpw, cqw = env._gaze_camera_pose_w(env_idx)  # true pose from live mast (sensor pose is stale)
+        cam_b = ((cpw - base_pos) @ Rm).cpu().numpy()
+        w2, x2, y2, z2 = [float(v) for v in cqw]
+        # optical forward = +Z column of the camera rotation, world -> base
+        fwd_w = torch.tensor([2*(x2*z2 + w2*y2), 2*(y2*z2 - w2*x2), 1 - 2*(x2*x2 + y2*y2)],
+                             device=base_pos.device, dtype=base_pos.dtype)
+        fwd_b = (fwd_w @ Rm).cpu().numpy()
+        slew_now = float(env.crane.data.joint_pos[env_idx, env._ctrl_joint_idx[0]].item())
+        print(f"[gaze] SIM camera in BASE: pos ({cam_b[0]:.2f},{cam_b[1]:.2f},{cam_b[2]:.2f})  "
+              f"look ({fwd_b[0]:.2f},{fwd_b[1]:.2f},{fwd_b[2]:.2f})  [optical +Z, quat_w_ros]")
+        print(f"       REAL ZED in BASE : pos (-0.08,-0.15,1.17)  look (-0.79,0.55,-0.28)")
+        print(f"       slew joint at capture = {slew_now:.4f} rad (gaze target = 0.9913)")
+    except Exception as e:
+        print(f"[gaze] camera-pose print failed: {e}")
+    save_gaze_rgbd._done = True
+    print(f"[gaze] SAVED full sim PCD ({sim.shape[0]} pts, base frame) -> {saved}\n"
+          f"       Now run (in the calibration env):  python3 calibration/compare_pcd.py")
 
 
 def draw_grapple_footprint(ax, x, y, yaw, width=1.5, length=0.5,
@@ -913,12 +1037,77 @@ def save_episode_progression(episode_data, episode_idx, viz_dir, bounds_min=None
 
 def main():
     # Load policy
-    policy, num_points, metadata = load_bc_policy(args_cli.checkpoint, args_cli.device)
+    if args_cli.policy_type == "scoring":
+        # Per-point argmax head (scoring_head.py). Like the heuristic it returns METRES, so it goes
+        # through the same arctanh/cos-sin re-encoding and the env decode reproduces it exactly -
+        # NOT through load_bc_policy, whose checkpoints are action-space regressors.
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                         "..", "..", "fpi_crane_ros2", "fpi_crane_rl", "fpi_crane_rl"))
+        from policy_loader import ScoringHeadPolicy
+        assert args_cli.checkpoint, "--checkpoint is required for --policy_type scoring"
+        _bmin = np.array([-5.364, -1.684, -1.30], dtype=np.float32)
+        _bmax = np.array([-3.364, 5.316, 0.10], dtype=np.float32)
+        _sc = ScoringHeadPolicy(args_cli.checkpoint, _bmin, _bmax, cossin=True,
+                                device=args_cli.device)
+        num_points, metadata, action_dim = _sc.num_points, {}, 5
 
-    # Detect action dim from checkpoint
-    checkpoint = torch.load(args_cli.checkpoint, map_location=args_cli.device)
-    action_dim = checkpoint.get('action_dim', 4)
-    print(f"[Play] Num points: {num_points}, Action dim: {action_dim}")
+        def _enc(v, lo, hi):
+            n = np.clip(2.0 * (v - lo) / (hi - lo) - 1.0, -0.999, 0.999)
+            return float(np.arctanh(n))
+
+        def policy(obs):
+            out = torch.zeros((obs.shape[0], 5), device=obs.device)
+            for b in range(obs.shape[0]):
+                x, y, z, yaw = _sc.get_target(obs[b])
+                out[b, 0] = _enc(x, _bmin[0], _bmax[0])
+                out[b, 1] = _enc(y, _bmin[1], _bmax[1])
+                out[b, 2] = _enc(z, _bmin[2], _bmax[2])
+                out[b, 3] = float(np.cos(2.0 * yaw))
+                out[b, 4] = float(np.sin(2.0 * yaw))
+            return out
+
+        print(f"[Play] SCORING head, num_points={num_points}")
+    elif args_cli.policy_type == "heuristic":
+        # The deployed real-crane baseline, verbatim (fpi policy_loader.HeuristicPolicy), fed the
+        # SAME cropped training-coords cloud the nets get, its metre-space target re-encoded with
+        # the expert's arctanh/cos-sin scheme so the env decode reproduces it exactly.
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                         "..", "..", "fpi_crane_ros2", "fpi_crane_rl", "fpi_crane_rl"))
+        from policy_loader import HeuristicPolicy
+        _bmin = np.array([-5.364, -1.684, -1.30], dtype=np.float32)
+        _bmax = np.array([-3.364, 5.316, 0.10], dtype=np.float32)
+        _heur = HeuristicPolicy(_bmin, _bmax, cossin=True, dig=args_cli.heuristic_dig)
+        num_points, metadata, action_dim = 1024, {}, 5
+
+        def _enc(v, lo, hi):
+            n = np.clip(2.0 * (v - lo) / (hi - lo) - 1.0, -0.999, 0.999)
+            return float(np.arctanh(n))
+
+        def policy(obs):
+            out = torch.zeros((obs.shape[0], 5), device=obs.device)
+            for b in range(obs.shape[0]):
+                x, y, z, yaw = _heur.get_target(obs[b])
+                out[b, 0] = _enc(x, _bmin[0], _bmax[0])
+                out[b, 1] = _enc(y, _bmin[1], _bmax[1])
+                out[b, 2] = _enc(z, _bmin[2], _bmax[2])
+                out[b, 3] = float(np.cos(2.0 * yaw))
+                out[b, 4] = float(np.sin(2.0 * yaw))
+            return out
+
+        if args_cli.checkpoint is None:
+            args_cli.checkpoint = args_cli.output_dir or "logs/heuristic_sim_eval"
+            os.makedirs(args_cli.checkpoint, exist_ok=True)
+        print(f"[Play] HEURISTIC baseline (deployed real-crane rule), dig={args_cli.heuristic_dig}")
+    else:
+        assert args_cli.checkpoint, "--checkpoint is required for --policy_type bc"
+        policy, num_points, metadata = load_bc_policy(args_cli.checkpoint, args_cli.device)
+
+        # Detect action dim from checkpoint
+        checkpoint = torch.load(args_cli.checkpoint, map_location=args_cli.device)
+        action_dim = checkpoint.get('action_dim', 4)
+        print(f"[Play] Num points: {num_points}, Action dim: {action_dim}")
 
     # Create environment
     cfg = CraneDirectEnvCfgFull()
@@ -927,18 +1116,24 @@ def main():
     cfg.use_hierarchical_rl = True
     cfg.action_space = action_dim  # Match policy output (4D or 5D)
     cfg.enable_camera = True
+    cfg.camera_cfg.width = args_cli.cam_width      # match training render res + VRAM safety
+    cfg.camera_cfg.height = args_cli.cam_height
     if args_cli.paper_viz:
         cfg.camera_cfg.data_types = ["rgb", "depth", "semantic_segmentation"]
     else:
         cfg.camera_cfg.data_types = ["depth", "semantic_segmentation"]
     cfg.enable_domain_randomization = args_cli.domain_randomization
+    # Sensor degradation is applied at RENDER time by the env (_depth_for_cloud), i.e. along the
+    # camera ray before unprojection. Set explicitly here because this script owns its own parser.
+    cfg.zed_noise = bool(args_cli.zed_noise)
+    cfg.zed_axial_coeff = float(args_cli.zed_axial_coeff)
+    cfg.zed_dropout = float(args_cli.zed_dropout)
     if args_cli.seed is not None:
         cfg.seed = args_cli.seed
     if args_cli.record_video:
         assert args_cli.num_envs == 1, "--record_video requires --num_envs 1"
         cfg.record_video = True
         cfg.camera_cfg.data_types = ["rgb", "depth", "semantic_segmentation"]
-        from datetime import datetime
         _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         _media_dir = "/workspace/crane_testbed/media"
         os.makedirs(_media_dir, exist_ok=True)
@@ -1032,6 +1227,15 @@ def main():
 
     episode_rewards = torch.zeros(env.num_envs, device=env.device)
     episode_logs_cleared = torch.zeros(env.num_envs, device=env.device, dtype=torch.int32)
+    episode_true_cleared = torch.zeros(env.num_envs, device=env.device, dtype=torch.int32)
+
+    # GAZE input validation: save basemast RGB + depth (the policy inputs) at every gaze step.
+    gaze_viz_on = bool(getattr(args_cli, "gaze", False)) and hasattr(env, "PH_GAZE")
+    if gaze_viz_on:
+        gaze_viz_dir = os.path.join(args_cli.viz_dir or os.path.dirname(args_cli.checkpoint), "gaze_input")
+        os.makedirs(gaze_viz_dir, exist_ok=True)
+        gaze_step_idx = 0
+        print(f"[Gaze] Saving basemast RGB+depth at every gaze step to: {gaze_viz_dir}")
     episode_starting_logs = torch.zeros(env.num_envs, device=env.device, dtype=torch.int32)
     ep_successful_grasps = torch.zeros(env.num_envs, device=env.device, dtype=torch.int32)
     ep_failed_grasps = torch.zeros(env.num_envs, device=env.device, dtype=torch.int32)
@@ -1039,6 +1243,11 @@ def main():
     ep_stability_sum = torch.zeros(env.num_envs, device=env.device)
     ep_cycle_count = torch.zeros(env.num_envs, device=env.device, dtype=torch.int32)
     ep_clearing_curves = [[] for _ in range(env.num_envs)]  # per-env list of clearing % at each cycle
+    ep_clearing_curves_cum = [[] for _ in range(env.num_envs)]  # legacy cumulative-grasp curve
+    # Per-grasp decision records. ep_local_idx pairs episodes across policies under a fixed seed
+    # (env i's k-th episode is the same pile for every policy).
+    dec_records = []
+    ep_local_idx = [0] * env.num_envs
 
     # Per-episode result lists (for mean ± std reporting)
     per_ep_success_rates = []
@@ -1047,6 +1256,8 @@ def main():
     per_ep_stabilities = []
     per_ep_cycles = []
     per_ep_clearing_curves = []
+    per_ep_clearing_curves_cum = []
+    clearing_percentages_cum = []
 
     # Get starting log counts
     has_variable_logs = hasattr(env, '_per_env_log_counts') and env._per_env_log_counts is not None
@@ -1071,6 +1282,22 @@ def main():
                 pc_batch.append(pc)
             obs = torch.stack(pc_batch)  # (num_envs, num_points, 3)
 
+            # GAZE: once per pick cycle, when the crane has settled at the gaze pose, save the
+            # policy input (basemast RGB + this PCD) so the training input can be validated.
+            if gaze_viz_on and int(env._phase[0].item()) != env.PH_GAZE:
+                # After the decision-point restructuring, step() returns with the crane at the gaze
+                # pose and phase==HOVER_UP, so obs/camera here is the gaze view. We skip the very
+                # first iteration (still PH_GAZE at reset = home pose, before any step()).
+                # Warm up the color pass (RTX denoises over a few frames) for a non-blank RGB.
+                for _ in range(4):
+                    env.sim.render()
+                env._camera.update(dt=env.cfg.sim.dt)
+                for i in range(env.num_envs):
+                    save_gaze_rgbd(env, i, obs[i], gaze_viz_dir, gaze_step_idx)
+                if gaze_step_idx % 10 == 0:
+                    print(f"[Gaze] saved gaze input (RGB+depth+PCD) #{gaze_step_idx}")
+                gaze_step_idx += 1
+
             # Inject observation noise (Gaussian on PCD coordinates)
             if args_cli.obs_noise > 0:
                 obs = obs + torch.randn_like(obs) * args_cli.obs_noise
@@ -1086,6 +1313,24 @@ def main():
             if total_grasps < 5 or total_grasps % 100 == 0:
                 print(f"[Debug] Grasp {total_grasps}: points={obs.shape}, "
                       f"action=[{actions.min():.2f},{actions.max():.2f}]")
+
+            # Pre-step: snapshot policy input + decoded target (before env.step modifies state)
+            if args_cli.save_decisions:
+                dec_pre = []
+                _bed_margin = float(getattr(env.cfg, "platform_bed_margin", 0.0))
+                for i in range(env.num_envs):
+                    min_b = env._action_bounds_min[i].cpu().numpy()
+                    max_b = env._action_bounds_max[i].cpu().numpy()
+                    x, y, z, yaw = decode_action(actions[i], min_b, max_b)
+                    # record the EXECUTED z (env applies the platform bed floor at its own
+                    # decode) + the raw pre-clamp z, mirroring the real node's decisions.jsonl
+                    z_raw = z
+                    if _bed_margin > 0.0:
+                        z = max(z, float(min_b[2]) + _bed_margin)
+                    dec_pre.append((obs[i].cpu().numpy().reshape(-1, 3).copy(),
+                                    actions[i].cpu().numpy().copy(),
+                                    np.array([x, y, z, yaw], dtype=np.float32),
+                                    min_b.copy(), max_b.copy(), np.float32(z_raw)))
 
             # Pre-step: collect pipeline data for paper viz (before env.step modifies state)
             if args_cli.paper_viz:
@@ -1151,6 +1396,28 @@ def main():
                 alignment = env._prev_grasp_alignment[i].item() if hasattr(env, '_prev_grasp_alignment') else 0.0
                 stability = env._prev_grasp_stability[i].item() if hasattr(env, '_prev_grasp_stability') else 1.0
 
+                if args_cli.save_decisions:
+                    pts_i, raw_i, tgt_i, bmin_i, bmax_i, zraw_i = dec_pre[i]
+                    dec_knocked = int(env._prev_cycle_knocked_off[i].item()) if hasattr(env, '_prev_cycle_knocked_off') else 0
+                    if hasattr(env, '_prev_logs_remaining'):
+                        dec_remaining = int(env._prev_logs_remaining[i].item()) - logs_grasped - dec_knocked
+                    else:
+                        dec_remaining = -1
+                    dec_records.append({
+                        "env": i, "episode": ep_local_idx[i], "cycle": int(ep_cycle_count[i].item()),
+                        "points": pts_i, "raw_action": raw_i, "target": tgt_i,
+                        "bounds_min": bmin_i, "bounds_max": bmax_i, "z_raw": zraw_i,
+                        "logs_grasped": logs_grasped, "alignment": alignment,
+                        "stability": stability, "reward": float(rew[i].item()),
+                        "logs_remaining": dec_remaining, "knocked_off": dec_knocked,
+                        # MEASURED post-despawn rack count. logs_remaining above is DERIVED
+                        # (prev - grasped - knocked) and has been seen to go negative; prefer
+                        # this one for any clearing / c95 analysis. Added additively so rows
+                        # recorded before this change stay comparable on every other field.
+                        "logs_in_rack": (int(env._post_cycle_logs_in_rack[i].item())
+                                         if hasattr(env, "_post_cycle_logs_in_rack") else -1),
+                    })
+
                 # Save visualization with grasp result
                 if args_cli.visualize:
                     pts, vx, vy, vz, vyaw = viz_decoded[i]
@@ -1184,8 +1451,22 @@ def main():
                 episode_logs_cleared[i] += logs_grasped
                 ep_cycle_count[i] += 1
                 starting = max(1, int(episode_starting_logs[i].item()))
-                clear_pct_now = int(episode_logs_cleared[i].item()) / starting * 100
+                # Clearing is (starting - what is still in the rack), MEASURED after despawn.
+                # It used to be the cumulative sum of logs_grasped, which is a grasp tally rather
+                # than a clearing measure - it could exceed 100% (216/200 observed) and c95 read
+                # off that same curve, so it could cross 95% before the pile actually had. The
+                # cumulative version is kept alongside under *_cumgrasp so rows recorded before
+                # this change stay matchable; see metrics_version in the output.
+                if hasattr(env, "_post_cycle_logs_in_rack"):
+                    in_rack = int(env._post_cycle_logs_in_rack[i].item())
+                    episode_true_cleared[i] = max(0, starting - in_rack)
+                    clear_pct_now = int(episode_true_cleared[i].item()) / starting * 100
+                else:
+                    episode_true_cleared[i] = episode_logs_cleared[i]
+                    clear_pct_now = int(episode_logs_cleared[i].item()) / starting * 100
                 ep_clearing_curves[i].append(round(clear_pct_now, 1))
+                ep_clearing_curves_cum[i].append(
+                    round(int(episode_logs_cleared[i].item()) / starting * 100, 1))
                 if logs_grasped > 0:
                     successful_grasps += 1
                     total_alignment += alignment
@@ -1201,14 +1482,17 @@ def main():
             done = terminated | truncated
             for i in range(env.num_envs):
                 if done[i]:
+                    ep_local_idx[i] += 1
                     ep_reward = episode_rewards[i].item()
                     total_reward += ep_reward
                     episodes_done += 1
 
                     starting_logs = int(episode_starting_logs[i].item())
-                    logs_cleared = int(episode_logs_cleared[i].item())
+                    logs_cleared_cum = int(episode_logs_cleared[i].item())   # legacy grasp tally
+                    logs_cleared = int(episode_true_cleared[i].item())       # measured clearing
                     clear_pct = (logs_cleared / max(1, starting_logs)) * 100
                     clearing_percentages.append(clear_pct)
+                    clearing_percentages_cum.append((logs_cleared_cum / max(1, starting_logs)) * 100)
                     episode_rewards_list.append(ep_reward)
                     logs_per_episode.append(starting_logs)
 
@@ -1229,6 +1513,7 @@ def main():
 
                     per_ep_cycles.append(int(ep_cycle_count[i].item()))
                     per_ep_clearing_curves.append(ep_clearing_curves[i][:])  # copy the curve
+                    per_ep_clearing_curves_cum.append(ep_clearing_curves_cum[i][:])
 
                     # Per-episode grasp metrics
                     n_success = int(ep_successful_grasps[i].item())
@@ -1363,6 +1648,8 @@ def main():
                     ep_stability_sum[i] = 0.0
                     ep_cycle_count[i] = 0
                     ep_clearing_curves[i] = []
+                    ep_clearing_curves_cum[i] = []
+                    episode_true_cleared[i] = 0
                     if has_variable_logs:
                         episode_starting_logs[i] = int(env._per_env_log_counts[i].item())
 
@@ -1392,10 +1679,13 @@ def main():
     std_cycles = _std(per_ep_cycles, avg_cycles)
 
     # Derive cycles to 95% from clearing curves
-    per_ep_cycles_to_95 = []
+    per_ep_cycles_to_95, per_ep_cycles_to_95_cum = [], []
     for curve in per_ep_clearing_curves:
         c95 = next((i + 1 for i, pct in enumerate(curve) if pct >= 95.0), len(curve))
         per_ep_cycles_to_95.append(c95)
+    for curve in per_ep_clearing_curves_cum:
+        per_ep_cycles_to_95_cum.append(
+            next((i + 1 for i, pct in enumerate(curve) if pct >= 95.0), len(curve)))
     avg_cycles_to_95 = _mean(per_ep_cycles_to_95)
     std_cycles_to_95 = _std(per_ep_cycles_to_95, avg_cycles_to_95)
 
@@ -1423,9 +1713,39 @@ def main():
     print(f"[Play] Total Logs Grasped:  {total_logs_grasped}")
     print(f"[Play] =======================")
 
+    # Save per-grasp decision records
+    if args_cli.save_decisions and dec_records:
+        dec_out_dir = args_cli.output_dir or os.path.dirname(args_cli.checkpoint)
+        os.makedirs(dec_out_dir, exist_ok=True)
+        dec_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        dec_file = os.path.join(dec_out_dir, f"decisions_{dec_ts}.npz")
+        np.savez_compressed(
+            dec_file,
+            points=np.stack([r["points"] for r in dec_records]).astype(np.float32),
+            env=np.array([r["env"] for r in dec_records], dtype=np.int32),
+            episode=np.array([r["episode"] for r in dec_records], dtype=np.int32),
+            cycle=np.array([r["cycle"] for r in dec_records], dtype=np.int32),
+            raw_action=np.stack([r["raw_action"] for r in dec_records]).astype(np.float32),
+            target=np.stack([r["target"] for r in dec_records]),
+            bounds_min=np.stack([r["bounds_min"] for r in dec_records]).astype(np.float32),
+            bounds_max=np.stack([r["bounds_max"] for r in dec_records]).astype(np.float32),
+            z_raw=np.array([r["z_raw"] for r in dec_records], dtype=np.float32),
+            logs_grasped=np.array([r["logs_grasped"] for r in dec_records], dtype=np.int32),
+            logs_remaining=np.array([r["logs_remaining"] for r in dec_records], dtype=np.int32),
+            logs_in_rack=np.array([r["logs_in_rack"] for r in dec_records], dtype=np.int32),
+            knocked_off=np.array([r["knocked_off"] for r in dec_records], dtype=np.int32),
+            alignment=np.array([r["alignment"] for r in dec_records], dtype=np.float32),
+            stability=np.array([r["stability"] for r in dec_records], dtype=np.float32),
+            reward=np.array([r["reward"] for r in dec_records], dtype=np.float32),
+            checkpoint=np.array(args_cli.checkpoint),
+            seed=np.array(args_cli.seed if args_cli.seed is not None else -1),
+        )
+        print(f"[Play] Decisions saved to: {dec_file} ({len(dec_records)} grasp records)")
+
     # Save metrics
     if args_cli.save_metrics:
         output_dir = args_cli.output_dir or os.path.dirname(args_cli.checkpoint)
+        os.makedirs(output_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         metrics_file = os.path.join(output_dir, f"eval_metrics_{timestamp}.json")
 
@@ -1439,8 +1759,18 @@ def main():
                 "seed": args_cli.seed,
                 "obs_noise": args_cli.obs_noise,
                 "action_noise": args_cli.action_noise,
+                # cycles where the DERIVED remaining disagreed with the MEASURED rack count;
+                # non-zero means pile_cleared_pct / cycles_to_95pct for this row are suspect
+                "accounting_mismatch_cycles": (int(env._accounting_mismatch.sum().item())
+                                               if hasattr(env, "_accounting_mismatch") else -1),
+                "zed_noise": bool(args_cli.zed_noise),
+                "zed_axial_coeff": float(args_cli.zed_axial_coeff) if args_cli.zed_noise else 0.0,
+                "zed_dropout": float(args_cli.zed_dropout) if args_cli.zed_noise else 0.0,
                 "num_points": num_points,
                 "timestamp": timestamp,
+                # 1 = clearing/c95 from cumulative logs_grasped (inflated, can exceed
+                # 100%); 2 = from the measured post-despawn rack count.
+                "metrics_version": 2,
             },
             "episodes": {
                 "total": episodes_done,
@@ -1450,7 +1780,16 @@ def main():
             },
             "summary": {
                 "reward":            {"mean": avg_reward, "std": std_reward},
+                # MEASURED: (starting - logs_in_rack)/starting. *_cumgrasp is the legacy
+                # cumulative-logs_grasped definition every row before metrics_version 2 used;
+                # it can exceed 100% and must NOT be mixed with the measured one in a table.
                 "pile_cleared_pct":  {"mean": avg_clear_pct, "std": std_clear_pct},
+                "pile_cleared_pct_cumgrasp": {"mean": _mean(clearing_percentages_cum),
+                                              "std": _std(clearing_percentages_cum,
+                                                          _mean(clearing_percentages_cum))},
+                "cycles_to_95pct_cumgrasp": {"mean": _mean(per_ep_cycles_to_95_cum),
+                                             "std": _std(per_ep_cycles_to_95_cum,
+                                                         _mean(per_ep_cycles_to_95_cum))},
                 "full_clear_rate":   full_clear_rate,
                 "grasp_success_pct": {"mean": avg_success_rate, "std": std_success_rate},
                 "throughput":        {"mean": avg_throughput, "std": std_throughput},
@@ -1480,6 +1819,12 @@ def main():
                 "clearing_curves": per_ep_clearing_curves,
             },
         }
+
+        # Raw per-grasp tilt progressions (windowed stability), if the env recorded them,
+        # so the stability metric can be recomputed offline under a different definition.
+        _stab_recs = getattr(env, "_stab_records", None)
+        if _stab_recs and any(_stab_recs):
+            metrics["stability_records"] = {f"env{e}": r for e, r in enumerate(_stab_recs) if r}
 
         with open(metrics_file, "w") as f:
             json.dump(metrics, f, indent=2)

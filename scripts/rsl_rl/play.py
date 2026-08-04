@@ -63,6 +63,8 @@ parser.add_argument("--sideview_out", type=str, default=None,
 parser.add_argument("--video_fps", type=int, default=30, help="Output video frame rate")
 parser.add_argument("--video_width", type=int, default=None, help="Override camera width for video recording")
 parser.add_argument("--video_height", type=int, default=None, help="Override camera height for video recording")
+parser.add_argument("--ros2_bridge", action="store_true", default=False,
+                    help="Publish depth + EE state to ROS2 topics for crane_policy_node testing")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -237,9 +239,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         if args_cli.paper_viz and hasattr(env_cfg, 'camera_cfg'):
             if "rgb" not in env_cfg.camera_cfg.data_types:
                 env_cfg.camera_cfg.data_types = list(env_cfg.camera_cfg.data_types) + ["rgb"]
-        from crane_pointcloud_direct_env import CranePointCloudDirectEnv
-        print(f"[INFO] Creating CranePointCloudDirectEnv for pointcloud-based inference")
-        env = CranePointCloudDirectEnv(env_cfg, render_mode="rgb_array" if args_cli.video else None)
+        if "Gaze" in args_cli.task:
+            from crane_pointcloud_gaze_direct_env import CranePointCloudGazeDirectEnv as _PCDEnv
+        else:
+            from crane_pointcloud_direct_env import CranePointCloudDirectEnv as _PCDEnv
+        print(f"[INFO] Creating {_PCDEnv.__name__} for pointcloud-based inference")
+        env = _PCDEnv(env_cfg, render_mode="rgb_array" if args_cli.video else None)
     else:
         env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
@@ -331,6 +336,19 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     underlying_env = env.unwrapped
     if hasattr(underlying_env, 'env'):
         underlying_env = underlying_env.env  # Unwrap further if needed
+
+    # --- ROS2 bridge setup (TCP socket, no rclpy needed) ---
+    ros2_bridge = None
+    if args_cli.ros2_bridge:
+        import sys as _sys2
+        _ros2_dir = os.path.join(os.path.dirname(__file__), "..", "ros2")
+        if _ros2_dir not in _sys2.path:
+            _sys2.path.insert(0, _ros2_dir)
+        from sim_bridge_sender import SimBridgeSender
+        import numpy as _np
+        ros2_bridge = SimBridgeSender(host="127.0.0.1", port=9876)
+        print("[ROS2] Socket bridge enabled on port 9876")
+        print("[ROS2] Run sim_bridge_receiver.py with system Python to publish to ROS2 topics")
 
     # --- Visualization setup ---
     is_pointcloud_task = args_cli.task and "PointCloud" in args_cli.task
@@ -472,6 +490,33 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
             # env stepping
             obs, rewards, dones, *_ = env.step(actions)
+
+            # ROS2 bridge: send depth + EE state from env 0 over TCP socket
+            if ros2_bridge is not None:
+                _bridge_base = getattr(underlying_env, '_base_env', underlying_env)
+                try:
+                    _depth = None
+                    _intrinsics = None
+                    if hasattr(_bridge_base, '_camera'):
+                        _bridge_base._camera.update(dt=_bridge_base.cfg.sim.dt)
+                        _depth = _bridge_base._camera.data.output["depth"][0].squeeze(-1).cpu().numpy()
+                        _intrinsics = _bridge_base._camera.data.intrinsic_matrices[0].cpu().numpy()
+
+                    _ee_pos = _bridge_base._ee_goal[0, :3].cpu().numpy() if hasattr(_bridge_base, '_ee_goal') else _np.zeros(3)
+                    _ee_quat = _bridge_base._ee_goal[0, 3:7].cpu().numpy() if hasattr(_bridge_base, '_ee_goal') and _bridge_base._ee_goal.shape[1] >= 7 else _np.array([1, 0, 0, 0], dtype=_np.float32)
+                    _gripper = float(_bridge_base.q_des_grip[0, 0].item()) if hasattr(_bridge_base, 'q_des_grip') else 0.0
+
+                    # Camera and base transforms
+                    _cam_pos = _bridge_base._camera.data.pos_w[0].cpu().numpy() if hasattr(_bridge_base, '_camera') else None
+                    _cam_quat_ros = _bridge_base._camera.data.quat_w_ros[0].cpu().numpy() if hasattr(_bridge_base, '_camera') else None
+                    _base_pos = _bridge_base.crane.data.root_pos_w[0].cpu().numpy() if hasattr(_bridge_base, 'crane') else None
+                    _base_quat = _bridge_base.crane.data.root_quat_w[0].cpu().numpy() if hasattr(_bridge_base, 'crane') else None
+
+                    if _depth is not None and _intrinsics is not None:
+                        ros2_bridge.send(_depth, _intrinsics, _ee_pos, _ee_quat, _gripper,
+                                         _cam_pos, _cam_quat_ros, _base_pos, _base_quat)
+                except Exception as _e:
+                    pass  # don't crash sim if bridge fails
 
             # Track rewards
             episode_rewards += rewards
@@ -789,6 +834,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 },
             }
 
+            # Raw per-grasp tilt progressions (windowed stability), if the env recorded them,
+            # so the stability metric can be recomputed offline under a different definition.
+            _stab_recs = getattr(env.unwrapped, "_stab_records", None)
+            if _stab_recs and any(_stab_recs):
+                metrics["stability_records"] = {f"env{e}": r for e, r in enumerate(_stab_recs) if r}
+
             os.makedirs(output_dir, exist_ok=True)
             with open(metrics_file, "w") as f:
                 json.dump(metrics, f, indent=2)
@@ -806,6 +857,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         if _base_env._sideview_writer is not None:
             _base_env._sideview_writer.close()
             print(f"[Video] Saved {_base_env._sideview_frame_count} sideview frames → {args_cli.sideview_out}")
+
+    # clean up ROS2 bridge
+    if ros2_bridge is not None:
+        ros2_bridge.close()
 
     # close the simulator
     env.close()

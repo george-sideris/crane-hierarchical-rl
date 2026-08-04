@@ -41,6 +41,13 @@ from crane_depth_direct_env import CraneDepthDirectEnv
 import crane_pointcloud_direct_env
 from crane_pointcloud_direct_env import CranePointCloudDirectEnv
 
+# GAZE point-cloud env (BC->RL fine-tuning on the gaze policy: July-2 camera + gaze slew + optical->base crop).
+import crane_pointcloud_gaze_direct_env
+from crane_pointcloud_gaze_direct_env import CranePointCloudGazeDirectEnv
+# Gaze base cfg carries the July-2 BasemastCam; keep it distinct from the full-env cfg so the copy
+# loop in the wrapper does not overwrite the gaze camera.
+from crane_rl_env_gaze import CraneDirectEnvCfgFull as CraneGazeEnvCfgFull
+
 
 ##
 # Crane Hierarchical RL Task - Configure for hierarchical mode
@@ -1252,6 +1259,33 @@ class CranePointCloudEnvCfg_CosSin_Raw_MR(CraneDirectEnvCfgFull):
 
 
 @configclass
+class CranePointCloudGazeEnvCfg_CosSin_Raw_MR(CraneGazeEnvCfgFull):
+    """GAZE PCD-CosSin-Raw-MR: same as CosSin_Raw_MR but on the gaze base cfg (July-2 camera +
+    gaze slew) so BC->RL fine-tuning matches the BC gaze observation. Used with
+    CranePointCloudGazeDirectEnv. Asymmetric critic (128D state) exactly like the OG BCRL
+    (-Asym-v0): the state critic learns value fast and feeds good advantages, so the frozen-encoder
+    actor doesn't collapse under standard PPO. A symmetric critic on the frozen encoder learns value
+    poorly -> bad advantages -> BC actor collapses."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5
+    observation_space = 3072
+    enable_domain_randomization: bool = False
+    num_points: int = 1024
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = False
+    use_raw_pointcloud: bool = True
+    asymmetric_critic: bool = True  # state-based critic, like OG BCRL -Asym-v0
+    # mound piles: 32 height-sorted logs describe a flat pile but miss most of a mound (a single
+    # mound holds 40-60 logs), so the critic cannot predict returns and its loss diverges.
+    # 64 covers at least one full mound while keeping the critic small. Critic obs dim = max_logs_obs * 4.
+    max_logs_obs: int = 64
+
+
+@configclass
 class CranePointCloudEnvCfg_CosSin_Raw_MR_NoAlign(CraneDirectEnvCfgFull):
     """PCD-CosSin-Raw-MR-NoAlign: raw PCD, no alignment (ablation)."""
     use_hierarchical_rl: bool = True
@@ -1540,6 +1574,58 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": CranePointCloudEnvCfg_CosSin_Raw_MR,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+@configclass
+class CranePointCloudGazeEnvCfg_CosSin_Raw_MR_CC(CranePointCloudGazeEnvCfg_CosSin_Raw_MR):
+    """Gaze BCRL task + PER-CYCLE COST: identical to -MR except every grasp cycle is charged
+    cycle_cost, turning the objective into logs-per-CYCLE (a 1-log grab nets ~0; wasted and
+    low-yield cycles are penalized). Registered as a SEPARATE task so legacy -MR runs stay
+    reproducible/comparable."""
+    cycle_cost: float = 1.0
+
+
+# GAZE variant: same raw-PCD CosSin-MR task, but on the gaze env (July-2 camera + gaze slew + crop)
+# for BC->RL fine-tuning of the gaze policy. Task name contains BOTH "PointCloud" and "Gaze".
+gym.register(
+    id="Isaac-Crane-PointCloud-Gaze-CosSin-Raw-MR-v0",
+    entry_point="crane_pointcloud_gaze_direct_env:CranePointCloudGazeDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudGazeEnvCfg_CosSin_Raw_MR,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+@configclass
+class CranePointCloudGazeEnvCfg_CosSin_Raw_MR_CC5(CranePointCloudGazeEnvCfg_CosSin_Raw_MR):
+    """Dose-response arm of the cycle-cost experiment: cycle_cost=5 (5x the -CC task).
+    Rationale (2026-08-03): at cycle_cost=1 the per-cycle penalty was ~3% of episode return
+    against ~10% batch variance, so PPO followed noise - episodes LENGTHENED 24->27 and the
+    eval regressed vs its BC init (succ 81->70, cycles 23.9->26.7). 5 puts the penalty at
+    ~15% of return, above the noise floor. Prediction stated in advance: if episode length
+    still fails to fall, per-cycle pricing cannot steer this objective in this env."""
+    cycle_cost: float = 5.0
+
+
+gym.register(
+    id="Isaac-Crane-PointCloud-Gaze-CosSin-Raw-MR-CC5-v0",
+    entry_point="crane_pointcloud_gaze_direct_env:CranePointCloudGazeDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudGazeEnvCfg_CosSin_Raw_MR_CC5,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-Gaze-CosSin-Raw-MR-CC-v0",
+    entry_point="crane_pointcloud_gaze_direct_env:CranePointCloudGazeDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudGazeEnvCfg_CosSin_Raw_MR_CC,
         "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_PointCloud",
     },
 )

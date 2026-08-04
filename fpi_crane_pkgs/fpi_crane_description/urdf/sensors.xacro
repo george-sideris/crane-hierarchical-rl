@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://ros.org/wiki/xacro">
+
+  <xacro:macro name="zed_sensor" params="name parent xyz rpy">
+    <link name="${name}_camera_link"/>
+    <joint name="${name}_joint" type="fixed">
+      <parent link="${parent}"/>
+      <child link="${name}_camera_link"/>
+      <origin xyz="${xyz}" rpy="${rpy}"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:macro name="ouster_lidar_sensor" params="name parent xyz rpy">
+    <link name="${name}/os_sensor"/>
+    <joint name="${name}_os_sensor_joint" type="fixed">
+      <parent link="${parent}"/>
+      <child link="${name}/os_sensor"/>
+      <origin xyz="${xyz}" rpy="${rpy}"/>
+    </joint>
+  </xacro:macro>
+
+</robot>

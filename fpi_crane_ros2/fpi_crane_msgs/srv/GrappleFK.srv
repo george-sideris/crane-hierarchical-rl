@@ -1,0 +1,17 @@
+# Use the most recently received /joint_states message.
+bool use_latest_joint_state
+
+# Used only when use_latest_joint_state is false.
+sensor_msgs/JointState joint_state
+---
+bool success
+string message
+
+# Pose of grapplecarrier expressed in base_link.
+geometry_msgs/PoseStamped pose
+
+# grapplecarrier +z axis expressed in base_link.
+geometry_msgs/Vector3 z_axis
+
+# Exact joint state used in the calculation.
+sensor_msgs/JointState joint_state_used

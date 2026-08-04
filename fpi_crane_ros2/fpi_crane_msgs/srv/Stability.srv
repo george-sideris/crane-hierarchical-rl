@@ -1,0 +1,21 @@
+uint8 MODE_BASE=0
+uint8 MODE_GAZE=1
+uint8 MODE_IMU=2
+uint8 MODE_IMU_ORIENTATION=3
+uint8 MODE_ALL=4
+
+uint8 mode
+
+# Use the node parameter when this is <= 0.
+float64 exponent
+---
+bool success
+string message
+
+# Timestamp used for the base_link -> grapplecarrier transform
+builtin_interfaces/Time stamp
+
+# grapplecarrier +z expressed in base_link
+geometry_msgs/Vector3 grapple_z_base
+
+fpi_crane_msgs/StabilityMetric[] metrics

@@ -50,8 +50,25 @@ if args_cli.video:
 if args_cli.task and ("Depth" in args_cli.task or "PointCloud" in args_cli.task):
     args_cli.enable_cameras = True
 
+# split leftover args: flag-style ones (--profile_piles, --log_scale_jitter, ...) belong to the
+# crane env module's own parser, key=value ones are Hydra overrides. Hydra errors on flags.
+env_cli_args = []
+hydra_overrides = []
+_i = 0
+while _i < len(hydra_args):
+    _a = hydra_args[_i]
+    if _a.startswith("--"):
+        env_cli_args.append(_a)
+        # grab the flag's value if the next token is not another flag or a hydra override
+        if _i + 1 < len(hydra_args) and not hydra_args[_i + 1].startswith("--") and "=" not in hydra_args[_i + 1]:
+            env_cli_args.append(hydra_args[_i + 1])
+            _i += 1
+    else:
+        hydra_overrides.append(_a)
+    _i += 1
+
 # clear out sys.argv for Hydra
-sys.argv = [sys.argv[0]] + hydra_args
+sys.argv = [sys.argv[0]] + hydra_overrides
 
 # launch omniverse app
 app_launcher = AppLauncher(args_cli)
@@ -253,6 +270,11 @@ torch.backends.cudnn.benchmark = False
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlOnPolicyRunnerCfg):
     """Train with RSL-RL agent."""
+    # hydra is done with sys.argv: re-expose the flag-style env args so the crane env
+    # module's parse_known_args() picks them up when it is imported below
+    if env_cli_args:
+        sys.argv = [sys.argv[0]] + env_cli_args
+
     # override configurations with non-hydra CLI arguments
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
@@ -306,7 +328,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         _sys.stderr.write(f"[DEBUG] Detected Depth task - using CraneDepthDirectEnv\n")
         _sys.stderr.flush()
         # Special handling for depth tasks - create env directly to avoid gym wrapper issues
-        import sys
         from pathlib import Path
         envs_dir = Path(__file__).parent.parent / "envs"
         _sys.stderr.write(f"[DEBUG] Adding envs_dir to path: {envs_dir}\n")
@@ -322,16 +343,20 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env = CraneDepthDirectEnv(env_cfg, render_mode="rgb_array" if args_cli.video else None)
         _sys.stderr.write(f"[DEBUG] CraneDepthDirectEnv created with {env.num_observations} obs\n")
     elif "PointCloud" in args_cli.task:
-        _sys.stderr.write(f"[DEBUG] Detected PointCloud task - using CranePointCloudDirectEnv\n")
+        _sys.stderr.write(f"[DEBUG] Detected PointCloud task\n")
         _sys.stderr.flush()
-        import sys
         from pathlib import Path
         envs_dir = Path(__file__).parent.parent / "envs"
         if str(envs_dir) not in sys.path:
             sys.path.insert(0, str(envs_dir))
-        from crane_pointcloud_direct_env import CranePointCloudDirectEnv
-        _sys.stderr.write(f"[DEBUG] Creating CranePointCloudDirectEnv with cfg observation_space={getattr(env_cfg, 'observation_space', 'N/A')}\n")
-        env = CranePointCloudDirectEnv(env_cfg, render_mode="rgb_array" if args_cli.video else None)
+        if "Gaze" in args_cli.task:
+            from crane_pointcloud_gaze_direct_env import CranePointCloudGazeDirectEnv as _PCDEnv
+            _sys.stderr.write(f"[DEBUG] Gaze task - using CranePointCloudGazeDirectEnv\n")
+        else:
+            from crane_pointcloud_direct_env import CranePointCloudDirectEnv as _PCDEnv
+            _sys.stderr.write(f"[DEBUG] Using CranePointCloudDirectEnv\n")
+        _sys.stderr.write(f"[DEBUG] Creating {_PCDEnv.__name__} with cfg observation_space={getattr(env_cfg, 'observation_space', 'N/A')}\n")
+        env = _PCDEnv(env_cfg, render_mode="rgb_array" if args_cli.video else None)
         env.log_dir = log_dir
         env.save_debug_pointclouds = args_cli.save_debug_pointclouds
         _sys.stderr.write(f"[DEBUG] CranePointCloudDirectEnv created with {env.num_observations} obs\n")
@@ -392,6 +417,17 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             actor_critic = runner.alg.policy if hasattr(runner.alg, 'policy') else None
             if actor_critic is None:
                 raise AttributeError(f"Cannot find actor_critic. Runner attrs: {dir(runner)}, Alg attrs: {dir(runner.alg)}")
+        # Drop keys whose shape doesn't match the current model. strict=False tolerates
+        # missing/unexpected keys but NOT shape mismatches on shared keys, so an old BC ckpt
+        # with a wrongly-sized `std` ([4] from the 4D->5D cossin change) would still raise.
+        # `std` is exploration noise, unused for the loaded actor mean and reset to sigma_init
+        # below, so dropping it is safe.
+        _model_sd = actor_critic.state_dict()
+        _dropped = [k for k, v in model_state.items()
+                    if k in _model_sd and _model_sd[k].shape != v.shape]
+        if _dropped:
+            print(f"[INFO]: Dropping shape-mismatched BC keys (reinit/overwritten): {_dropped}")
+            model_state = {k: v for k, v in model_state.items() if k not in _dropped}
         # Load with strict=False to allow missing critic weights if needed
         # RSL-RL's load_state_dict may return bool or tuple depending on version
         result = actor_critic.load_state_dict(model_state, strict=False)

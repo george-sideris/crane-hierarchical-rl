@@ -36,6 +36,7 @@ parser.add_argument("--train_freq", type=int, default=1, help="Update policy eve
 parser.add_argument("--gradient_steps", type=int, default=1, help="Gradient steps per update.")
 parser.add_argument("--learning_starts", type=int, default=1000, help="Steps before learning starts.")
 parser.add_argument("--net_arch", type=str, default="256,128,64", help="Hidden layer sizes (comma-separated).")
+parser.add_argument("--resume", type=str, default=None, help="Path to SAC checkpoint .zip to resume training from.")
 
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
@@ -162,25 +163,40 @@ def main():
         }
         print(f"[INFO] PointCloud task detected — using PointNet extractor ({num_points} points, 256D output)")
 
-    # Create SAC agent
-    agent = SAC(
-        policy="MlpPolicy",
-        env=env,
-        learning_rate=args_cli.learning_rate,
-        buffer_size=args_cli.buffer_size,
-        batch_size=args_cli.batch_size,
-        tau=args_cli.tau,
-        gamma=args_cli.gamma,
-        ent_coef=ent_coef,
-        train_freq=args_cli.train_freq,
-        gradient_steps=args_cli.gradient_steps,
-        learning_starts=args_cli.learning_starts,
-        policy_kwargs=policy_kwargs,
-        verbose=1,
-        seed=args_cli.seed,
-        device="auto",
-        tensorboard_log=log_dir,
-    )
+    # Create or resume SAC agent
+    if args_cli.resume:
+        resume_path = os.path.abspath(args_cli.resume)
+        print(f"[INFO] Resuming SAC from: {resume_path}")
+        agent = SAC.load(
+            resume_path,
+            env=env,
+            tensorboard_log=log_dir,
+            device="auto",
+        )
+        # Override hyperparams that may differ from the saved model
+        agent.learning_rate = args_cli.learning_rate
+        agent.batch_size = args_cli.batch_size
+        agent.tau = args_cli.tau
+        agent.gamma = args_cli.gamma
+    else:
+        agent = SAC(
+            policy="MlpPolicy",
+            env=env,
+            learning_rate=args_cli.learning_rate,
+            buffer_size=args_cli.buffer_size,
+            batch_size=args_cli.batch_size,
+            tau=args_cli.tau,
+            gamma=args_cli.gamma,
+            ent_coef=ent_coef,
+            train_freq=args_cli.train_freq,
+            gradient_steps=args_cli.gradient_steps,
+            learning_starts=args_cli.learning_starts,
+            policy_kwargs=policy_kwargs,
+            verbose=1,
+            seed=args_cli.seed,
+            device="auto",
+            tensorboard_log=log_dir,
+        )
 
     print(f"[INFO] SAC agent created. Total timesteps: {total_timesteps}")
     print(f"[INFO] Policy architecture: {net_arch}")
@@ -229,6 +245,7 @@ def main():
             callback=[checkpoint_callback, EnvMetricsCallback()],
             progress_bar=True,
             log_interval=1,
+            reset_num_timesteps=not bool(args_cli.resume),
         )
 
     # Save final model

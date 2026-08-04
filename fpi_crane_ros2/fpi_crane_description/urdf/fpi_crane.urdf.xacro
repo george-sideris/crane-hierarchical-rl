@@ -1,0 +1,285 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot name="crane_robot" xmlns:xacro="http://ros.org/wiki/xacro">
+   
+  <xacro:include filename="$(find fpi_crane_description)/urdf/sensors.xacro"/>
+
+  <!-- replay: when true, robot_state_publisher also emits the zed_0 camera-internal frames
+       (normally published by the live ZED driver). Set true only for rosbag replay/RViz
+       validation, where the driver is not running. Default false leaves deployment unchanged. -->
+  <xacro:arg name="replay" default="false"/>
+  
+  <!-- material definition -->
+  <material name="black">
+	<color rgba="0 0 0 1"/>
+  </material>
+  <material name="gray">
+	<color rgba="0.7 0.7 0.7 1"/>
+  </material>
+  <material name="yellow">
+	<color rgba="0.8 0.8 0 1"/>
+  </material>
+  <material name="orange">
+	<color rgba="1 0.5 0 1"/>
+  </material>   
+  <!-- links -->
+  <link name="base_link">
+	<visual>
+	  <geometry>
+		<mesh filename="package://fpi_crane_description/meshes/base.stl"/>
+	  </geometry>
+	  <origin rpy="0 0 0" xyz="0 0 0"/>
+	  <material name="black"/>
+	</visual>
+  </link>
+  <link name="mast">
+	<visual>
+	  <geometry>
+		<mesh filename="package://fpi_crane_description/meshes/mast.stl"/>
+	  </geometry>
+	  <origin rpy="0 0 0" xyz="0 0 0"/>
+	  <material name="black"/>
+	</visual>
+  </link>				 
+  <link name="mainboom">
+	<visual>
+	  <geometry>
+		<mesh filename="package://fpi_crane_description/meshes/mainboom.stl"/>
+	  </geometry>
+	  <origin rpy="0 0 0" xyz="0 0 0"/>
+	  <material name="black"/>
+	</visual>
+  </link>
+  <link name="stick">
+	<visual>
+	  <geometry>
+		<mesh filename="package://fpi_crane_description/meshes/stick.stl"/>
+	  </geometry>
+	  <origin rpy="0 0 0" xyz="0 0 0"/>
+	  <material name="black"/>
+	</visual>
+  </link>
+  <link name="telescope">
+	<visual>
+	  <geometry>
+		<mesh filename="package://fpi_crane_description/meshes/telescope.stl"/>
+	  </geometry>
+	  <origin rpy="0 0 0" xyz="0 0 0"/>
+	  <material name="gray"/>
+	</visual>
+  </link>
+  <link name="upperpassive">
+	<visual>
+	  <geometry>
+		<mesh filename="package://fpi_crane_description/meshes/upperpassive.stl"/>
+	  </geometry>
+	  <origin rpy="0 0 0" xyz="0 0 0"/>
+	  <material name="gray"/>
+	</visual>
+  </link>
+  <link name="lowerpassive">
+	<visual>
+	  <geometry>
+		<mesh filename="package://fpi_crane_description/meshes/lowerpassive.stl"/>
+	  </geometry>
+	  <origin rpy="0 0 0" xyz="0 0 0"/>
+	  <material name="gray"/>
+	</visual>
+  </link>
+  <link name="grapplecarrier">
+	<visual>
+	  <geometry>
+		<mesh filename="package://fpi_crane_description/meshes/grapplecarrier.stl"/>
+	  </geometry>
+	  <origin rpy="0 0 0" xyz="0 0 0"/>
+	  <material name="black"/>
+	</visual>
+  </link>
+  <link name="grappletong1">
+	<visual>
+	  <geometry>
+		<mesh filename="package://fpi_crane_description/meshes/grappletong1.stl"/>
+	  </geometry>
+	  <origin rpy="0 0 0" xyz="0 0 0"/>
+	  <material name="yellow"/>
+	</visual>
+  </link>
+  <link name="grappletong2">
+	<visual>
+	  <geometry>
+		<mesh filename="package://fpi_crane_description/meshes/grappletong2.stl"/>
+	  </geometry>
+	  <origin rpy="0 0 0" xyz="0 0 0"/>
+	  <material name="yellow"/>
+	</visual>
+  </link>
+  <link name="trailer">
+	<visual>
+	  <geometry>
+		<mesh filename="package://fpi_crane_description/meshes/trailer.stl"/>
+	  </geometry>
+	  <origin rpy="0 0 0" xyz="0  0 0.625"/>
+	  <material name="orange"/>
+	</visual>
+  </link>
+  <link name="camera_zed">
+	<origin xyz="0.06 -0.0335 0" rpy="0 0 3.1416"/>
+  </link>
+  <link name="mast_sensor_bracket"/>
+  <link name="grappletong1_tip"/>
+  <link name="grappletong2_tip"/>
+  <!-- joints -->
+  <joint name="slew_joint" type="revolute">
+	<parent link="base_link"/>
+	<child link="mast"/>
+	<origin xyz="0 0 0.26881"/>
+	<axis rpy="0 0 0" xyz="0 0 1"/>
+	<!-- 1.82 rad = 104.2 deg is the machine's stop (encoder damage past it). The
+	     previous 1.74533 (100 deg) was a conservative margin; relative_joint_mover
+	     enforces this file, so it has to match ik.py's ARM_JOINT_LIMITS or reachable
+	     targets get rejected as out-of-limits. -->
+	<limit effort="500.0" lower="-1.82" upper="1.82" velocity="0.1745"/>
+  </joint>
+  <joint name="boom_joint" type="revolute">
+	<parent link="mast"/>
+	<child link="mainboom"/>
+	<origin xyz="0 -0.0601374 1.09553"/>
+	<axis rpy="0 0 0" xyz="1 0 0"/>
+	<limit effort="500.0" lower="-0.383972" upper="1.309" velocity="0.1745"/>
+  </joint>
+  <joint name="stick_joint" type="revolute">
+	<parent link="mainboom"/>
+	<child link="stick"/>
+	<origin xyz="0 3.04904 -0.00649"/>
+	<axis rpy="0 0 0" xyz="1 0 0"/>
+	<limit effort="500.0" lower="-3.08574" upper="0.035" velocity="0.1745"/>
+  </joint>
+  <joint name="telescope_joint" type="prismatic">
+	<parent link="stick"/>
+	<child link="telescope"/>
+	<origin xyz="0 0.1256771629 0.21905106705"/>
+	<axis rpy="0 0 0" xyz="0 0.997833966 -0.065782793"/>	
+	<limit effort="500.0" lower="0.13" upper="1.8" velocity="0.1"/>
+  </joint>
+  <joint name="hanger_joint" type="revolute">
+	<parent link="telescope"/>
+	<child link="upperpassive"/>
+	<origin xyz="0 2.03711 -0.20229"/>
+	<axis rpy="0 0 0" xyz="1 0 0"/>
+	<limit effort="500.0" lower="-3.14159" upper="3.14159" velocity="0.1745"/>
+  </joint>
+  <joint name="bearingfork_joint" type="revolute">
+	<parent link="upperpassive"/>
+	<child link="lowerpassive"/>
+	<origin xyz="0 0 -0.154"/>
+	<axis rpy="0 0 0" xyz="0 1 0"/>
+	<limit effort="500.0" lower="-3.14159" upper="3.14159" velocity="0.1745"/>
+  </joint>
+  <joint name="grapplecarrier_joint" type="revolute">
+	<parent link="lowerpassive"/>
+	<child link="grapplecarrier"/>
+	<origin xyz="0 0 -0.261"/>
+	<axis rpy="0 -1.22173 0" xyz="0 0 1"/>
+	<limit effort="500.0" lower="-3.1241" upper="3.1241" velocity="0.1745"/>
+  </joint>
+  <joint name="grappletong1_joint" type="revolute">
+	<parent link="grapplecarrier"/>
+	<child link="grappletong1"/>
+	<origin xyz="-0.275000000000001 -0.0192847891741644 -0.202"/>
+	<axis rpy="0 0 0" xyz="0 -1 0"/>
+	<limit effort="500.0" lower="0" upper="2.23402" velocity="0.1745"/>
+  </joint>
+  <joint name="grappletong2_joint" type="revolute">
+	<parent link="grapplecarrier"/>
+	<child link="grappletong2"/>
+	<origin xyz="0.275000000000001 -0.0192847891741644 -0.202"/>
+	<axis rpy="0 0 0" xyz="0 1 0"/>
+	<limit effort="500.0" lower="0" upper="2.23402" velocity="0.1745"/>
+  </joint>
+  <joint name="trailer_joint" type="fixed">
+	<parent link="base_link"/>
+	<child link="trailer"/>
+	<origin rpy="-0.010472 0.0191986 0" xyz="0 2.5525 -1.39"/>
+  </joint>  
+  <joint name="camera_zed_joint" type="fixed">
+	<parent link="stick"/>
+	<child link="camera_zed"/>
+	<!-- zed_1 (stick cam) mount. 2026-06-30 REVERTED to the 2026-06-19 model-based fit (reproj-validated, geometrically sane).
+	     The 2026-06-28 floor-constrained refit was degenerate along the view ray (height +0.81m, roll -22deg) and looked off in practice.
+	     (reverted-from 2026-06-28 floor refit: rpy="-0.388599 -0.018146 0.002092" xyz="-0.059267 0.722761 0.811061")
+	     (prev 2026-06-26 grapple-only, 22deg floor tilt: rpy="-0.003376 0.038777 0.008642" xyz="0.074698 0.259522 0.006238") -->
+	<origin rpy="-0.002374 0.009854 -0.039076"  xyz="-0.072910 0.326064 -0.025846"/>
+  </joint>
+  <joint name="mast_sensor_bracket_joint" type="fixed">
+	<parent link="mast"/>
+	<child link="mast_sensor_bracket"/>
+	<origin rpy="0 0.1 -0.05"  xyz="-0.15 0 0.74"/>
+  </joint>
+  <joint name="grappletong1_tip_joint" type="fixed">
+	<parent link="grappletong1"/>
+	<child link="grappletong1_tip"/>
+	<origin rpy="0 0 0"  xyz="-0.458 0.02 -0.458"/>
+  </joint>
+  <joint name="grappletong2_tip_joint" type="fixed">
+	<parent link="grappletong2"/>
+	<child link="grappletong2_tip"/>
+	<origin rpy="0 0 0"  xyz="0.454 0.018 -0.454"/>
+  </joint>
+
+  <xacro:zed_sensor
+	name="zed_1"
+	parent="camera_zed"
+	xyz="0 0 0"
+	rpy="0 0 1.57"
+  />
+  <!-- lidar_0 mount: model-based calibrated 2026-06-19 (was xyz="0 0 0" rpy="3.14 0 1.57") -->
+  <xacro:ouster_lidar_sensor
+	name="lidar_0"
+	parent="mast_sensor_bracket"
+	xyz="-0.043806 0.063314 -0.021948"
+	rpy="3.014570 -0.058712 1.592957"
+  />
+  <!-- zed_0 (basemast cam) mount. 2026-06-30: camera REMOUNTED + repositioned, recalibrated from bag
+       zed0_recal 13_47_17 (floor-constrained, calib frame = mast). RE-PARENTED to mast directly: the camera
+       is no longer rigid to the lidar, so chaining it through lidar_0/os_sensor was wrong and coupled it to
+       the lidar mount. NOTE: 13_47_17 was a short ~10s bag (2.5deg residual floor tilt) -> first-look quality,
+       re-record a longer sweep for the final calib.
+       (prev parent="lidar_0/os_sensor", 2026-06-28 floor refit: xyz="-0.011389 -0.117057 -0.549528" rpy="-3.059267 -0.444823 -0.255060")
+       (prev 2026-06-26 grapple-only: xyz="0.040947 -0.051570 -0.926097" rpy="-3.005676 -0.514700 -0.291419")
+       (prev 2026-06-19: xyz="-0.063993 0.091270 -0.158041" rpy="-3.116670 -0.340682 -0.009565") -->
+  <xacro:zed_sensor
+	name="zed_0"
+	parent="mast"
+	xyz="-0.389435 -0.043649 1.261451"
+	rpy="-0.019053 0.399585 1.732204"
+  />
+
+  <!-- zed_0/zed_1 camera-internal frames for rosbag replay (values from the zed tf_static,
+       identical to what the live driver publishes). Only added when replay:=true. -->
+  <xacro:if value="$(arg replay)">
+	<link name="zed_0_camera_center"/>
+	<joint name="zed_0_camera_center_joint" type="fixed">
+	  <parent link="zed_0_camera_link"/>
+	  <child link="zed_0_camera_center"/>
+	  <origin xyz="0 0 0.016" rpy="0 0 0"/>
+	</joint>
+	<link name="zed_0_left_camera_frame"/>
+	<joint name="zed_0_left_camera_frame_joint" type="fixed">
+	  <parent link="zed_0_camera_center"/>
+	  <child link="zed_0_left_camera_frame"/>
+	  <origin xyz="-0.01 0.06 0" rpy="0 0 0"/>
+	</joint>
+	<link name="zed_1_camera_center"/>
+	<joint name="zed_1_camera_center_joint" type="fixed">
+	  <parent link="zed_1_camera_link"/>
+	  <child link="zed_1_camera_center"/>
+	  <origin xyz="0 0 0.016" rpy="0 0 0"/>
+	</joint>
+	<link name="zed_1_left_camera_frame"/>
+	<joint name="zed_1_left_camera_frame_joint" type="fixed">
+	  <parent link="zed_1_camera_center"/>
+	  <child link="zed_1_left_camera_frame"/>
+	  <origin xyz="-0.01 0.06 0" rpy="0 0 0"/>
+	</joint>
+  </xacro:if>
+
+</robot>

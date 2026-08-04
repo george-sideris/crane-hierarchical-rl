@@ -1,0 +1,8 @@
+# This service is for requesting a log from the vision node
+
+PlcGripper grapple_move
+
+---
+
+int32 request_id
+bool success

@@ -1,0 +1,7 @@
+sensor_msgs/Image image
+sensor_msgs/PointCloud2 map
+geometry_msgs/Point[<=100] vertices_loading_zone
+std_msgs/Header loading_zone_header
+---
+bool success
+geometry_msgs/PoseWithCovarianceStamped attack_pose

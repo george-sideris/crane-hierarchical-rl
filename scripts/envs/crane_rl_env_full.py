@@ -327,7 +327,7 @@ parser.add_argument("--solver", choices=["pgs","tgs"], default="pgs")
 parser.add_argument("--enhanced_determinism", action="store_true")
 
 # Visualization
-parser.add_argument("--viz_markers", action="store_true", help="Enable debug VisualizationMarkers.")
+parser.add_argument("--viz_markers", action="store_true", default=True, help="Enable debug VisualizationMarkers.")
 parser.add_argument("--show_action_bounds", action="store_true", help="Show translucent box for action/rack bounds.")
 parser.add_argument("--show_grasp_prism", action="store_true", help="Show wireframe rack-slice prism used by _count_logs_in_column() (debug).")
 parser.add_argument("--grasp_prism_edge_thickness", type=float, default=None, help="Edge thickness (m) for grasp prism wireframe; defaults to action bounds thickness.")
@@ -1287,6 +1287,11 @@ class CraneDirectEnvFull(DirectRLEnv):
         self._prev_grasp_stability = torch.zeros(self.num_envs, device=self.device, dtype=torch.float32)  # Last grasp stability
         self._last_clearing_bonus = torch.zeros(self.num_envs, device=self.device, dtype=torch.float32)  # Last clearing bonus given
         self._completed_ep_returns = collections.deque(maxlen=100)  # Rolling buffer of completed-episode returns
+        # True clearing fraction (1 - remaining/starting) of the most recently completed episode,
+        # per env; -1 until that env finishes one. Recorded at termination before auto-reset so BC
+        # data collection can report the env's authoritative clearing instead of summing per-cycle
+        # grasp counts (which can exceed 100% via the proximity-radius grasp check).
+        self._last_episode_clearing = torch.full((self.num_envs,), -1.0, device=self.device, dtype=torch.float32)
 
         # Logs available at target position (for normalized reward computation)
         self._logs_available_at_target = torch.zeros(self.num_envs, device=self.device, dtype=torch.int32)
@@ -1506,6 +1511,11 @@ class CraneDirectEnvFull(DirectRLEnv):
         if len(reset_ids) > 0:
             # Cache completed-episode returns before reset zeroes them
             self._completed_ep_returns.extend(self._episode_return[reset_ids].tolist())
+            # Record true clearing (1 - remaining/starting) BEFORE reset repopulates the rack.
+            for i in reset_ids.tolist():
+                starting = max(int(self._per_env_log_counts[i]), 1)
+                remaining = self._count_logs_in_rack(i)
+                self._last_episode_clearing[i] = min(1.0, max(0.0, 1.0 - remaining / starting))
             self._reset_idx(reset_ids)
 
         # Periodic garbage collection to prevent memory leaks during long training runs

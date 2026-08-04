@@ -1,0 +1,29 @@
+# Python bytecode and cache
+**/__pycache__/
+**/*.py[cod]
+**/*.pyo
+**/*.so
+**/*.pyd
+
+# CMake artifacts
+**/CMakeFiles/
+**/CMakeCache.txt
+**/cmake_install.cmake
+**/Makefile
+
+# ROS 2 launch/editor junk
+**/*.launch.py~
+**/*.launch.py.swp
+
+# Editor and IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Misc
+**/*.egg-info/
+**/*.orig
+.DS_Store
+.env
+venv/

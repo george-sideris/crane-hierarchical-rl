@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot name="fpiforwarder">
+
+	<gazebo reference="basemast">
+		<material>Gazebo/Black</material>
+	</gazebo>
+
+	<gazebo reference="mast">
+		<material>Gazebo/Black</material>
+	</gazebo>
+	
+	<gazebo reference="mainboom">
+		<material>Gazebo/Black</material>
+	</gazebo>
+	
+	<gazebo reference="stick">
+		<material>Gazebo/Black</material>
+	</gazebo>
+	
+	<gazebo reference="telescope">
+		<material>Gazebo/Gray</material>
+	</gazebo>
+	
+	<gazebo reference="upperpassive">
+		<material>Gazebo/Gray</material>
+	</gazebo>
+
+	<material name="blue">
+		<color rgba="0 0 0.8 1"/>
+	</material>
+	<material name="purple">
+		<color rgba="0.9 0.5 0.9 1"/>
+	</material>
+	<material name="black">
+		<color rgba="0 0 0 1"/>
+	</material>
+	<material name="white">
+		<color rgba="1 1 1 1"/>
+	</material>
+	<material name="base_color">
+		<color rgba="0 0.1 0.5 1"/>
+	</material>
+	<material name="green">
+		<color rgba="0 0.8 0 1"/>
+	</material>
+	<material name="gray">
+		<color rgba="0.7 0.7 0.7 1"/>
+	</material>
+	<material name="darkgray">
+		<color rgba="0.3 0.3 0.3 1"/>
+	</material>
+	<material name="red">
+		<color rgba="0.8 0.0 0.0 1"/>
+	</material>  
+	<material name="yellow">
+		<color rgba="0.8 0.8 0 1"/>
+	</material>   
+	<material name="orange">
+		<color rgba="1 0.5 0 1"/>
+	</material>   
+  
+	
+	<!-- <link name="world"/>-->
+
+	<link name="basemast">
+	</link>
+	
+	<link name="mast">
+		<inertial>
+			<origin rpy="0 0 0" xyz="0 -0.026 0.505"/>
+			<mass value="290"/>
+			<inertia 
+				ixx="1.0" ixy="0" ixz="0" 
+			    iyy="1.0" iyz="0" 
+				izz="1.0"/>
+		</inertial>
+	</link>
+					 
+	<link name="mainboom">
+		<inertial>
+			<origin rpy="0 0 0" xyz="0 1.39 0.03"/>
+			<mass value="172"/>
+			<inertia 
+				ixx="1.0" ixy="0" ixz="0" 
+			    iyy="1.0" iyz="0" 
+				izz="1.0"/>
+		</inertial>
+	</link>
+
+	<link name="stick">
+		<inertial>
+			<origin rpy="0 0 0" xyz="0 0.7184 0.1478"/>
+			<mass value="70"/>
+			<inertia 
+				ixx="1.0" ixy="0" ixz="0" 
+			    iyy="1.0" iyz="0" 
+				izz="1.0"/>
+		</inertial>
+	</link>
+	
+	<link name="telescope">
+		<inertial>
+			<origin rpy="0 0 0" xyz="0 1 -0.0867"/>
+			<mass value="25"/>
+			<inertia 
+				ixx="1.0" ixy="0" ixz="0" 
+			    iyy="1.0" iyz="0" 
+				izz="1.0"/>
+		</inertial>
+	</link>
+
+	<link name="upperpassive">
+		<inertial>
+			<origin rpy="0 0 0" xyz="0 0 -0.197"/>
+			<mass value="9"/>
+			<inertia 
+				ixx="1.0" ixy="0" ixz="0" 
+			    iyy="1.0" iyz="0" 
+				izz="1.0"/>
+		</inertial>
+	</link>
+
+	<!--
+	<joint name="fixed" type="fixed">
+		<parent link="world"/>
+		<child link="basemast"/>
+	</joint>
+-->
+		
+  
+	<joint name="basemast_to_mast" type="revolute">
+		<axis rpy="0 0 0" xyz="0 0 1"/>
+		<limit effort="500.0" lower="-1.74533" upper="1.74533" velocity="0.1745"/>
+		<origin xyz="0 0 0.26881"/>
+		<parent link="basemast"/>
+		<child link="mast"/>
+	</joint>
+	
+	<joint name="mast_to_mainboom" type="revolute">
+		<axis rpy="0 0 0" xyz="1 0 0"/>
+		<limit effort="500.0" lower="-0.383972" upper="1.309" velocity="0.1745"/> 
+		<origin xyz="0 -0.0601374 1.09553"/>
+		<parent link="mast"/>
+		<child link="mainboom"/>
+	</joint>
+    
+	<joint name="mainboom_to_stick" type="revolute">
+		<axis rpy="0 0 0" xyz="1 0 0"/>
+		<limit effort="500.0" lower="-3.08574" upper="0.035" velocity="0.1745"/>
+		<origin xyz="0 3.04904 -0.00649"/>
+		<parent link="mainboom"/>
+		<child link="stick"/>
+	</joint>
+
+	<joint name="stick_to_telescope" type="prismatic">
+		<axis rpy="0 0 0" xyz="0 0.997833966 -0.065782793"/>
+		<limit effort="500.0" lower="0.13" upper="1.8" velocity="0.1"/>
+		<origin xyz="0 0.1256771629 0.21905106705"/> 
+		<parent link="stick"/>
+		<child link="telescope"/>
+	</joint>
+
+	<joint name="telescope_to_upperpassive" type="revolute">
+		<axis rpy="0 0 0" xyz="1 0 0"/>
+		<limit effort="500.0" lower="-3.14159" upper="3.14159" velocity="0.1745"/>
+		<origin xyz="0 2.03711 -0.20229"/>
+		<parent link="telescope"/>
+		<child link="upperpassive"/>
+	</joint>
+    
+</robot>

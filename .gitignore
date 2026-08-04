@@ -27,3 +27,20 @@ logs/
 
 # Isaac Lab specific
 .cache/
+
+# --- data / artifacts (2026-08-04): never in git; the pre-FPS raw store lives in logs/ ---
+logs/
+bags/
+media/
+calibration/out/
+calibration/install/
+calibration/log/
+calibration/build/
+Omniverse-Simulation/
+.crane_ws/
+fpi_sandbox_ws/
+patches/
+*.usd.bak*
+nohup.out
+# >100 MB (GitHub hard limit)
+crane_lab_ros2/assets/domelights/qwantani.hdr
