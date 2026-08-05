@@ -1,99 +1,143 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code working in this repository.
 
 ## Project Summary
 
-IROS 2026 submission: hierarchical RL for forestry crane log-pile clearing using NVIDIA Isaac Lab. A high-level RL policy selects grasp targets (5D), and a fixed 10-phase FSM controller executes each pick-place cycle (~900 physics steps). Each policy step = one complete grasp cycle, reducing episodes from ~27,000 to 30-50 steps.
+Autonomous log-pile clearing with a forestry forwarder crane. A high-level policy selects grasp
+targets (5D) from point clouds; a fixed FSM controller executes each pick-place cycle. Sim
+(Isaac Lab "gaze" env) transfers to a real instrumented crane (ROS2, ZED X). Masters thesis +
+paper work. Methods compared: deployed heuristic baseline, BC (regression and per-point scoring
+heads), BC+RL fine-tuning.
 
-Four methods are compared: heuristic expert, pure RL (PPO), behavioral cloning (BC), and BC+RL fine-tuning (headline result).
+## Machine roles
 
-## Running Commands
+- **Laptop** (primary): real-crane deployment (fpi_crane_ros2), collections, the authoritative
+  logs/ tree, real bags. Anything involving "the crane" or real clouds lives there.
+- **Other PC** (if you are reading this from a fresh clone of RLCraneTestbed:dev): sim-only
+  jobs - RL training, eval sweeps, collections. Real data only if rsync'd over.
 
-All commands run inside the Isaac Lab Docker container. From the IsaacLab root (`/workspace/isaaclab`):
+## Running commands
+
+Everything runs in the Isaac Lab docker container with this repo at `/workspace/crane_testbed`
+and Isaac at `/workspace/isaaclab`.
 
 ```bash
-# Set PYTHONPATH first
-export PYTHONPATH=/workspace/crane_testbed/source/crane_testbed:$PYTHONPATH
+# docker exec does NOT source .bashrc - ALWAYS set this first (a missing PYTHONPATH
+# once killed a training launch silently):
+export PYTHONPATH=/workspace/crane_testbed/source/crane_testbed:/workspace/crane_testbed/scripts/envs
 
-# RL Training (pure)
-./isaaclab.sh -p crane_testbed/scripts/rsl_rl/train.py \
-    --task Isaac-Crane-PointCloud-CosSin-MR-v0 --num_envs 4
+# Platform-v2 physics flags - FROZEN for comparability, use on every sim run:
+#   --profile_piles --log_scale_mean 1.0 --log_scale_jitter 0.10 --log_ang_damping 3.0
+#   --gripper_effort 2000 --num_logs 200
 
-# BC+RL Training (headline experiment)
-./isaaclab.sh -p crane_testbed/scripts/rsl_rl/train.py \
-    --task Isaac-Crane-PointCloud-CosSin-MR-v0 --num_envs 20 --headless \
-    --bc_checkpoint <path_to_bc_policy>
+# BC+RL training (gen-1 init committed in-repo):
+/workspace/isaaclab/isaaclab.sh -p scripts/rsl_rl/train.py \
+    --task Isaac-Crane-PointCloud-Gaze-CosSin-Raw-MR-v0 \
+    --bc_checkpoint logs/bc_pointcloud/bc_aug1v2_dig25/bc_pointcloud_policy_rsl_rl.pt \
+    --freeze_encoder --sigma_init 0.05 --seed 42 --num_envs 4 --max_iterations 400 \
+    --headless <platform-v2 flags>
 
-# BC Training
-./isaaclab.sh -p crane_testbed/scripts/envs/train_bc_pointcloud_cossin.py \
-    --num_envs 8 --num_episodes 200 --epochs 100
+# Eval (see eval_scripts/ for the sweep runners - ALWAYS use run scripts, never paste
+# long one-liners; terminal hard-wrap has eaten launches):
+/workspace/isaaclab/isaaclab.sh -p scripts/envs/play_bc_pointcloud.py \
+    --policy_type {bc|heuristic|scoring} --checkpoint <pt> --gaze --raw_pcd --crop_to_bounds \
+    --headless --num_envs 8 --num_episodes 10 --seed 42 --save_metrics --save_decisions \
+    <platform-v2 flags>
 
-# Evaluation (all support --save_metrics for JSON output)
-./isaaclab.sh -p crane_testbed/scripts/rsl_rl/play.py \
-    --task Isaac-Crane-PointCloud-CosSin-MR-v0 --num_envs 20 --headless --save_metrics
-./isaaclab.sh -p crane_testbed/scripts/envs/play_bc_pointcloud.py \
-    --checkpoint <path> --num_envs 20 --headless --save_metrics
-./isaaclab.sh -p crane_testbed/scripts/envs/play_heuristic.py \
-    --num_envs 20 --num_episodes 50 --headless --save_metrics
-
-# TensorBoard
-tensorboard --logdir /workspace/logs/rsl_rl/crane_hierarchical
+# Plain-torch scripts (train_scoring_head.py, validators) need Isaac's interpreter -
+# the system python3's torch may be built for a newer CUDA than the driver and silently
+# runs on CPU (the trainer hard-fails on this):
+/workspace/isaaclab/_isaac_sim/python.sh scripts/envs/train_scoring_head.py ...
 ```
 
-There is no test suite, linter, or build step. The project is a pure Python research codebase running inside Isaac Lab.
+No test suite or linter; pure research codebase.
 
 ## Architecture
 
-### Grasp-and-Remove MDP
+- **Observation**: raw (unsegmented) point cloud in crane base frame; tight crop = the action
+  box; `--crop_margin` widens the OBSERVATION crop (bed/rails/poles enter the cloud as learned
+  negatives) while the action box stays fixed.
+- **Action**: 5D `[x, y, z, cos(2yaw), sin(2yaw)]`, arctanh-encoded into the action box
+  x[-5.364,-3.364] y[-1.684,5.316] z[-1.30,0.10]. 4D direct-yaw saturates - do not use.
+- **Bed floor**: bed_z -1.30 + margin 0.10 -> every policy type clamps at z = -1.20.
+- **Dig**: real heuristic targets surface-0.25/0.30; sim expert labels log CENTERS
+  (surface-0.056). `--train_label_dig 0.25` converts at train time; scoring ckpts carry `dig`.
+- **FSM phases**: GAZE -> ALIGN_YAW -> DESCEND -> CLOSE -> LIFT_HIGH -> (despawn) -> loop.
+- **BC+RL**: `train.py --bc_checkpoint` loads encoder+actor (`strict=False`), critic random,
+  small `--sigma_init` to preserve the BC mean.
 
-- **Observation**: Point cloud (1024×3, primary) or privileged per-object poses (128D, ablation)
-- **Action**: 5D `[x, y, z, cos(2ψ), sin(2ψ)]` in crane base frame. Decode: `xyz = min + (tanh(a)+1)/2 * (max-min)`, `yaw = atan2(tanh(a4), tanh(a3)) / 2`
-- **Reward**: Multiplicative `throughput × alignment × stability × 10.0`. Penalties for failures, empty targets, knocked-off logs. `r_clear` (completion bonus) is defined but NOT used.
-- **Episode**: Ends at 30 cycles or empty rack
-
-### Key Task IDs
-
-| Task ID | Obs | Notes |
-|---------|-----|-------|
-| `Isaac-Crane-PointCloud-CosSin-MR-v0` | PCD 3072D | **Primary** for paper |
-| `Isaac-Crane-Full-CosSin-MR-v0` | Pose 128D | Privileged-pose ablation |
-
-Other variants (MN, AR, AN, PG reward; DR flags) exist in `tasks.py` but MR without DR is the baseline.
-
-### Core Files
+### Core files
 
 | File | Role |
-|------|------|
-| `scripts/envs/crane_rl_env_full.py` | Main env (~5000 lines): FSM, reward, OOB, all simulation logic |
-| `source/crane_testbed/crane_testbed/tasks.py` | Gym task registration mapping IDs to env configs |
-| `source/crane_testbed/crane_testbed/agents/rsl_rl_cfg.py` | PPO hyperparameters per task variant |
-| `source/crane_testbed/crane_testbed/agents/pointnet_actor_critic.py` | PointNet encoder + actor-critic |
-| `source/crane_testbed/crane_testbed/agents/cnn_actor_critic.py` | CNN depth encoder + actor-critic |
-| `scripts/rsl_rl/train.py` | RL training (supports `--bc_checkpoint` for BC+RL) |
-| `scripts/envs/train_bc_pointcloud_cossin.py` | BC training with 5D cossin actions |
-| `scripts/envs/play_heuristic.py`, `play_bc_pointcloud.py`, `scripts/rsl_rl/play.py` | Evaluation (all produce identical JSON metrics) |
-| `docs/iros2026_draft.tex` | IROS paper draft |
+|---|---|
+| `scripts/envs/crane_rl_env_gaze.py` | THE env (~5500 lines): gaze camera, FSM, rewards, platform-v2 physics, ZED noise model, accounting counters |
+| `scripts/envs/train_bc_pointcloud.py` | collection + BC training; `--save_raw_cap` stores PRE-FPS raw clouds (fp16) so num_points/crop/margin are post-hoc choices |
+| `scripts/envs/scoring_head.py` | per-point scoring policy + support gate (see below) |
+| `scripts/envs/play_bc_pointcloud.py` | sim eval; heuristic row = the DEPLOYED baseline imported verbatim (replay-validated bridge) |
+| `scripts/envs/summarize_noise_sweep.py` | sweep tables; warns on mixed metric versions |
+| `fpi_crane_ros2/fpi_crane_rl/` | vendored deployment node + policy_loader (sim eval imports from here - keep in tree) |
+| `source/crane_testbed/.../tasks.py` | gym task registrations (`...Gaze-CosSin-Raw-MR-v0` primary; `-CC-v0` adds cycle_cost) |
+| `eval_scripts/` | sweep/collection/chain run scripts |
 
-### Point Cloud Pipeline
+### Scoring head (why it exists)
 
-Depth camera → semantic segmentation mask (logs only) → back-project to 3D → transform to crane base frame → Farthest Point Sampling (1024 pts) → PointNet encoder (per-point MLP 3→64→128→256 with BN + ELU, max-pool, FC 256→256) → actor/critic heads.
+Regression BC under MSE answers bimodal piles with the MEAN of two mounds = the empty gap
+(observed on the real crane 2026-08-03: 27% zero-support targets). The scoring head scores
+every observed point and grasps at the argmax - mode-averaging is unrepresentable. Its own
+weakness: a single noise-displaced point can win the argmax (93->50% grasp success at 1x ZED
+noise). Fix: the SUPPORT GATE (default on, `support_frac 0.25`) excludes low-support points
+from selection. The gate is processing, not learning - on real clouds it moved 0/26 deployed-
+heuristic targets; the LEARNED claim is discrimination (rack vs logs), which needs the
+margin dataset (structure as negatives).
 
-### FSM Controller (10 phases)
+## Metrics - critical
 
-HOVER_UP → ALIGN_YAW → DESCEND → CLOSE → LIFT_HIGH → CARRY_HOME → ALIGN_HOME_YAW → LOWER_TO_DROP → OPEN → SETTLE
+`eval_config.metrics_version: 2` = clearing/c95/throughput/full-clear from the MEASURED
+post-despawn rack count (`logs_in_rack` in decisions npz). Version 1 (older rows) used the
+cumulative grasp tally - it can exceed 100% (216/200 observed) and its c95 is optimistic.
+NEVER mix v1 and v2 on those metrics. Grasp success, stability, alignment, cycles are
+comparable across both. `accounting_mismatch_cycles > 0` in eval_config means that row's
+clearing numbers are suspect.
 
-### BC+RL Fine-Tuning
+## Traps (each of these has cost real time)
 
-`train.py --bc_checkpoint <path>` loads BC encoder+actor weights (`strict=False`). Critic initializes randomly. Use `sigma_init=0.3` (not 1.0) to preserve BC mean while allowing exploration.
+- All parsers use `parse_known_args`: a mistyped flag is SILENTLY ignored. grep the parser
+  before trusting a new flag.
+- NEVER copy code trees; symlink. A stale February copy of the env once silently collected a
+  20k-sample garbage dataset.
+- FPS at collection time is a one-way door - derive datasets from `pointclouds_raw.npy`, not
+  from FPS'd files.
+- Checkpoints carry `num_points`; the cloud pipeline must match (deployment auto-adopts).
+- Collections have NO `--seed` flag yet: same config on two machines = overlapping piles.
+- ZED noise: collections are CLEAN; noise is train-time augmentation (`--zed_noise`,
+  sigma = 0.0014*z^2 = the characterised real sensor; eval sweeps use multiples of it).
+- PhysX: high env counts corrupt the scene (6400 rigid bodies); 8 envs is the proven max on
+  8 GB for eval/collection, 4 for RL training.
+- Commit style: plain ASCII (no em dashes/box-drawing/emoji) and never any AI-assistant
+  attribution or Co-Authored-By in commits/PRs/docs.
 
-## Critical Constraints
+## Policy zoo (committed under logs/ as force-added exceptions; logs/ is otherwise ignored)
 
-- **Max 20 parallel envs** — 32+ causes PhysX `Scene state is corrupted` (6400 rigid bodies exceeds GPU solver capacity)
-- **Action bounds = OOB bounds**: `_action_bounds_min/max` (from rack geometry) are used for both policy scaling and out-of-bounds log despawning
-- **`_logs_knocked_off` resets on episode reset** — eval scripts must capture it in the done block before reset
-- **Evaluation order**: `_check_logs_out_of_bounds()` → `_check_grasped_logs()` → `_despawn_grasped_logs()` (OOB deposited first, no double-counting)
+| checkpoint | what |
+|---|---|
+| `logs/bc_pointcloud/bc_aug1v2_dig25/bc_pointcloud_policy.pt` | regression BC, tight crop, 1024 pts, dig 0.25 |
+| `logs/bc_pointcloud/bc_aug1v2_dig25/bc_pointcloud_policy_rsl_rl.pt` | same in RSL-RL format = BCRL init |
+| `logs/bc_pointcloud/scoring_v1/scoring_policy.pt` | scoring head, SAME dataset as the BC above (controlled head comparison) |
+| `logs/rsl_rl/.../model_100_bc_format.pt` | BCRL-CC 100 iters, platform-v2 |
 
-## Detailed Context
+Datasets are not in git; rsync from the laptop: `logs/bc_pointcloud/bc_policy_aug1_v2/`
+(tight 1024 + full-scene 2048) and `logs/bc_pointcloud/bc_margin05_2048/` (margin 0.5,
+2048 pts, + pre-FPS raw).
 
-See `docs/CLAUDE.md` for extended context including full evaluation metric formats, PPO hyperparameters, reward function details, paper status, and common pitfalls.
+## Standing questions
+
+1. Does training WITH structure in the cloud (margin dataset) stop the rack/end-board
+   mis-targeting that dominates real failures (22% of cycles, endgame-concentrated)?
+2. Does RL fine-tuning beat its own BC init under a FAIR test (same platform, BC-initialised,
+   matched clean rows), and degrade slower as observations degrade? Unresolved - one prior
+   "no" came from an invalid cross-platform comparison.
+3. Can a full-scene (no-crop) policy remove the rack-calibration dependency?
+
+`docs/CLAUDE.md` has extended paper-era context (reward details, PPO hyperparameters); treat
+its file references as historical where they conflict with this file.
