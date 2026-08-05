@@ -31,7 +31,7 @@ set -u
 cd /workspace/crane_testbed || exit 1
 export PYTHONPATH=/workspace/crane_testbed/source/crane_testbed:/workspace/crane_testbed/scripts/envs
 
-OUT=/workspace/crane_testbed/logs/bc_pointcloud/bc_margin05_2048
+OUT=${OUT:-/workspace/crane_testbed/logs/bc_pointcloud/bc_margin05_2048}
 EPISODES=${EPISODES:-500}
 NUM_ENVS=${NUM_ENVS:-8}          # eval sweep held 8 envs @ 7.3 GB for 13 h with the same cameras
 
@@ -46,6 +46,6 @@ mkdir -p "$OUT"
   --gripper_effort 2000 --num_logs 200 \
   --num_envs "$NUM_ENVS" --num_episodes "$EPISODES" \
   --output_dir "$OUT" \
-  > /workspace/crane_testbed/logs/collect_margin2048.log 2>&1
+  > "${COLLECT_LOG:-/workspace/crane_testbed/logs/collect_margin2048.log}" 2>&1
 
 echo "collection finished rc=$? -> $OUT"
