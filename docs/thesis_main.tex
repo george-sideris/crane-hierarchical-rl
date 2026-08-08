@@ -1,0 +1,354 @@
+% Master's thesis root file.
+% Compile from this directory: pdflatex thesis_main; bibtex thesis_main; pdflatex x2.
+% Chapters are standalone files (thesis_chapter_*.tex) included below.
+% Front-matter formatting follows the original McGill-style template
+% (report class, Palatino, double spacing, red headrule).
+
+\documentclass[12pt, letterpaper]{report}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{palatino}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage[chapter]{algorithm}
+\usepackage{algpseudocode}
+\usepackage{etoolbox}
+\usepackage{enumitem}
+\usepackage[labelfont=bf]{caption}
+\usepackage{setspace}
+\captionsetup[table]{font = {stretch=1.35}}
+\captionsetup[figure]{font = {stretch=1.35}}
+\captionsetup[algorithm]{font = {stretch=1.35}}
+% Algorithm bodies are set single-spaced; the surrounding text stays double-spaced.
+\AtBeginEnvironment{algorithmic}{\setstretch{1}}
+% Input/Output headers in the style used throughout: bold label, unnumbered line.
+\newcommand{\algin}[1]{\Statex \textbf{Input:} #1}
+\newcommand{\algout}[1]{\Statex \textbf{Output:} #1}
+\newcommand{\algstage}[1]{\Statex \textbf{#1}}
+\usepackage[margin=1in, headsep=1cm, bottom=3.5cm]{geometry}
+\usepackage[hidelinks]{hyperref}
+\usepackage{cite}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{lmodern}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, fit, backgrounds, calc}
+
+\graphicspath{{figures/}}
+
+\renewcommand{\baselinestretch}{2}
+
+\renewcommand{\chaptermark}[1]{\markboth{#1}{}}
+
+% Plain page style: page number only
+\fancypagestyle{plain}{%
+	\fancyhf{}
+	\fancyhead[R]{\textbf{\thepage}}
+}
+
+% Fancy header with chapter mark and red rule
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{\textbf{\nouppercase{\leftmark}}}
+\chead{}
+\rhead{\textbf{\thepage}}
+
+\usepackage{xpatch}
+\xpretocmd\headrule{\color{red}}{}{\PatchFailed}
+
+% Discourage hyphenation
+\tolerance=1
+\emergencystretch=\maxdimen
+\hyphenpenalty=10000
+\hbadness=10000
+
+% Front matter in roman numerals
+\setcounter{page}{2}\renewcommand{\thepage}{\roman{page}}
+
+\author{\textcopyright George Sideris, 2026}
+\date{}
+
+\begin{document}
+
+\begin{titlepage}
+	\begin{center}
+		\vspace*{2.5cm}
+
+		\LARGE
+		\textbf{Learning Autonomous Log Pile Clearing from Point Clouds: From Simulation to Field Deployment on a Forestry Crane}
+
+		\vspace{1.2cm}
+
+		\Large
+		\textit{George Sideris}
+
+		\vspace{2cm}
+
+		\Large
+		Department of Mechanical Engineering
+
+		\vspace{-5mm}
+		McGill University
+
+		\vspace{-5mm}
+		Montr\'eal, Qu\'ebec, Canada
+
+		\vspace{2.5cm}
+		August 2026
+
+		\vspace{1cm}
+		{\color{red} \hrule height 0.75mm}
+
+		\vspace{0.4cm}
+
+		\small
+		A thesis submitted to McGill University in partial fulfillment of the
+		requirements of the degree of
+
+		Master of Science
+
+		\copyright\hspace{0.5mm}2026 George Sideris
+
+	\end{center}
+\end{titlepage}
+
+\renewcommand{\chaptermark}[1]{\markboth{\thechapter.\ #1}{}}
+
+\chapter*{Abstract}\markboth{Abstract}{}
+\label{chap:engAbstract}
+
+Clearing a dense pile of logs by sequential grasping is a central task of
+mill yard operations and a difficult target for autonomy: the scene contains
+hundreds of near-identical logs in frictional contact, each grasp reshapes
+the pile, and the machine perceives the pile only through noisy depth
+sensing. This thesis develops and deploys a learned grasp targeting system
+for a full-scale forestry crane, in which a policy decides where to place and
+orient the grapple from a raw, unsegmented point cloud, while a fixed state
+machine executes each grasp cycle.
+
+The work proceeds in three stages. First, a GPU-parallel simulation of the
+crane testbed is built in Isaac Lab, with physics tuned from field
+measurements, and used for a controlled comparison of learning methods at
+pile scale. Reinforcement learning from scratch fails at the trajectory
+level, plateauing near half the pile regardless of observation type, while
+behavior cloning of a privileged scripted expert reaches near-expert
+clearing from raw point clouds, and a constrained fine-tuning recipe (frozen
+perception encoder, privileged asymmetric critic, conservative exploration)
+lets on-policy reinforcement learning optimize execution without destroying
+the cloned competence. Second, the policy is carried onto the physical
+crane through a calibration campaign: a joint-space control interface with
+centimeter task-space tracking, camera extrinsic calibration using the
+grapple itself as the calibration object with a floor-levelness constraint,
+fused two-camera rack localization, and a training environment updated to
+reproduce the calibrated viewpoint and scene. Third, field trials close the
+loop. A baseline campaign of the deployed geometric heuristic identifies
+absorbing structure-targeting errors as the dominant real-world failure
+mode, and motivates a scoring policy that classifies which observed point to
+grasp instead of regressing grasp coordinates. The scoring policy is
+mode-seeking by construction, and on hardware it cleared, without
+assistance, the pile shape that had forced the baseline trial to be
+abandoned, while eliminating the gap-targeting failure of the regression
+policy. Finally, a reinforcement learning architecture native to this
+parameterization is presented, in which the scoring head itself defines a
+categorical action distribution over observed points, so that exploration
+can only propose observed material and per-cycle costs are assigned to the
+specific points that caused them.
+
+\chapter*{Abr\'eg\'e}\markboth{Abr\'eg\'e}{}
+\label{chap:frAbstract}
+
+Le d\'echargement s\'equentiel d'une pile dense de billes est une t\^ache
+centrale des cours \`a bois et un objectif difficile pour l'autonomie: la
+sc\`ene contient des centaines de billes quasi identiques en contact avec
+frottement, chaque prise remodèle la pile, et la machine ne per\c{c}oit la
+pile qu'\`a travers une perception de profondeur bruit\'ee. Cette th\`ese
+d\'eveloppe et d\'eploie un syst\`eme appris de ciblage de prises pour une
+grue foresti\`ere \`a grande \'echelle, dans lequel une politique d\'ecide
+o\`u placer et orienter le grappin \`a partir d'un nuage de points brut et
+non segment\'e, tandis qu'une machine \`a \'etats fixe ex\'ecute chaque
+cycle de prise.
+
+Le travail proc\`ede en trois \'etapes. D'abord, une simulation
+parall\'elis\'ee sur GPU du banc d'essai est construite dans Isaac Lab, avec
+une physique ajust\'ee \`a partir de mesures de terrain, et utilis\'ee pour
+une comparaison contr\^ol\'ee des m\'ethodes d'apprentissage \`a l'\'echelle
+de la pile. L'apprentissage par renforcement \`a partir de z\'ero \'echoue
+au niveau de la trajectoire, plafonnant pr\`es de la moiti\'e de la pile
+quel que soit le type d'observation, tandis que le clonage comportemental
+d'un expert privil\'egi\'e atteint un d\'echargement quasi expert \`a partir
+de nuages de points bruts, et qu'une recette d'ajustement fin contrainte
+(encodeur de perception gel\'e, critique asym\'etrique privil\'egi\'e,
+exploration conservatrice) permet \`a l'apprentissage par renforcement
+d'optimiser l'ex\'ecution sans d\'etruire la comp\'etence clon\'ee.
+Ensuite, la politique est port\'ee sur la grue physique par une campagne
+d'\'etalonnage: une interface de commande dans l'espace articulaire avec un
+suivi centim\'etrique, un \'etalonnage extrins\`eque des cam\'eras utilisant
+le grappin lui-m\^eme comme objet d'\'etalonnage avec une contrainte de
+plan\'eit\'e du sol, une localisation du support de billes fusionnant les
+deux cam\'eras, et un environnement d'entra\^inement mis \`a jour pour
+reproduire le point de vue \'etalonn\'e. Enfin, des essais sur le terrain
+bouclent la boucle. Une campagne de r\'ef\'erence de l'heuristique
+g\'eom\'etrique d\'eploy\'ee identifie le ciblage absorbant de la structure
+comme mode d'\'echec dominant en conditions r\'eelles, et motive une
+politique de notation qui classifie quel point observ\'e saisir au lieu de
+r\'egresser des coordonn\'ees de prise. Cette politique recherche les modes
+par construction et, sur le mat\'eriel, elle a d\'echarg\'e sans assistance
+la forme de pile qui avait forc\'e l'abandon de l'essai de r\'ef\'erence,
+tout en \'eliminant l'\'echec de ciblage d'interstice de la politique de
+r\'egression. Finalement, une architecture d'apprentissage par renforcement
+propre \`a cette param\'etrisation est pr\'esent\'ee, dans laquelle la
+t\^ete de notation d\'efinit elle-m\^eme une distribution cat\'egorielle sur
+les points observ\'es, de sorte que l'exploration ne peut proposer que de la
+mati\`ere observ\'ee et que les co\^uts par cycle sont attribu\'es aux
+points sp\'ecifiques qui les ont caus\'es.
+
+\chapter*{Acknowledgements}\markboth{Acknowledgements}{}
+\label{chap:acknowledgments}
+
+I thank my supervisor, Prof.\ Inna Sharf, for her guidance throughout this
+research. I am grateful to Elie Ayoub, Nicolas Lemieux, and Heshan Fernando
+of FPInnovations for their collaboration on the crane testbed, and to the
+members of the Aerospace Mechatronics Laboratory at McGill University.
+
+This work was supported by an NSERC Alliance Grant, ``Development of
+Autonomy for Log-loading Machines in Canadian Mill Yards,'' with the support
+of Mitacs and FPInnovations.
+
+\chapter*{Preface and Contribution of Authors}\markboth{Preface}{}
+\label{chap:preface}
+
+This thesis is written in the traditional monograph format. The candidate is
+the primary contributor to all chapters: he developed the simulation
+environment, the learning pipelines, the calibration tooling, and the
+deployed software, conducted the simulated and hardware experiments, and
+wrote the text. Prof.\ Inna Sharf supervised the research and provided
+editorial guidance throughout. Portions of Chapters~\ref{ch:sim_env} and
+\ref{ch:sim_study} draw on a manuscript on imitation-bootstrapped
+reinforcement learning for log pile clearing prepared by the candidate with
+his collaborators. The field trials of Chapter~\ref{ch:bc_policies} were
+carried out at the FPInnovations testbed with the support of Elie Ayoub,
+Nicolas Lemieux, and Heshan Fernando, who also developed the PLC-side
+control software against which the deployed system integrates.
+
+% Start of ToC, LoF, LoT, acronyms
+\tableofcontents\thispagestyle{plain}
+
+\listoffigures\thispagestyle{plain}
+\listoftables
+\listofalgorithms\thispagestyle{plain}
+
+\chapter*{List of Acronyms}
+\markboth{List of Acronyms}{}
+\addcontentsline{toc}{chapter}{List of Acronyms}
+
+\begin{spacing}{1}
+\begin{description}
+\item[BC] Behavior Cloning
+\item[CAD] Computer-Aided Design
+\item[CCD] Continuous Collision Detection
+\item[CNN] Convolutional Neural Network
+\item[ELU] Exponential Linear Unit
+\item[FK] Forward Kinematics
+\item[FPS] Farthest Point Sampling
+\item[FSM] Finite State Machine
+\item[GAE] Generalized Advantage Estimation
+\item[IK] Inverse Kinematics
+\item[MDP] Markov Decision Process
+\item[MLP] Multilayer Perceptron
+\item[MSE] Mean-Squared Error
+\item[PD] Proportional-Derivative
+\item[PGS] Projected Gauss-Seidel (solver)
+\item[PLC] Programmable Logic Controller
+\item[PPO] Proximal Policy Optimization
+\item[RL] Reinforcement Learning
+\item[ROS] Robot Operating System
+\item[SDF] Signed Distance Field
+\item[TGS] Temporal Gauss-Seidel (solver)
+\item[URDF] Unified Robot Description Format
+\end{description}
+\end{spacing}
+
+\chapter*{List of Symbols}
+\markboth{List of Symbols}{}
+\addcontentsline{toc}{chapter}{List of Symbols}
+
+Symbols are used consistently across chapters. Where a symbol carries a
+subscript index $i$ it refers to the $i$-th point of the observed cloud, and
+where it carries a subscript $t$ it refers to decision step $t$ of an episode.
+
+\begin{spacing}{1}
+\vspace{4mm}
+\noindent\textit{Scene and observation}
+\begin{description}[leftmargin=3.2em, style=sameline]
+\item[$P$] Observed point cloud in the crane base frame, $P \in \mathbb{R}^{N \times 3}$
+\item[$p_i$] The $i$-th point of the cloud
+\item[$N$] Point budget after farthest point sampling (1024 or 2048)
+\item[$m$] Observation crop margin beyond the action box
+\item[$b^{\min}, b^{\max}$] Corners of the action box, the volume of commandable grasp centers
+\item[$\mathcal{C}$] Admissible candidate set: non-padded points inside the action box
+\item[$\nu$] Axial depth-noise coefficient of the stereo camera model, $\sigma(r) = \nu r^2$
+\item[$h_i$, $g$] Per-point feature at point $i$ and the pooled global feature of the PointNet encoder
+\item[$\xi_t$] Privileged state vector (log poses), available only in simulation
+\item[$\mathcal{D}$] Demonstration dataset of $M$ expert grasp tuples
+\end{description}
+
+\noindent\textit{Grasp target and action}
+\begin{description}[leftmargin=3.2em, style=sameline]
+\item[$\mathbf{g}$] Grasp target $(x, y, z, \psi)$: grapple position in the base frame and yaw
+\item[$\psi$] Grapple yaw about the vertical axis
+\item[$a$] Network action vector
+\item[$t$] Metric grasp center of an expert label, $t = (t_x, t_y, t_z)$
+\item[$d$] Digging depth below the local pile surface
+\item[$s_i$] Per-point grasp-quality score (logit) of the scoring policy
+\item[$\delta_i$] Per-point vertical residual from point $i$ to the commanded grasp center
+\item[$q_i$] Per-point yaw in the doubled-angle encoding, $(\cos 2\psi, \sin 2\psi)$
+\item[$i^{*}$, $\hat{\imath}$] Labeled point index; point index selected at inference
+\end{description}
+
+\noindent\textit{Cycle outcome and reward}
+\begin{description}[leftmargin=3.2em, style=sameline]
+\item[$n$] Throughput: number of logs held by the grapple after the lift
+\item[$\alpha$] Alignment score of the held logs, $\alpha \in [0, 1]$
+\item[$\varsigma$] Stability score of the lifted load, $\varsigma \in [0, 1]$
+\item[$\theta_{\alpha_i}$, $\theta_\varsigma$] Per-log misalignment angle; grapple tilt angle
+\item[$\bar{\theta}$] Windowed mean tilt over the post-lift settling window
+\item[$r$] Reward issued once per grasp cycle
+\item[$H$] Episode horizon, in grasp cycles
+\end{description}
+
+\noindent\textit{Learning}
+\begin{description}[leftmargin=3.2em, style=sameline]
+\item[$\pi_\theta$] Policy with parameters $\theta$. Subscripted, $\theta$ instead denotes a geometric angle
+\item[$\hat{A}_t$] Advantage estimate from generalized advantage estimation
+\item[$\gamma$, $\lambda$] Discount factor and GAE trace parameter
+\item[$\epsilon$, $\beta$] PPO clip parameter and entropy coefficient
+\item[$\tau$] Temperature of the categorical score distribution
+\item[$\sigma_\delta$, $\sigma_q$] Exploration scales on the depth residual and the yaw pair
+\item[$\mathcal{L}$] Training loss, subscripted by term
+\end{description}
+
+\noindent\textit{Calibration}
+\begin{description}[leftmargin=3.2em, style=sameline]
+\item[$T_{\mathrm{base} \leftarrow \mathrm{cam}}$] Transform placing camera points in the crane base frame
+\item[$w$] Weight on the floor-levelness penalty in the calibration objective
+\end{description}
+\end{spacing}
+
+\clearpage
+\pagenumbering{arabic}
+
+% ===== Main matter =====
+\input{thesis_chapter_intro}
+\input{thesis_chapter_background}
+\input{thesis_chapter_simulation}
+\input{thesis_chapter_sim_study}
+\input{thesis_chapter_sim2real}
+\input{thesis_chapter_bc_policies}
+\input{thesis_chapter_bcrl}
+\input{thesis_chapter_conclusion}
+
+\bibliographystyle{ieeetr}
+\bibliography{thesis_references}
+
+\end{document}

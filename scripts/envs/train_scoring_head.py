@@ -54,6 +54,20 @@ def parse_args():
                         "it cannot collapse the classification signal.")
     p.add_argument("--zed_noise", action="store_true", help="per-epoch ZED axial noise aug")
     p.add_argument("--zed_coeff", type=float, default=0.0014)
+    p.add_argument("--stub_aug", type=float, default=0.0,
+                   help="per-sample probability of POLE VARIATION: each pole column in the "
+                        "cloud is independently kept (25%%), cut to a random stub of height "
+                        "U(0.08, 0.6) m (65%%), or removed entirely (10%%). Fresh draws every "
+                        "epoch. Teaches the short-vertical-remnant negative the margin data "
+                        "misses (real broken-pole base, 2026-08-05); train-time ZED noise "
+                        "roughens the stub points like everything else. Pole masks are "
+                        "precomputed once, so the per-epoch cost is boolean ops only.")
+    p.add_argument("--stub_neg", type=float, default=0.0,
+                   help="EXPLICIT negative-loss weight on known pole/stub points (softplus on "
+                        "their raw scores). Cross-entropy alone gives structure points no more "
+                        "downward pressure than any other non-label point, which is why stub "
+                        "variation alone only nudged the real stump's score (99.1 -> 98.0 "
+                        "percentile). Requires --stub_aug > 0 (uses its precomputed pole masks).")
     p.add_argument("--shift_aug_x", type=float, default=0.0,
                    help="random rigid translation of the whole scene, uniform in [-v, v] metres")
     p.add_argument("--shift_aug_y", type=float, default=0.0,
@@ -108,6 +122,19 @@ def main():
     if a.zed_noise and cam is None:
         print("[Scoring] WARN --zed_noise set but cam_pos_base.npy missing -> DISABLED")
 
+    pole_info = None
+    if a.stub_aug > 0:
+        from stub_aug import find_pole_columns
+        print("[Scoring] precomputing pole columns for --stub_aug ...")
+        pole_info = []
+        for i in range(len(pc)):
+            cols = [(float(pc[i][m][:, 2].min()), np.where(m)[0].astype(np.int32))
+                    for _, m in find_pole_columns(pc[i])]
+            pole_info.append(cols)
+        n_with = sum(1 for c in pole_info if c)
+        print(f"[Scoring] pole columns found in {n_with}/{len(pc)} samples "
+              f"(mean {np.mean([len(c) for c in pole_info]):.1f}/cloud)")
+
     n = len(pc)
     idx = np.random.permutation(n)
     n_val = int(n * a.val_frac)
@@ -119,7 +146,8 @@ def main():
     Ttr = torch.from_numpy(tgt[tr]).float()
     Xva = torch.from_numpy(pc[va]).float().to(dev)
     Tva = torch.from_numpy(tgt[va]).float().to(dev)  # sliced per batch below
-    loader = DataLoader(TensorDataset(Xtr, Ttr), batch_size=a.batch_size, shuffle=True,
+    tr_t = torch.from_numpy(tr)                     # original dataset indices (for pole_info)
+    loader = DataLoader(TensorDataset(Xtr, Ttr, tr_t), batch_size=a.batch_size, shuffle=True,
                         drop_last=True)
 
     model = ScoringGraspPolicy(num_points=pc.shape[1], dropout=a.dropout).to(dev)
@@ -130,9 +158,30 @@ def main():
     best = float("inf")
     for ep in range(a.epochs):
         model.train()
-        agg = {"loss": 0.0, "cls": 0.0, "dz": 0.0, "yaw": 0.0, "n": 0}
-        for xb, tb in loader:
+        agg = {"loss": 0.0, "cls": 0.0, "dz": 0.0, "yaw": 0.0, "neg": 0.0, "n": 0}
+        for xb, tb, ib in loader:
             xb, tb = xb.to(dev), tb.to(dev)
+            neg_mask = None
+            if pole_info is not None:
+                # pole variation: per sample (prob stub_aug), each pole kept / cut / removed;
+                # whatever pole points REMAIN in the cloud become explicit negatives (--stub_neg)
+                xb = xb.clone()
+                neg_mask = torch.zeros(xb.shape[0], xb.shape[1], dtype=torch.bool, device=dev)
+                for bi in range(len(ib)):
+                    cols = pole_info[int(ib[bi])]
+                    do_cut = np.random.rand() < a.stub_aug
+                    for zbase, pidx in cols:
+                        if do_cut:
+                            u = np.random.rand()
+                            if u >= 0.25:
+                                h = 0.05 if u > 0.90 else np.random.uniform(0.08, 0.6)
+                                col = xb[bi, pidx]
+                                cut = col[:, 2] > (zbase + h)
+                                if cut.any():
+                                    xb[bi, pidx[cut.cpu().numpy() if cut.is_cuda else cut.numpy()]] = 0.0
+                        keep = xb[bi, pidx].abs().sum(-1) > 1e-6
+                        kn = keep.cpu().numpy() if keep.is_cuda else keep.numpy()
+                        neg_mask[bi, pidx[kn]] = True
             if a.zed_noise and cam_d is not None:
                 xb = apply_zed_noise(xb, cam_d, a.zed_coeff)   # before the shift: ray geometry is
                                                                # defined in the ORIGINAL camera frame
@@ -146,11 +195,12 @@ def main():
                 xb = torch.where(keep, xb + d, xb)
                 tb = tb.clone()
                 tb[:, :2] += d[:, 0, :2]
-            loss, parts = scoring_loss(model, xb, tb, label_smooth_radius=a.label_radius)
+            loss, parts = scoring_loss(model, xb, tb, label_smooth_radius=a.label_radius,
+                                       neg_mask=neg_mask, w_neg=a.stub_neg)
             opt.zero_grad(); loss.backward(); opt.step()
             agg["loss"] += float(loss); agg["n"] += 1
-            for k in ("cls", "dz", "yaw"):
-                agg[k] += parts[k]
+            for k in ("cls", "dz", "yaw", "neg"):
+                agg[k] += parts.get(k, 0.0)
 
         model.eval()
         with torch.no_grad():
@@ -170,7 +220,8 @@ def main():
         if ep % 10 == 0 or ep == a.epochs - 1:
             m = agg["n"]
             print(f"Epoch {ep:3d}/{a.epochs} | train {agg['loss']/m:.4f} "
-                  f"(cls {agg['cls']/m:.3f} dz {agg['dz']/m:.4f} yaw {agg['yaw']/m:.3f}) | "
+                  f"(cls {agg['cls']/m:.3f} dz {agg['dz']/m:.4f} yaw {agg['yaw']/m:.3f} "
+                  f"neg {agg['neg']/m:.3f}) | "
                   f"val {vloss:.4f} | xy-err {float(err_xy.median()):.3f} m | "
                   f"within-30cm {hit:.0f}% | lr {opt.param_groups[0]['lr']:.2e}")
 

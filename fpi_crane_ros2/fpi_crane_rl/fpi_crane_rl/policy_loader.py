@@ -328,7 +328,7 @@ class ScoringHeadPolicy(PolicyBase):
     """
 
     def __init__(self, checkpoint_path: str, bounds_min: np.ndarray, bounds_max: np.ndarray,
-                 cossin: bool = True, device: str = "auto"):
+                 cossin: bool = True, device: str = "auto", support_frac: float = 0.0):
         super().__init__(bounds_min, bounds_max, cossin)
         self.device = torch.device(_resolve_device(device))
         ckpt = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
@@ -345,6 +345,14 @@ class ScoringHeadPolicy(PolicyBase):
 
         self.num_points = int(ckpt.get("num_points", 1024))
         self.model = _mod.ScoringGraspPolicy(num_points=self.num_points).to(self.device)
+        # candidate mask: only points inside the ACTION box are selectable; margin-crop points
+        # are context. The net sees training coords (shim), so the training-coords box applies.
+        self.model.candidate_min = tuple(float(v) for v in bounds_min)
+        self.model.candidate_max = tuple(float(v) for v in bounds_max)
+        # support gate: OFF by default (0.0 = raw argmax); opt in with support_frac=0.25.
+        # scoring_v1 (tight/1024) needs it under noise. The candidate mask above is NOT the
+        # gate - reachability stays enforced regardless.
+        self.model.support_frac = float(support_frac)
         self.model.load_state_dict(ckpt["model_state_dict"])
         self.model.eval()
         print(f"[PolicyLoader] Loaded SCORING head from {checkpoint_path} "
@@ -363,7 +371,8 @@ class ScoringHeadPolicy(PolicyBase):
 def load_policy(policy_type: str, checkpoint_path,
                 bounds_min: np.ndarray, bounds_max: np.ndarray,
                 cossin: bool = True, device: str = "auto",
-                heuristic_dig: float = 0.30) -> PolicyBase:
+                heuristic_dig: float = 0.30,
+                support_frac: float = 0.0) -> PolicyBase:
     """Factory function to load any policy type.
 
     Args:
@@ -379,7 +388,8 @@ def load_policy(policy_type: str, checkpoint_path,
     if policy_type in ("bc", "bcrl", "rl"):
         return RslRlPolicy(checkpoint_path, bounds_min, bounds_max, cossin, device)
     elif policy_type == "scoring":
-        return ScoringHeadPolicy(checkpoint_path, bounds_min, bounds_max, cossin, device)
+        return ScoringHeadPolicy(checkpoint_path, bounds_min, bounds_max, cossin, device,
+                                 support_frac=support_frac)
     elif policy_type == "sac":
         return SACPolicy(checkpoint_path, bounds_min, bounds_max, cossin, device)
     elif policy_type == "heuristic":

@@ -141,3 +141,20 @@ Datasets are not in git; rsync from the laptop: `logs/bc_pointcloud/bc_policy_au
 
 `docs/CLAUDE.md` has extended paper-era context (reward details, PPO hyperparameters); treat
 its file references as historical where they conflict with this file.
+
+## Thesis
+
+The master's thesis lives in `docs/` (root `thesis_main.tex`, 8 chapters, build with
+`pdflatex + bibtex + pdflatex x2` from that directory). Chapter map, notation conventions,
+the two stability definitions, the algorithm blocks and the figure provenance are documented
+in `docs/CLAUDE.md` - read that before editing any chapter, because the notation was unified
+across chapters and it is easy to reintroduce a symbol collision.
+
+Built artifacts (`thesis_main.pdf`, `thesis_overleaf.zip`, LaTeX aux files) are gitignored.
+
+## IsaacLab-side changes
+
+The surrounding IsaacLab checkout has its own local edits (`docker/Dockerfile.base`,
+`docker/Dockerfile.ros2`, `source/isaaclab/setup.py`). That checkout's only remote is upstream
+`isaac-sim/IsaacLab`, so the edits cannot be pushed with it. They are exported to
+`isaaclab_patches/` - apply them after cloning IsaacLab on a new machine.

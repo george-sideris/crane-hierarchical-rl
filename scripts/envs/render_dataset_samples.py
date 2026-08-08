@@ -90,11 +90,15 @@ def panel(pts, tgt, margin=0.0):
 
 
 def label(img, text, sub):
+    """Caption band ABOVE the panel. Painting it over the image would hide content now
+    that panels are cropped to their drawn extent."""
     from PIL import Image, ImageDraw
-    im = Image.fromarray(img); d = ImageDraw.Draw(im)
-    d.rectangle([0, 0, im.width, 40], fill=(255, 255, 255))
+    im = Image.fromarray(img)
+    out = Image.new("RGB", (im.width, im.height + 40), (255, 255, 255))
+    out.paste(im, (0, 40))
+    d = ImageDraw.Draw(out)
     d.text((10, 6), text, fill=(0, 0, 0)); d.text((10, 22), sub, fill=(90, 90, 90))
-    return np.asarray(im)
+    return np.asarray(out)
 
 
 def main():
@@ -113,13 +117,31 @@ def main():
     targets_n = np.linspace(counts.max(), max(counts.min(), 60), a.n).astype(int)
     picks = [int(idx0[np.argmin(np.abs(counts - t))]) for t in targets_n]
 
-    rows, row = [], []
-    for k, i in enumerate(picks):
+    # render first, then crop every panel with ONE common bounding box of drawn content:
+    # the camera is shared, so a common crop centres the content without changing scale
+    raw, meta = [], []
+    for i in picks:
         pts = valid(np.asarray(pc[i]).astype(np.float64))
         tgt = decode(ac[i])
-        img = label(panel(pts, tgt, a.margin),
+        raw.append(panel(pts, tgt, a.margin))
+        meta.append((i, len(pts), tgt))
+    bg = raw[0][0, 0].astype(float)
+    ys0, ys1, xs0, xs1 = 10**9, -1, 10**9, -1
+    for img in raw:
+        m = np.abs(img.astype(float) - bg).sum(axis=2) > 12
+        ys, xs = np.where(m)
+        if len(ys):
+            ys0, ys1 = min(ys0, ys.min()), max(ys1, ys.max())
+            xs0, xs1 = min(xs0, xs.min()), max(xs1, xs.max())
+    pad = 12
+    ys0, xs0 = max(0, ys0 - pad), max(0, xs0 - pad)
+    ys1 = min(raw[0].shape[0], ys1 + pad); xs1 = min(raw[0].shape[1], xs1 + pad)
+
+    rows, row = [], []
+    for img0, (i, npts, tgt) in zip(raw, meta):
+        img = label(img0[ys0:ys1, xs0:xs1],
                     f"sample {i}  -  stored cloud + stored expert action",
-                    f"{len(pts)} pts | label ({tgt[0]:.2f}, {tgt[1]:.2f}, {tgt[2]:.2f}) "
+                    f"{npts} pts | label ({tgt[0]:.2f}, {tgt[1]:.2f}, {tgt[2]:.2f}) "
                     f"yaw {np.degrees(tgt[3]):.0f} deg")
         row.append(img)
         if len(row) == 4:

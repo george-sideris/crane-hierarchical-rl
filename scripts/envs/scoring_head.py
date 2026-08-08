@@ -115,9 +115,20 @@ class ScoringGraspPolicy(nn.Module):
     # own score. Instead, points with local support below support_frac * (cloud max) are excluded
     # from the argmax: a target must sit on a supported cluster. Verified on the exact collapse
     # clouds: empty-cycle target support 3 -> 40, successful-cycle targets unmoved (median 0.00 m).
-    # support_frac=0 disables (pre-2026-08-04 behaviour).
-    support_frac: float = 0.25
+    # DEFAULT 0.0 = gate OFF (2026-08-05 decision: raw argmax is the normal mode; the gate is
+    # OPT-IN safety processing, credited separately from learning). Margin-family policies
+    # measured 0 junk picks in 208 in-distribution noise draws without it. CAVEAT: scoring_v1
+    # (tight/1024) DOES need it under noise (93->50% grasp success ungated) - pass
+    # support_frac=0.25 explicitly when running that checkpoint.
+    support_frac: float = 0.0
     support_radius: float = 0.5
+    # CANDIDATE MASK: with --crop_margin the cloud contains points OUTSIDE the action box
+    # (bed apron, rails, pole bases in the margin band). They are observation CONTEXT and must
+    # never be selectable - an argmax pick out there is an unreachable/unsafe command (observed
+    # 2026-08-05: a margin-band point at y=-2.01, z=-0.46 next to tall structure won the argmax).
+    # Defaults = the training-coords action box; the deployment loader overrides from node params.
+    candidate_min = (-5.364, -1.684, -1.30)
+    candidate_max = (-3.364, 5.316, 0.10)
 
     @torch.no_grad()
     def act(self, points: torch.Tensor, support_frac: float | None = None) -> torch.Tensor:
@@ -130,13 +141,19 @@ class ScoringGraspPolicy(nn.Module):
         score, dz, yaw, pts = self.forward(points)
         frac = self.support_frac if support_frac is None else support_frac
         valid = (pts.abs().sum(-1) > 1e-6)                       # (B, N)
-        sel = score
+        cmin = torch.as_tensor(self.candidate_min, device=pts.device)
+        cmax = torch.as_tensor(self.candidate_max, device=pts.device)
+        inbox = ((pts >= cmin) & (pts <= cmax)).all(-1)
+        cand = valid & inbox
+        # degenerate cloud with nothing in the box: fall back to any valid point
+        cand = torch.where(cand.any(dim=1, keepdim=True), cand, valid)
+        sel = score.masked_fill(~cand, -1e9)
         if frac and frac > 0:
             nb = (torch.cdist(pts[:, :, :2], pts[:, :, :2]) < self.support_radius)
             cnt = (nb & valid.unsqueeze(1)).sum(-1).float()      # (B, N) local support
-            gate = valid & (cnt >= frac * cnt.max(dim=1, keepdim=True).values)
-            # a fully-gated cloud (degenerate) falls back to the raw argmax
-            gate = torch.where(gate.any(dim=1, keepdim=True), gate, valid)
+            gate = cand & (cnt >= frac * cnt.max(dim=1, keepdim=True).values)
+            # a fully-gated cloud (degenerate) falls back to the candidate argmax
+            gate = torch.where(gate.any(dim=1, keepdim=True), gate, cand)
             sel = score.masked_fill(~gate, -1e9)
         idx = sel.argmax(dim=1)                                  # (B,) chosen point
         b = torch.arange(pts.shape[0], device=pts.device)
@@ -148,7 +165,8 @@ class ScoringGraspPolicy(nn.Module):
 
 
 def scoring_loss(model: ScoringGraspPolicy, points: torch.Tensor, target: torch.Tensor,
-                 label_smooth_radius: float = 0.12, w_dz: float = 1.0, w_yaw: float = 0.5):
+                 label_smooth_radius: float = 0.12, w_dz: float = 1.0, w_yaw: float = 0.5,
+                 neg_mask: torch.Tensor | None = None, w_neg: float = 0.0):
     """Cross-entropy on the point nearest the labelled grasp + regressions at that point.
 
     Args:
@@ -181,7 +199,16 @@ def scoring_loss(model: ScoringGraspPolicy, points: torch.Tensor, target: torch.
     loss_yaw = F.mse_loss(yaw[ar, nearest], yaw_t)
 
     total = loss_cls + w_dz * loss_dz + w_yaw * loss_yaw
-    return total, {"cls": float(loss_cls), "dz": float(loss_dz), "yaw": float(loss_yaw)}
+    loss_neg = torch.zeros((), device=pts.device)
+    if neg_mask is not None and w_neg > 0 and bool(neg_mask.any()):
+        # EXPLICIT negatives: cross-entropy alone gives a known-structure point no more
+        # downward pressure than any other non-label point, which is why stub-variation
+        # augmentation only NUDGED the stump's score (99.1 -> 98.0 percentile) instead of
+        # cratering it. softplus drives the raw scores of known structure points negative.
+        loss_neg = torch.nn.functional.softplus(score[neg_mask]).mean()
+        total = total + w_neg * loss_neg
+    return total, {"cls": float(loss_cls), "dz": float(loss_dz), "yaw": float(loss_yaw),
+                   "neg": float(loss_neg)}
 
 
 def decode_regression_labels(actions: np.ndarray, bmin: np.ndarray, bmax: np.ndarray) -> np.ndarray:

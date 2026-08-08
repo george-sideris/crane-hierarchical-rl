@@ -140,6 +140,10 @@ class CranePolicyNode(Node):
         # Heuristic dig below the observed surface. 0.30 = real-tuned; 0.056 = the sim
         # expert's log-center convention (for sim-convention-on-real experiments).
         self.declare_parameter("heuristic_dig", 0.30)
+        # scoring policies: support-gate strength. DEFAULT 0.0 = gate OFF (normal mode);
+        # opt in with 0.25 (recommended for scoring_v1, which is noise-brittle ungated).
+        # The candidate mask (action-box reachability) is separate and always on.
+        self.declare_parameter("support_frac", 0.0)
         self.declare_parameter("checkpoint_path", checkpoint_override or "")
         # Where the grasp target comes from each cycle:
         #   "policy"        onboard point-cloud policy (default)
@@ -674,7 +678,8 @@ class CranePolicyNode(Node):
         ckpt = checkpoint if checkpoint else None
         self.policy = load_policy(policy_type, ckpt, bounds_min, bounds_max,
                                   cossin, device,
-                                  heuristic_dig=float(self.get_parameter("heuristic_dig").value))
+                                  heuristic_dig=float(self.get_parameter("heuristic_dig").value),
+                                  support_frac=float(self.get_parameter("support_frac").value))
         # The checkpoint is authoritative on input size. A mismatch with the num_points param is
         # always a config error, and left alone it would only surface at the first inference (or,
         # for architectures that tolerate it, as a silently mis-aimed policy). Adopt and shout.

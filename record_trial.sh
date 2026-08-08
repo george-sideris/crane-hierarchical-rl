@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Record a crane trial rosbag to the T9 SSD via a throwaway ros2 container,
-# then restamp the ZED topics (kit clock offset) automatically.
+# Record a crane trial rosbag to the T9 SSD via a throwaway ros2 container.
 # Usage: ./record_trial.sh [name_prefix]   (default: crane_run)
-# Stop recording with Ctrl-C; the restamp runs right after.
+# Stop recording with Ctrl-C.
+# To restamp the ZED topics (kit clock offset) afterwards, run manually:
+#   python3 clock_sync/restamp_zed_bag.py <bag_dir> --latency 0.06
 # NOTE: topic selection must be ONE -e regex; mixing explicit topic names
 # with -e makes humble's recorder subscribe to nothing.
 set -euo pipefail
@@ -26,10 +27,8 @@ docker run --rm -it --network host \
   || true
 
 if [ -f "$BAG/metadata.yaml" ]; then
-  echo "recording done, restamping ZED topics ..."
-  python3 "$(dirname "$0")/clock_sync/restamp_zed_bag.py" "$BAG" --latency 0.06 \
-    && echo "use ${BAG}_restamped for anything stamp-aligned" \
-    || echo "restamp failed; run clock_sync/restamp_zed_bag.py on $BAG manually"
+  echo "recording done: $BAG"
+  echo "restamp manually if needed: python3 $(dirname "$0")/clock_sync/restamp_zed_bag.py $BAG --latency 0.06"
 else
   echo "no bag written at $BAG (recorder closed without metadata)" >&2
 fi

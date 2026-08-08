@@ -303,6 +303,13 @@ parser.add_argument("--profile_piles", action="store_true",
                          "hex-packed, support-constrained lattice that holds its shape through settling. "
                          "Use for BC collection so 'where the pile top is' becomes learnable "
                          "(flat piles cannot teach y-localization). Overrides the pattern choice.")
+parser.add_argument("--force_pile_profile", type=str, default=None,
+                    choices=["flat", "mound", "ramp_far", "ramp_near", "two_mounds", "jagged"],
+                    help="Pin the --profile_piles height profile instead of drawing it at random "
+                         "(normally two_mounds appears in only ~1 of 8 episodes). Used for the "
+                         "qualitative double-mound diagnostic: with two_mounds the peaks are also "
+                         "pinned wide apart (0.25/0.75, narrow) so the valley between them is "
+                         "unambiguous. Leave unset for all normal collection, training and eval.")
 parser.add_argument("--log_friction", type=float, default=0.0,
                     help="If > 0, apply a rigid-body material with this static friction (dynamic = 0.9x) "
                          "to the logs. Default log material (~0.5) lets mounds relax flat during settling; "
@@ -990,6 +997,19 @@ def plan_grid_yz_hex_profile(center_y_local: float, rows: int, layers: int, spac
     # two_mounds: random peak positions (were fixed 0.28/0.72)
     tm_c1 = random.uniform(0.12, 0.45)
     tm_c2 = random.uniform(0.55, 0.88)
+    # Opt-in override for the QUALITATIVE double-mound diagnostic: pin the profile so the
+    # geometry that broke the regression policy on the real rack is reproducible instead of
+    # 1-in-8 random. Default None leaves normal collection/eval/training untouched.
+    _forced = getattr(args_cli, "force_pile_profile", None)
+    if _forced:
+        profile = _forced
+        print(f"[pile] profile FORCED -> {_forced}"
+              + ("  (peaks pinned 0.25/0.75, width 0.09)" if _forced == "two_mounds" else ""))
+        if _forced == "two_mounds":
+            # With peaks at 0.25/0.75 and width 0.09, max(g1,g2) at the midpoint is
+            # exp(-0.5*(0.25/0.09)^2) ~= 0.02 of peak, so the valley sits essentially at the
+            # floor: a policy that averages the two valid modes aims into a hole.
+            tm_c1, tm_c2, p_width = 0.25, 0.75, 0.09
     # jagged: 2-5 bumps at random centers/widths/heights -> multi-peaked uneven surface
     bumps = [(random.uniform(0.05, 0.95), random.uniform(0.04, 0.13), random.uniform(0.35, 1.0))
              for _ in range(random.randint(2, 5))]
@@ -1960,6 +1980,11 @@ class CraneDirectEnvFull(DirectRLEnv):
                           f"(prev={int(self._prev_logs_remaining[i].item())} "
                           f"grasped={grasped} knocked={delta_knocked})")
 
+        # Cycle boundary for the video overlay: the accounting above is now final for this
+        # cycle, so every frame captured since the previous bound belongs to it.
+        if _record:
+            self._video_cycle_bounds.append(int(self._overview_frame_count))
+
         # 4. Compute observations, rewards, dones
         self.obs_buf = self._get_observations()
         self.reward_buf = self._grasp_reward_buf.clone()
@@ -2100,6 +2125,10 @@ class CraneDirectEnvFull(DirectRLEnv):
         self._video_frame_count = 0
         self._overview_frame_count = 0
         self._sideview_frame_count = 0
+        # Frame index at the END of each grasp cycle, so a post-hoc overlay can map any frame
+        # back to the cycle it belongs to. Cycles have variable length (the FSM runs until the
+        # grasp completes or times out), so this cannot be derived from fps alone.
+        self._video_cycle_bounds = []
         if getattr(self.cfg, 'record_video', False):
             self._overview_camera = TiledCamera(self.cfg.overview_camera_cfg)
             self._sideview_camera = TiledCamera(self.cfg.sideview_camera_cfg)
@@ -4960,6 +4989,7 @@ class CraneDirectEnvFull(DirectRLEnv):
                         self._has_log[i] = True
                         self._gripper_timeout_timer[i] = 0
                         self._gripper_stability_timer[i] = 0
+                        self._snapshot_lift_entry(i)
                         self._transition(i, self.PH_LIFT_HIGH, f"{name}: gripper closed and stable (target={target_value:.2f}, max_err={max_error:.3f})")
                 else:
                     # Lost tolerance or stepping not complete - reset stability timer
@@ -4970,6 +5000,7 @@ class CraneDirectEnvFull(DirectRLEnv):
                     self._has_log[i] = True
                     self._gripper_timeout_timer[i] = 0
                     self._gripper_stability_timer[i] = 0
+                    self._snapshot_lift_entry(i)
                     self._transition(i, self.PH_LIFT_HIGH, f"{name}: gripper timeout ({self.GRIPPER_TIMEOUT} steps), proceeding anyway")
                 
                 # Debug gripper state with stepping info
@@ -5032,6 +5063,21 @@ class CraneDirectEnvFull(DirectRLEnv):
                         #  NOT logs lifted high, so grasped logs are safe)
                         knocked_off = self._check_logs_out_of_bounds(i, apply_penalty=False)
                         logs_grasped, alignment, stability = self._check_grasped_logs(i)
+                        # GRASP-CHECK GATES (2026-08-05). Proximity-only counting despawns and
+                        # rewards logs the grapple merely hovered near whenever the LIFT stalls
+                        # low (observed: the lift_step-0.08 57-log mass despawn; reachable again
+                        # via rigid stub fixtures jamming the tongs -> LIFT exits by timeout at
+                        # pile height). Gate 1: the grapple must have actually gained height.
+                        # Gate 2 lives inside _check_grasped_logs (per-log rise vs its pre-lift
+                        # z). Failing the gates = a failed grasp: nothing counted, nothing
+                        # despawned, -1 reward like any miss.
+                        _bg_z = float(self.crane.data.body_pose_w[i, self._basegrapple_body_id][2])
+                        _lift_ok = _bg_z >= float(self._lift_entry_bg_z[i]) + 0.8
+                        if not _lift_ok and logs_grasped > 0:
+                            print(f"[env{i}] GRASP GATE: lift stalled low "
+                                  f"(bg z {_bg_z:.2f}, entry {float(self._lift_entry_bg_z[i]):.2f}) "
+                                  f"-> {logs_grasped} proximity logs NOT counted/despawned")
+                            logs_grasped, alignment = 0, 0.0
                         # Windowed stability (default): replace the instantaneous sample with the
                         # mean tilt over the hold window; sharpen once (average-then-sharpen).
                         tilt_deg = None
@@ -5091,7 +5137,8 @@ class CraneDirectEnvFull(DirectRLEnv):
                                     if tilt_deg is not None else "")
                         print(f"[env{i}] CYCLE {cycle_num}/{args_cli.max_grasp_cycles} | GRASP: {logs_grasped} logs, align={alignment:.2f}, stab={stability:.2f}{tilt_str}, rew={reward:.2f} | remaining={remaining_after_grasp}")
 
-                        self._despawn_grasped_logs(i)
+                        if _lift_ok and logs_grasped > 0:
+                            self._despawn_grasped_logs(i)
                         self._set_gripper(i, open_fraction=1.0)
                         self._target_frozen[i] = False
                         self._target_log_pos_b[i].zero_()
@@ -5550,7 +5597,14 @@ class CraneDirectEnvFull(DirectRLEnv):
             log_pos_w = self._logs_obj.data.root_pos_w[log_idx]
             distance = torch.norm(log_pos_w - bg_pos_w).item()
 
-            if distance < proximity_radius:
+            # rise gate: a truly grasped log MOVED UP with the grapple since lift entry;
+            # a log that merely sits near a stalled/low grapple did not (>0.4 m of rise
+            # cannot come from pile settling). Falls open when no snapshot exists.
+            _rise_ok = True
+            if hasattr(self, "_log_z_at_lift") and log_idx in self._log_z_at_lift.get(env_i, {}):
+                _rise_ok = float(log_pos_w[2]) - self._log_z_at_lift[env_i][log_idx] > 0.4
+
+            if distance < proximity_radius and _rise_ok:
                 logs_grasped += 1
 
                 # Compute orientation alignment between log and basegrapple
@@ -5574,6 +5628,21 @@ class CraneDirectEnvFull(DirectRLEnv):
         stability = self._compute_grapple_stability(env_i)
 
         return logs_grasped, avg_alignment, stability
+
+    def _snapshot_lift_entry(self, env_i: int):
+        """Record grapple z and every active log's z at LIFT_HIGH entry (grasp-check gates)."""
+        if not hasattr(self, "_lift_entry_bg_z"):
+            self._lift_entry_bg_z = torch.zeros(self.num_envs, device=self.device)
+            self._log_z_at_lift = {}
+        self._lift_entry_bg_z[env_i] = self.crane.data.body_pose_w[env_i, self._basegrapple_body_id][2]
+        per_env = int(self._per_env_log_counts[env_i])
+        start = env_i * self._logs_per_env
+        snap = {}
+        if self._logs_obj is not None:
+            for li in range(start, start + per_env):
+                if li not in self._deposited_logs[env_i]:
+                    snap[li] = float(self._logs_obj.data.root_pos_w[li][2])
+        self._log_z_at_lift[env_i] = snap
 
     def _count_logs_in_column(self, env_i: int, y_tolerance: float = 0.5) -> int:
         """Count available logs in a rack slice at the grapple's Y position.

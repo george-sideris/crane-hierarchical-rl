@@ -1,0 +1,68 @@
+diff --git a/docker/Dockerfile.base b/docker/Dockerfile.base
+index 9aff6b165c9..11cf0ccd14d 100644
+--- a/docker/Dockerfile.base
++++ b/docker/Dockerfile.base
+@@ -86,9 +86,18 @@ RUN touch /bin/nvidia-smi && \
+     mkdir -p /var/run/nvidia-persistenced && \
+     touch /var/run/nvidia-persistenced/socket
+ 
++# Fix: Isaac Sim's prebundled torch vendors packaging without _structures.py,
++# but torch._vendor.packaging.version still imports it. Patch the missing file.
++COPY docker/patches/_structures.py ${ISAACSIM_ROOT_PATH}/exts/omni.isaac.ml_archive/pip_prebundle/torch/_vendor/packaging/_structures.py
++
+ # installing Isaac Lab dependencies
+ # use pip caching to avoid reinstalling large packages
++# Pin packaging==23.0: Isaac Sim's prebundled packaging 23.0 shares files with
++# pip's own vendored packaging. Any upgrade (uninstall 23.0 → install new)
++# deletes _structures.py from pip's vendor, breaking pip mid-install.
+ RUN --mount=type=cache,target=${DOCKER_USER_HOME}/.cache/pip \
++    echo "packaging==23.0" > /tmp/pip-constraints.txt && \
++    PIP_CONSTRAINT=/tmp/pip-constraints.txt \
+     ${ISAACLAB_PATH}/isaaclab.sh --install
+ 
+ # HACK: Remove install of quadprog dependency
+diff --git a/docker/Dockerfile.ros2 b/docker/Dockerfile.ros2
+index 2e00fc7ec39..8903fe317a7 100644
+--- a/docker/Dockerfile.ros2
++++ b/docker/Dockerfile.ros2
+@@ -34,6 +34,27 @@ RUN --mount=type=cache,target=/var/cache/apt \
+     # Add sourcing of setup.bash to .bashrc
+     echo "source /opt/ros/humble/setup.bash" >> ${HOME}/.bashrc
+ 
++# System Python dependencies for ROS2 policy node (crane_policy_node.py).
++# open3d + imageio(+ffmpeg) power the pretty per-cycle review renders / auto review.mp4
++# (render_run_video.py); open3d renders headless via EGL in this container.
++RUN apt-get update && apt-get install -y --no-install-recommends python3-pip && \
++    rm -rf /var/lib/apt/lists/* && \
++    /usr/bin/python3 -m pip install --no-cache-dir torch numpy ikpy open3d imageio imageio-ffmpeg
++
++# RViz2 for visualizing the policy/FSM/TF state. The deb.sury.org PPA in
++# the base image ships a newer libbrotli1 (1.1.x) that conflicts with the
++# stock libbrotli-dev that rviz2 pulls in transitively, so we pin
++# libbrotli1 back to the Ubuntu jammy version before installing.
++RUN apt-get update && \
++    apt-get install -y --allow-downgrades --no-install-recommends \
++        libbrotli1=1.0.9-2build6 \
++        ros-humble-rviz2 && \
++    rm -rf /var/lib/apt/lists/*
++
++# Enable Isaac Sim's internal rclpy (Python 3.11 compatible) for sim_ros2_env.py
++RUN echo 'export LD_LIBRARY_PATH=/isaac-sim/exts/isaacsim.ros2.bridge/humble/lib:$LD_LIBRARY_PATH' >> /root/.bashrc && \
++    echo 'export PYTHONPATH=/isaac-sim/exts/isaacsim.ros2.bridge/humble/rclpy:$PYTHONPATH' >> /root/.bashrc
++
+ # Copy the RMW specifications for ROS2
+ # https://docs.isaacsim.omniverse.nvidia.com/latest/installation/install_ros.html
+ COPY docker/.ros/ ${DOCKER_USER_HOME}/.ros/
+diff --git a/source/isaaclab/setup.py b/source/isaaclab/setup.py
+index 5231c1bdaff..087cecca28d 100644
+--- a/source/isaaclab/setup.py
++++ b/source/isaaclab/setup.py
+@@ -43,7 +43,7 @@ INSTALL_REQUIRES = [
+     "pytest",
+     "pytest-mock",
+     "junitparser",
+-    "flatdict==4.0.1",
++    "flatdict==4.0.0",
+     "flaky",
+ ]
+ 

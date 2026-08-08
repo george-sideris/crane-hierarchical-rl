@@ -26,7 +26,7 @@ sys.path.insert(0, str(crane_scripts_path))
 parser = argparse.ArgumentParser(description="Play BC pointcloud policy")
 parser.add_argument("--checkpoint", type=str, default=None,
                     help="Path to BC policy checkpoint (required for --policy_type bc)")
-parser.add_argument("--policy_type", type=str, default="bc", choices=["bc", "heuristic", "scoring"],
+parser.add_argument("--policy_type", type=str, default="bc", choices=["bc", "heuristic", "scoring", "expert"],
                     help="'bc' = neural policy from --checkpoint. 'heuristic' = the DEPLOYED "
                          "real-crane HeuristicPolicy (policy_loader.py: supported-highest-point, "
                          "surface - dig, gated-PCA yaw) ported into sim eval. This is the bridge "
@@ -53,6 +53,16 @@ parser.add_argument("--visualize", action="store_true", help="Save per-step visu
 parser.add_argument("--viz_dir", type=str, default=None, help="Directory for viz PNGs (default: checkpoint dir / viz)")
 parser.add_argument("--paper_viz", action="store_true", help="Save paper-quality pipeline and progression figures")
 parser.add_argument("--raw_pcd", action="store_true", help="Use raw (unmasked) point cloud instead of segmented log-only points")
+parser.add_argument("--num_points", type=int, default=0,
+                    help="override the observation point count (0 = policy default: 1024 for "
+                         "heuristic/expert, else the checkpoint's). Used for the DENSITY-CONTROL "
+                         "row: the heuristic is parameter-free in point density, so comparing it "
+                         "at 1024 against a 2048-point scoring policy would be an unearned "
+                         "handicap; this runs it at matched density.")
+parser.add_argument("--expert_dig", type=float, default=0.25,
+                    help="--policy_type expert: dig convention for the PRIVILEGED expert row "
+                         "(targets top-log CENTRE = surface-0.056, relabelled to surface-dig, "
+                         "bed-floor clamped) - matches the collection-path expert_dig.")
 parser.add_argument("--support_gate", type=float, default=0.0,
                     help="drop cloud points with 0.5m xy support < frac*max BEFORE the policy "
                          "(policy-agnostic outlier gate; parity layer for the noise sweep)")
@@ -1037,7 +1047,52 @@ def save_episode_progression(episode_data, episode_idx, viz_dir, bounds_min=None
 
 def main():
     # Load policy
-    if args_cli.policy_type == "scoring":
+    if args_cli.policy_type == "expert":
+        # PRIVILEGED EXPERT through the SAME eval harness as every learned policy, so its row
+        # carries metrics_version 2 and the identical protocol. Reads ground-truth log poses
+        # (env._target_top_log_center_b) and re-encodes with the collection path's exact
+        # arctanh/cos-sin scheme - the previous expert rows came from the COLLECTION script,
+        # which never had the corrected clearing/c95 metrics, so they were not comparable.
+        _LOG_RADIUS = 0.056
+        num_points = args_cli.num_points if args_cli.num_points > 0 else 1024
+        metadata, action_dim = {}, 5
+
+        def policy(obs):
+            out = torch.zeros((obs.shape[0], 5), device=obs.device)
+            for b in range(obs.shape[0]):
+                log_pos_b, sel_id, log_quat_w = env._target_top_log_center_b(b)
+                if sel_id == -1:
+                    continue
+                env._target_log_pos_b[b] = log_pos_b
+                env._current_target_log_id[b] = sel_id
+                env._target_log_quat_w[b] = log_quat_w
+                x, y, z = (float(log_pos_b[0]), float(log_pos_b[1]), float(log_pos_b[2]))
+                if args_cli.expert_dig > 0:
+                    z = z + _LOG_RADIUS - args_cli.expert_dig
+                    z = max(z, float(env._action_bounds_min[b][2])
+                            + float(getattr(env.cfg, "platform_bed_margin", 0.0)))
+                yaw = float(env._get_target_grapple_yaw_b(b))
+                if not env._action_bounds_valid[b]:
+                    env._compute_action_space_bounds()
+                mn, mx = env._action_bounds_min[b], env._action_bounds_max[b]
+
+                def _enc(v, lo, hi):
+                    n = np.clip(2.0 * (v - float(lo)) / (float(hi) - float(lo)) - 1.0,
+                                -0.999, 0.999)
+                    return float(np.arctanh(n))
+
+                out[b, 0] = _enc(x, mn[0], mx[0])
+                out[b, 1] = _enc(y, mn[1], mx[1])
+                out[b, 2] = _enc(z, mn[2], mx[2])
+                out[b, 3] = float(np.cos(2.0 * yaw))
+                out[b, 4] = float(np.sin(2.0 * yaw))
+            return out
+
+        if args_cli.checkpoint is None:
+            args_cli.checkpoint = args_cli.output_dir or "logs/expert_sim_eval"
+            os.makedirs(args_cli.checkpoint, exist_ok=True)
+        print(f"[Play] PRIVILEGED EXPERT (ground-truth poses), dig={args_cli.expert_dig}")
+    elif args_cli.policy_type == "scoring":
         # Per-point argmax head (scoring_head.py). Like the heuristic it returns METRES, so it goes
         # through the same arctanh/cos-sin re-encoding and the env decode reproduces it exactly -
         # NOT through load_bc_policy, whose checkpoints are action-space regressors.
@@ -1079,7 +1134,8 @@ def main():
         _bmin = np.array([-5.364, -1.684, -1.30], dtype=np.float32)
         _bmax = np.array([-3.364, 5.316, 0.10], dtype=np.float32)
         _heur = HeuristicPolicy(_bmin, _bmax, cossin=True, dig=args_cli.heuristic_dig)
-        num_points, metadata, action_dim = 1024, {}, 5
+        num_points = args_cli.num_points if args_cli.num_points > 0 else 1024
+        metadata, action_dim = {}, 5
 
         def _enc(v, lo, hi):
             n = np.clip(2.0 * (v - lo) / (hi - lo) - 1.0, -0.999, 0.999)
@@ -1739,6 +1795,11 @@ def main():
             reward=np.array([r["reward"] for r in dec_records], dtype=np.float32),
             checkpoint=np.array(args_cli.checkpoint),
             seed=np.array(args_cli.seed if args_cli.seed is not None else -1),
+            # Frame index at the end of each cycle (empty unless --record_video). Lets
+            # overlay_metrics_video.py map a frame back to its cycle; cycle length varies with
+            # how long the FSM takes, so it cannot be recovered from fps.
+            video_cycle_bounds=np.array(getattr(env, "_video_cycle_bounds", []), dtype=np.int64),
+            video_fps=np.array(args_cli.video_fps, dtype=np.int32),
         )
         print(f"[Play] Decisions saved to: {dec_file} ({len(dec_records)} grasp records)")
 

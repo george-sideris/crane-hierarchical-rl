@@ -55,6 +55,12 @@ class CranePointCloudGazeDirectEnv(gym.Env):
         self.depth_range_max = getattr(cfg, 'depth_range_max', 10.0)
         self.save_debug_pointclouds = getattr(cfg, 'save_debug_pointclouds', False)
         self.asymmetric_critic = getattr(cfg, 'asymmetric_critic', False)
+        # P3 (BC->RL scoring): widened observation crop (action box +- margin, z-down only) and
+        # point-index actions ([idx, dz, cos2yaw, sin2yaw] resolved against the CACHED obs cloud, re-encoded
+        # to the base env's 5D arctanh action so the base decode/bed-clamp path is unchanged).
+        self.obs_crop_margin = float(getattr(cfg, 'obs_crop_margin', 0.0))
+        self.point_index_actions = bool(getattr(cfg, 'point_index_actions', False))
+        self._cached_clouds = None      # (num_envs, num_points, 3) - the obs the policy last saw
         self.use_raw_pointcloud = getattr(cfg, 'use_raw_pointcloud', False)
         self._obs_dim = self.num_points * 3
         # top-N logs x (x, y, z, yaw), height-sorted, from _build_target_selection_obs
@@ -93,6 +99,12 @@ class CranePointCloudGazeDirectEnv(gym.Env):
         pc_obs_space = gym.spaces.Box(low=-float('inf'), high=float('inf'),
                                        shape=(self._obs_dim,), dtype=np.float32)
         self._base_env.single_observation_space["policy"] = pc_obs_space
+        if self.point_index_actions:
+            self._base_env.single_action_space = gym.spaces.Box(
+                low=-float('inf'), high=float('inf'), shape=(4,), dtype=np.float32)
+            self._base_env.action_space = gym.vector.utils.batch_space(
+                self._base_env.single_action_space, self.num_envs)
+            print("[PointCloudDirectEnv] point-index actions: exposed 3D action space", flush=True)
         if self.asymmetric_critic:
             critic_obs_space = gym.spaces.Box(low=-1.0, high=1.0,
                                                shape=(self._critic_obs_dim,), dtype=np.float32)
@@ -142,9 +154,10 @@ class CranePointCloudGazeDirectEnv(gym.Env):
                 self._base_env._compute_action_space_bounds()
             bmin = self._base_env._action_bounds_min[env_idx]
             bmax = self._base_env._action_bounds_max[env_idx]
-            m = ((pc_base[:, 0] >= bmin[0]) & (pc_base[:, 0] <= bmax[0]) &
-                 (pc_base[:, 1] >= bmin[1]) & (pc_base[:, 1] <= bmax[1]) &
-                 (pc_base[:, 2] >= bmin[2]) & (pc_base[:, 2] <= bmax[2]))
+            g = self.obs_crop_margin
+            m = ((pc_base[:, 0] >= bmin[0] - g) & (pc_base[:, 0] <= bmax[0] + g) &
+                 (pc_base[:, 1] >= bmin[1] - g) & (pc_base[:, 1] <= bmax[1] + g) &
+                 (pc_base[:, 2] >= bmin[2] - g) & (pc_base[:, 2] <= bmax[2]))
             pc_base = pc_base[m]
             if pc_base.shape[0] == 0:
                 return torch.zeros((self.num_points, 3), device=self.device)
@@ -169,6 +182,7 @@ class CranePointCloudGazeDirectEnv(gym.Env):
             all_obs.append(pc_sampled.view(-1))
 
         obs = torch.stack(all_obs, dim=0)  # (num_envs, num_points * 3)
+        self._cached_clouds = obs.view(self.num_envs, self.num_points, 3).clone()
 
         # Verification logging
         if not hasattr(self, '_obs_call_count'):
@@ -336,8 +350,39 @@ class CranePointCloudGazeDirectEnv(gym.Env):
             obs["critic"] = self._base_env._build_target_selection_obs()
         return obs, info
 
+    def _convert_point_index_action(self, action):
+        """[idx, dz, cos2yaw, sin2yaw] -> base env 5D arctanh action, via the cached obs clouds.
+
+        The chosen point IS one the policy was shown (idx into the cached cloud), so the
+        decoded metre target is guaranteed on observed material; dz offsets its z; the result
+        is re-encoded exactly like the heuristic/scoring bridges so the base env's decode
+        (incl. the bed-floor clamp) reproduces it.
+        """
+        if self._cached_clouds is None:
+            raise RuntimeError("point_index_actions: no cached obs cloud (step before reset?)")
+        a5 = torch.zeros((action.shape[0], 5), device=action.device)
+        for i in range(action.shape[0]):
+            idx = int(action[i, 0].item())
+            idx = max(0, min(self.num_points - 1, idx))
+            p = self._cached_clouds[i, idx]
+            bmin = self._base_env._action_bounds_min[i]
+            bmax = self._base_env._action_bounds_max[i]
+            x = float(p[0]); y = float(p[1]); z = float(p[2] + action[i, 1])
+            yaw = 0.5 * float(torch.atan2(action[i, 3], action[i, 2]))
+            def _enc(v, lo, hi):
+                n = torch.clamp(2.0 * (v - lo) / (hi - lo + 1e-9) - 1.0, -0.999, 0.999)
+                return torch.atanh(n)
+            a5[i, 0] = _enc(torch.tensor(x), bmin[0], bmax[0])
+            a5[i, 1] = _enc(torch.tensor(y), bmin[1], bmax[1])
+            a5[i, 2] = _enc(torch.tensor(z), bmin[2], bmax[2])
+            a5[i, 3] = torch.cos(torch.tensor(2.0 * yaw))
+            a5[i, 4] = torch.sin(torch.tensor(2.0 * yaw))
+        return a5
+
     def step(self, action):
         """Step and return point cloud observations in dict format for RslRlVecEnvWrapper."""
+        if self.point_index_actions:
+            action = self._convert_point_index_action(action)
         # Skip the expensive PC computation inside base_env.step() → _get_observations()
         # since it reads a stale camera buffer (render hasn't happened yet).
         # We compute the real observation below after rendering.

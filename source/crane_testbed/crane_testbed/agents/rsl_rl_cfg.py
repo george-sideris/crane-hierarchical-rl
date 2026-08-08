@@ -10,6 +10,7 @@ from isaaclab.utils import configclass
 from crane_testbed.agents.cnn_actor_critic import CNNActorCritic
 # Import PointNet actor-critic for point cloud observations
 from crane_testbed.agents.pointnet_actor_critic import PointNetActorCritic
+from crane_testbed.agents.scoring_actor_critic import ScoringActorCritic
 
 
 @configclass
@@ -21,6 +22,94 @@ class PointNetActorCriticCfg(RslRlPpoActorCriticCfg):
 
     encoder_lr_scale: float = 0.2
     """Encoder learning rate as fraction of base LR (used when optimizer is overridden)."""
+
+
+@configclass
+class ScoringActorCriticCfg(RslRlPpoActorCriticCfg):
+    """Categorical-over-points AC (P3). num_points must match the env obs."""
+    num_points: int = 2048
+    temperature: float = 1.0
+
+
+@configclass
+class CranePPORunnerCfg_ScoringScratch(RslRlOnPolicyRunnerCfg):
+    """PURE RL with the scoring head - no BC init, encoder trained from scratch.
+
+    The paper-era pure-RL result (~56% clearing) used a GAUSSIAN head over absolute coordinates:
+    PPO had to teach a PointNet to localize AND to regress metres, and it never did - the policy
+    degenerated to aiming at memorized coordinates. The categorical head changes the problem:
+    every action is "pick one of the observed points", so the policy never regresses coordinates
+    and the action is grounded in the observation by construction. Whether that alone makes RL
+    from scratch viable is the experiment.
+
+    Config differs from the fine-tune in every way that matters for from-scratch learning:
+    entropy bonus ON (needs exploration; the fine-tune's problem was the opposite - a bonus
+    eroding a sharp BC prior), higher LR, encoder NOT frozen (perception must be learned),
+    more steps per env for a stabler value estimate.
+    """
+    num_steps_per_env = 16
+    max_iterations = 100000
+    save_interval = 50
+    experiment_name = "crane_scoring_scratch"
+    empirical_normalization = False
+    policy = ScoringActorCriticCfg(
+        class_name="rsl_rl.modules.ScoringActorCritic",
+        init_noise_std=0.15,
+        actor_hidden_dims=[128, 64],
+        critic_hidden_dims=[128, 64],
+        activation="elu",
+    )
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.01,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=3e-4,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.02,
+        max_grad_norm=1.0,
+    )
+
+
+@configclass
+class CranePPORunnerCfg_Scoring(RslRlOnPolicyRunnerCfg):
+    """P3 = BC->RL (scoring). Conservative fine-tune: small dz sigma, modest entropy so the
+    categorical stays near the BC scores, low LR."""
+    num_steps_per_env = 8
+    max_iterations = 400
+    save_interval = 50
+    experiment_name = "crane_scoring_ppo"
+    empirical_normalization = False
+    policy = ScoringActorCriticCfg(
+        class_name="rsl_rl.modules.ScoringActorCritic",   # registered in train.py
+        init_noise_std=0.05,
+        actor_hidden_dims=[128, 64],      # unused by the AC; kept for cfg schema
+        critic_hidden_dims=[128, 64],
+        activation="elu",
+    )
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.1,
+        # NO entropy bonus (measured 2026-08-06: at 0.003 the categorical's entropy ROSE ~1 nat
+        # over 100 iters while throughput fell 15.8->11.0 and stability 0.93->0.78 - the bonus
+        # dominated the tiny per-point advantages and smeared the BC score sharpness. ln(2048)
+        # ceiling makes the categorical FAR more entropy-sensitive than a Gaussian; sampling
+        # from BC-sharp scores explores plenty on its own. Same lesson as the OG BCFinetune cfg.)
+        entropy_coef=0.0,
+        num_learning_epochs=4,
+        num_mini_batches=4,
+        learning_rate=5e-5,
+        schedule="fixed",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.008,
+        max_grad_norm=1.0,
+    )
 
 
 @configclass

@@ -208,6 +208,8 @@ rsl_rl.modules.CNNActorCritic = CNNActorCritic
 # Register custom PointNet actor-critic with RSL-RL so OnPolicyRunner can find it
 from crane_testbed.agents.pointnet_actor_critic import PointNetActorCritic
 rsl_rl.modules.PointNetActorCritic = PointNetActorCritic
+from crane_testbed.agents.scoring_actor_critic import ScoringActorCritic
+rsl_rl.modules.ScoringActorCritic = ScoringActorCritic
 
 from isaaclab.envs import (
     DirectMARLEnv,
@@ -404,7 +406,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if args_cli.bc_checkpoint:
         # BC fine-tuning: load only actor weights, skip optimizer
         print(f"[INFO]: Loading BC checkpoint for fine-tuning: {args_cli.bc_checkpoint}")
-        bc_ckpt = torch.load(args_cli.bc_checkpoint, map_location=agent_cfg.device)
+        bc_ckpt = torch.load(args_cli.bc_checkpoint, map_location=agent_cfg.device, weights_only=False)
         model_state = bc_ckpt.get('model_state_dict', bc_ckpt)
         # RSL-RL stores actor_critic on the algorithm's actor_critic attribute
         # Try different possible locations
@@ -442,6 +444,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         if hasattr(actor_critic, 'std'):
             actor_critic.std.data.fill_(args_cli.sigma_init)
             print(f"[INFO]: Action noise std set to {args_cli.sigma_init} for BC fine-tuning")
+        elif hasattr(actor_critic, 'log_sigma_dz'):
+            # scoring AC: the only continuous noise is dz; the categorical explores via
+            # sampling and the entropy bonus, not via a std parameter.
+            import math as _m
+            actor_critic.log_sigma_dz.data.fill_(_m.log(args_cli.sigma_init))
+            actor_critic.log_sigma_yaw.data.fill_(_m.log(args_cli.sigma_init))
+            print(f"[INFO]: dz/yaw sigmas set to {args_cli.sigma_init} (scoring AC)")
         if args_cli.freeze_encoder:
             if hasattr(actor_critic, 'encoder'):
                 frozen_params = 0

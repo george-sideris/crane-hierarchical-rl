@@ -1259,6 +1259,34 @@ class CranePointCloudEnvCfg_CosSin_Raw_MR(CraneDirectEnvCfgFull):
 
 
 @configclass
+class CranePointCloudGazeEnvCfg_ScoringPPO(CraneGazeEnvCfgFull):
+    """P3 = BC->RL (scoring): categorical-over-points PPO on the margin/2048 observation.
+
+    Matches P2c's input distribution (crop_margin 0.5, 2048 pts) so its checkpoint initializes
+    the actor; point-index actions ([idx, dz, yaw]) are resolved by the wrapper against the
+    cached obs cloud and re-encoded to the base 5D decode (bed clamp unchanged). Symmetric
+    critic on the pooled feature (encoder NOT frozen; encoder lr scaled in the AC's param
+    groups) - the asymmetric-critic rationale applied to frozen-encoder Gaussian fine-tunes.
+    cycle_cost prices empty grabs so endgame selection has a gradient."""
+    use_hierarchical_rl: bool = True
+    enable_camera: bool = True
+    episode_length_s = 600.0
+    action_space = 5                 # BASE env decode stays 5D; wrapper exposes 3D to RL
+    observation_space = 2048 * 3
+    enable_domain_randomization: bool = False
+    num_points: int = 2048
+    obs_crop_margin: float = 0.5
+    point_index_actions: bool = True
+    depth_range_min: float = 1.0
+    depth_range_max: float = 10.0
+    reward_formula: str = "multiplicative"
+    normalize_reward: bool = False
+    use_raw_pointcloud: bool = True
+    asymmetric_critic: bool = True   # privileged 64x4 state critic, like the OG BCRL
+    max_logs_obs: int = 64
+    cycle_cost: float = 1.0
+
+
 class CranePointCloudGazeEnvCfg_CosSin_Raw_MR(CraneGazeEnvCfgFull):
     """GAZE PCD-CosSin-Raw-MR: same as CosSin_Raw_MR but on the gaze base cfg (July-2 camera +
     gaze slew) so BC->RL fine-tuning matches the BC gaze observation. Used with
@@ -1589,6 +1617,26 @@ class CranePointCloudGazeEnvCfg_CosSin_Raw_MR_CC(CranePointCloudGazeEnvCfg_CosSi
 
 # GAZE variant: same raw-PCD CosSin-MR task, but on the gaze env (July-2 camera + gaze slew + crop)
 # for BC->RL fine-tuning of the gaze policy. Task name contains BOTH "PointCloud" and "Gaze".
+gym.register(
+    id="Isaac-Crane-PointCloud-Gaze-Scoring-Scratch-v0",
+    entry_point="crane_pointcloud_gaze_direct_env:CranePointCloudGazeDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudGazeEnvCfg_ScoringPPO,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_ScoringScratch",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-Gaze-Scoring-PPO-v0",
+    entry_point="crane_pointcloud_gaze_direct_env:CranePointCloudGazeDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudGazeEnvCfg_ScoringPPO,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Scoring",
+    },
+)
+
 gym.register(
     id="Isaac-Crane-PointCloud-Gaze-CosSin-Raw-MR-v0",
     entry_point="crane_pointcloud_gaze_direct_env:CranePointCloudGazeDirectEnv",
