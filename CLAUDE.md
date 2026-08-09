@@ -146,6 +146,19 @@ Datasets are not in git; rsync from the laptop: `logs/bc_pointcloud/bc_policy_au
 (tight 1024 + full-scene 2048) and `logs/bc_pointcloud/bc_margin05_2048/` (margin 0.5,
 2048 pts, + pre-FPS raw).
 
+## Renting a GPU
+
+`cloud_setup.sh` takes a rented box from bare metal to a running fine-tune:
+`preflight` (RTX? docker? nvidia runtime?), `setup` (clone IsaacLab at the patch base commit,
+apply `isaaclab_patches/`, build the `base` container - NOT `ros2`, that is deployment-only),
+`ladder` (measure the real env-count ceiling on that card), `train N`. Untested on an actual
+cloud box - expect to fix a step.
+
+HARD REQUIREMENT: an RTX card. Isaac Sim renders through RTX/Vulkan ray tracing and this env
+renders a camera to build its observation, so A100/H100 have no RT cores and will fail. Want
+RTX 4090 / A40 / L40S / RTX 6000 Ada / A10G. The repo is self-contained (USD assets and the
+P2c checkpoint are committed), so a clone is all the box needs.
+
 ## BC->RL rebuild (2026-08-09)
 
 Two scoring-head fine-tunes (entropy 0.003, then 0) both DEGRADED P2c, with the signature
