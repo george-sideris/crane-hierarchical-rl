@@ -1803,6 +1803,15 @@ class CraneDirectEnvFull(DirectRLEnv):
         # data collection can report the env's authoritative clearing instead of summing per-cycle
         # grasp counts (which can exceed 100% via the proximity-radius grasp check).
         self._last_episode_clearing = torch.full((self.num_envs,), -1.0, device=self.device, dtype=torch.float32)
+        # Rolling buffers of COMPLETED-episode statistics, same idea as _completed_ep_returns.
+        # rsl_rl averages extras["episode"] over EVERY step in an iteration, so with
+        # num_steps_per_env=8 the printed means describe the mid-episode state, not the outcome:
+        # "Mean episode cycles" comes out at mean(1..8)=4.5 and pile_clearing_pct at whatever
+        # fraction is cleared partway through. Those never converge to the real numbers no matter
+        # how long training runs. These buffers give the end-of-episode values, which ARE
+        # comparable to the argmax eval that checkpoints are actually ranked by.
+        self._completed_ep_clearing = collections.deque(maxlen=100)
+        self._completed_ep_cycles = collections.deque(maxlen=100)
 
         # Logs available at target position (for normalized reward computation)
         self._logs_available_at_target = torch.zeros(self.num_envs, device=self.device, dtype=torch.int32)
@@ -2055,6 +2064,10 @@ class CraneDirectEnvFull(DirectRLEnv):
                 starting = max(int(self._per_env_log_counts[i]), 1)
                 remaining = self._count_logs_in_rack(i)
                 self._last_episode_clearing[i] = min(1.0, max(0.0, 1.0 - remaining / starting))
+                # Same values, kept as a rolling buffer so the training log can report the
+                # end-of-episode outcome rather than a mid-episode average.
+                self._completed_ep_clearing.append(100.0 * float(self._last_episode_clearing[i]))
+                self._completed_ep_cycles.append(int(self._cycle_count[i]))
             self._reset_idx(reset_ids)
 
         # Periodic garbage collection to prevent memory leaks during long training runs
@@ -3602,6 +3615,17 @@ class CraneDirectEnvFull(DirectRLEnv):
                 # Reward components (will appear as reward/X in TensorBoard due to "/")
                 "reward/per_cycle": (self._episode_return / cycles_per_env.clamp(min=1)).mean().item(),
             }
+
+            # End-of-episode values. Everything above is averaged over every step of the
+            # iteration, so it reports mid-episode state; these are the completed-episode
+            # outcomes and are the ones comparable to argmax eval. Absent until the first
+            # episode finishes (roughly 14-30 cycles per env).
+            if len(self._completed_ep_clearing) > 0:
+                extras["episode"]["pile_clearing_pct_final"] = statistics.mean(self._completed_ep_clearing)
+                extras["episode"]["episode_cycles_final"] = statistics.mean(self._completed_ep_cycles)
+                extras["episode"]["full_clear_rate"] = 100.0 * sum(
+                    1 for c in self._completed_ep_clearing if c >= 99.999
+                ) / len(self._completed_ep_clearing)
 
             # Clearing bonus metrics (only when clearing bonus is enabled)
             if getattr(self.cfg, 'clearing_bonus_scale', 0.0) > 0.0:
