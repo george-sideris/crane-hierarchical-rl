@@ -1,0 +1,19 @@
+{
+  "dataset": "logs/bc_pointcloud/bc_margin05_2048_500",
+  "output_dir": "logs/bc_pointcloud/scoring_margin05_2048_c",
+  "epochs": 100,
+  "batch_size": 64,
+  "lr": 0.0001,
+  "val_frac": 0.15,
+  "dropout": 0.2,
+  "label_radius": 0.12,
+  "dig": 0.25,
+  "zed_noise": true,
+  "zed_coeff": 0.0014,
+  "stub_aug": 0.7,
+  "stub_neg": 1.0,
+  "shift_aug_x": 0.15,
+  "shift_aug_y": 0.5,
+  "device": "cuda:0",
+  "seed": 42
+}

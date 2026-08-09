@@ -1637,6 +1637,18 @@ gym.register(
     },
 )
 
+# P3b: same env, rebuilt PPO settings (batch 512, dense checkpoints). See
+# CranePPORunnerCfg_ScoringV2 for the post-mortem of why v0's settings were uninterpretable.
+gym.register(
+    id="Isaac-Crane-PointCloud-Gaze-Scoring-PPO-v2",
+    entry_point="crane_pointcloud_gaze_direct_env:CranePointCloudGazeDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudGazeEnvCfg_ScoringPPO,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_ScoringV2",
+    },
+)
+
 gym.register(
     id="Isaac-Crane-PointCloud-Gaze-CosSin-Raw-MR-v0",
     entry_point="crane_pointcloud_gaze_direct_env:CranePointCloudGazeDirectEnv",

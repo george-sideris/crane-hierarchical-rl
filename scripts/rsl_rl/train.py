@@ -35,6 +35,19 @@ parser.add_argument("--export_io_descriptors", action="store_true", default=Fals
 parser.add_argument("--bc_checkpoint", type=str, default=None, help="Path to BC checkpoint for fine-tuning (loads actor weights only, skips optimizer).")
 parser.add_argument("--sigma_init", type=float, default=0.05, help="Initial action noise std for BC fine-tuning (default: 0.05).")
 parser.add_argument("--freeze_encoder", action="store_true", default=False, help="Freeze PointNet encoder weights (use with --bc_checkpoint).")
+parser.add_argument("--critic_warmup_iters", type=int, default=0,
+                    help="Train the CRITIC ONLY for this many iterations before unfreezing the "
+                         "actor. A freshly-initialised critic produces garbage advantages, and "
+                         "applying them to an already-good BC actor is the classic BC->RL "
+                         "collapse; warming the critic first protects the prior. 0 = off "
+                         "(previous behaviour). Suggested 25 for a BC fine-tune.")
+parser.add_argument("--anneal_sigma_iters", type=int, default=0,
+                    help="Linearly (in log space) anneal the dz/yaw sigmas from --sigma_init to "
+                         "--anneal_sigma_to over this many iterations. The policy trains "
+                         "stochastic but DEPLOYS argmax, so training reward need not track "
+                         "deployed performance; annealing closes that gap. 0 = off.")
+parser.add_argument("--anneal_sigma_to", type=float, default=0.01,
+                    help="Target sigma for --anneal_sigma_iters.")
 parser.add_argument("--save_debug_pointclouds", action="store_true", default=False, help="Save debug point cloud .npy and plots on first observation.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -475,6 +488,45 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         runner.load(resume_path)
+
+    # ---- BC->RL guards (2026-08-08; see CranePPORunnerCfg_ScoringV2 for the post-mortem) ----
+    _warm = int(getattr(args_cli, "critic_warmup_iters", 0) or 0)
+    _ann_it = int(getattr(args_cli, "anneal_sigma_iters", 0) or 0)
+    _ann_to = float(getattr(args_cli, "anneal_sigma_to", 0.01) or 0.01)
+    if _warm > 0 or _ann_it > 0:
+        import math as _math
+        _pol = runner.alg.policy
+        # "actor" = everything the critic does not own. Record the ORIGINAL trainability so
+        # restoring after warmup cannot silently undo --freeze_encoder.
+        _actor = [(p, bool(p.requires_grad)) for n, p in _pol.named_parameters()
+                  if not n.startswith("critic")]
+        _sig0 = max(float(args_cli.sigma_init), 1e-6)
+        _orig_update = runner.alg.update
+        _st = {"i": 0}
+
+        def _guarded_update(*a, **k):
+            i = _st["i"]
+            if _warm > 0:
+                if i < _warm:
+                    for p, _ in _actor:
+                        p.requires_grad_(False)
+                elif i == _warm:
+                    for p, orig in _actor:
+                        p.requires_grad_(orig)
+                    print(f"[guards] critic-only warmup done ({_warm} iters); actor restored")
+            if _ann_it > 0 and hasattr(_pol, "log_sigma_dz"):
+                f = min(1.0, i / float(_ann_it))
+                lg = (1.0 - f) * _math.log(_sig0) + f * _math.log(max(_ann_to, 1e-6))
+                with torch.no_grad():
+                    _pol.log_sigma_dz.data.fill_(lg)
+                    _pol.log_sigma_yaw.data.fill_(lg)
+            out = _orig_update(*a, **k)
+            _st["i"] = i + 1
+            return out
+
+        runner.alg.update = _guarded_update
+        print(f"[INFO]: BC->RL guards on (critic_warmup={_warm}, "
+              f"sigma {_sig0:g} -> {_ann_to:g} over {_ann_it} iters)")
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)

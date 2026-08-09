@@ -113,6 +113,55 @@ class CranePPORunnerCfg_Scoring(RslRlOnPolicyRunnerCfg):
 
 
 @configclass
+class CranePPORunnerCfg_ScoringV2(RslRlOnPolicyRunnerCfg):
+    """P3b = BC->RL (scoring), the 2026-08-08 rebuild. Same policy as _Scoring; what changed is
+    everything that made the first two attempts uninterpretable.
+
+    Post-mortem of takes 1 and 2 (both DEGRADED P2c):
+      1. The reward paid for grasps that despawn nothing. `logs_grasped` is counted before the
+         lift-height gate but _despawn_grasped_logs is gated ON it, so 12-18% of cycles were
+         paid while clearing zero - a hackable channel that fully explains "training reward up,
+         deployed argmax down". Fixed in the ENV (cfg.reward_requires_lift), not here.
+      2. num_steps_per_env 8 x num_envs 4 = 32 transitions per update, minibatch 8. PPO wants
+         thousands; the sweep script itself measured ~10% batch variance against a ~3% signal.
+         At 16 envs this gives 16x32 = 512 per update, minibatch 128.
+      3. Checkpoints were selected on training reward while the policy DEPLOYS argmax - given
+         (1) that selects the most reward-hacked policy. save_interval 10 exists so
+         sweep_checkpoints.sh can pick by argmax eval instead.
+      4. The critic starts random against an already-good BC actor, so the first updates apply
+         garbage advantages to a prior worth protecting (--critic_warmup_iters in train.py).
+
+    Intended launch: --num_envs 16 --critic_warmup_iters 25 --freeze_encoder --anneal_sigma
+    """
+    num_steps_per_env = 32
+    max_iterations = 400
+    save_interval = 10                    # dense checkpoints -> argmax selection after the fact
+    experiment_name = "crane_scoring_ppo_v2"
+    empirical_normalization = False
+    policy = ScoringActorCriticCfg(
+        class_name="rsl_rl.modules.ScoringActorCritic",
+        init_noise_std=0.05,
+        actor_hidden_dims=[128, 64],
+        critic_hidden_dims=[128, 64],
+        activation="elu",
+    )
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.1,
+        entropy_coef=0.0,                 # unchanged: see _Scoring for the measurement
+        num_learning_epochs=4,
+        num_mini_batches=4,
+        learning_rate=5e-5,
+        schedule="fixed",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.008,
+        max_grad_norm=1.0,
+    )
+
+
+@configclass
 class CranePPORunnerCfg(RslRlOnPolicyRunnerCfg):
     """PPO configuration for crane hierarchical RL (original version with strategic state)."""
 

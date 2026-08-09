@@ -14,7 +14,8 @@ heads), BC+RL fine-tuning.
 
 - **Laptop** (primary): real-crane deployment (fpi_crane_ros2), collections, the authoritative
   logs/ tree, real bags. Anything involving "the crane" or real clouds lives there.
-- **Other PC** (if you are reading this from a fresh clone of RLCraneTestbed:dev): sim-only
+- **Other PC** (if you are reading this from a fresh clone of RLCraneTestbed, branch
+  `master` - there is no `dev` branch on that remote): sim-only
   jobs - RL training, eval sweeps, collections. Real data only if rsync'd over.
 
 ## Running commands
@@ -37,6 +38,20 @@ export PYTHONPATH=/workspace/crane_testbed/source/crane_testbed:/workspace/crane
     --bc_checkpoint logs/bc_pointcloud/bc_aug1v2_dig25/bc_pointcloud_policy_rsl_rl.pt \
     --freeze_encoder --sigma_init 0.05 --seed 42 --num_envs 4 --max_iterations 400 \
     --headless <platform-v2 flags>
+
+# BC->RL REBUILD (2026-08-09) - this is the run to make on the other PC. See the
+# "BC->RL rebuild" section below for WHY each flag is there; do not drop any of them.
+/workspace/isaaclab/isaaclab.sh -p scripts/rsl_rl/train.py \
+    --task Isaac-Crane-PointCloud-Gaze-Scoring-PPO-v2 \
+    --bc_checkpoint logs/bc_pointcloud/scoring_margin05_2048_c/scoring_policy.pt \
+    --freeze_encoder --sigma_init 0.05 \
+    --critic_warmup_iters 25 --anneal_sigma_iters 100 --anneal_sigma_to 0.01 \
+    --seed 42 --num_envs 4 --max_iterations 400 --headless \
+    agent.num_steps_per_env=8 <platform-v2 flags> \
+    > logs/p3v2_train.log 2>&1
+# num_envs x num_steps_per_env IS the PPO batch. 4x8=32 is what the two FAILED attempts
+# used - raise --num_envs to whatever the GPU fits (8 -> 64, 16 -> 128) before raising
+# num_steps_per_env, because envs cost wall-clock once and steps cost it every iteration.
 
 # Eval (see eval_scripts/ for the sweep runners - ALWAYS use run scripts, never paste
 # long one-liners; terminal hard-wrap has eaten launches):
@@ -124,19 +139,56 @@ clearing numbers are suspect.
 | `logs/bc_pointcloud/bc_aug1v2_dig25/bc_pointcloud_policy.pt` | regression BC, tight crop, 1024 pts, dig 0.25 |
 | `logs/bc_pointcloud/bc_aug1v2_dig25/bc_pointcloud_policy_rsl_rl.pt` | same in RSL-RL format = BCRL init |
 | `logs/bc_pointcloud/scoring_v1/scoring_policy.pt` | scoring head, SAME dataset as the BC above (controlled head comparison) |
+| `logs/bc_pointcloud/scoring_margin05_2048_c/scoring_policy.pt` | **P2c** - margin 0.5, 2048 pts, stub_aug 0.7 + stub_neg 1.0. The deployed/headline policy and the BC->RL init. 100-ep sim: 78.1% TRUE success, 23.1 cycles, 96% full clears |
 | `logs/rsl_rl/.../model_100_bc_format.pt` | BCRL-CC 100 iters, platform-v2 |
 
 Datasets are not in git; rsync from the laptop: `logs/bc_pointcloud/bc_policy_aug1_v2/`
 (tight 1024 + full-scene 2048) and `logs/bc_pointcloud/bc_margin05_2048/` (margin 0.5,
 2048 pts, + pre-FPS raw).
 
+## BC->RL rebuild (2026-08-09)
+
+Two scoring-head fine-tunes (entropy 0.003, then 0) both DEGRADED P2c, with the signature
+"training reward rises while deployed argmax performance falls". Four causes were found; all
+four are fixed in the repo, and `-PPO-v2` exists so the old settings stay reproducible.
+
+1. **The reward paid for grasps that clear nothing.** `logs_grasped` is counted by proximity +
+   per-log rise at line ~5075 of `crane_rl_env_gaze.py`, but `_despawn_grasped_logs` is gated on
+   a SEPARATE lift-height check. Cycles passing the first and failing the second removed nothing
+   yet were still paid - 12-18% of cycles, measured. That is a reward-hacking channel and it
+   alone explains the signature. Fixed by `cfg.reward_requires_lift` (default True). Reported
+   metrics keep the ungated count so older rows stay comparable.
+2. **32 transitions per update** (8 steps x 4 envs), minibatch 8, against a 2048-way categorical.
+   The old sweep script measured ~10% batch variance against a ~3% signal.
+3. **Checkpoints selected on training reward** while the policy DEPLOYS argmax - with (1) that
+   selects the most reward-hacked policy. `save_interval` is now 10; pick by argmax eval after
+   the fact, never by the reward curve.
+4. **Critic initialised random against an already-good actor**, so the first updates apply
+   garbage advantages to a prior worth protecting. `--critic_warmup_iters 25` trains the critic
+   alone first, then restores each parameter's ORIGINAL trainability (so `--freeze_encoder`
+   survives the unfreeze).
+
+`--anneal_sigma_iters/--anneal_sigma_to` closes the train-stochastic/deploy-argmax gap.
+
+**Guardrail:** every cycle appends to `logs/reward_audit/audit_<pid>.jsonl` (reward, raw vs
+lift-gated grasp count, rack count). After ~200 cycles, check reward correlates with actual rack
+decrease. If it does not, kill the run - that is reward hacking, not learning, and it is what
+cost the two previous attempts.
+
+**Scratch RL is NOT plateaued at 150 iterations.** The paper-era 1000-iteration run was at its
+WORST between iterations 75-150 (mean reward 76) and then climbed to 183 by iteration ~680.
+Judging a scratch run before ~400 iterations reproduces exactly the wrong conclusion. Also watch
+`Mean episode length`: `max_grasp_cycles` is 30, so ~29.5 means the pile is never being cleared
+regardless of what the reward says.
+
 ## Standing questions
 
 1. Does training WITH structure in the cloud (margin dataset) stop the rack/end-board
    mis-targeting that dominates real failures (22% of cycles, endgame-concentrated)?
 2. Does RL fine-tuning beat its own BC init under a FAIR test (same platform, BC-initialised,
-   matched clean rows), and degrade slower as observations degrade? Unresolved - one prior
-   "no" came from an invalid cross-platform comparison.
+   matched clean rows), and degrade slower as observations degrade? STILL UNRESOLVED, but the
+   two prior "no" results are now explained rather than trusted: the reward was payable without
+   clearing anything (see "BC->RL rebuild"). `-PPO-v2` is the fair retest; it has never run.
 3. Can a full-scene (no-crop) policy remove the rack-calibration dependency?
 
 `docs/CLAUDE.md` has extended paper-era context (reward details, PPO hyperparameters); treat

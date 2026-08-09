@@ -8,7 +8,7 @@
 # Copyright (c) 2022-2025
 
 from __future__ import annotations
-import os, math, argparse, collections, statistics
+import os, math, json, argparse, collections, statistics
 from typing import List, Tuple, Optional, Sequence
 
 import numpy as np
@@ -1287,6 +1287,15 @@ class CraneDirectEnvCfgFull(DirectRLEnvCfg):
     max_graspable_logs: int = 15  # Physical grapple capacity cap for normalization denominator
     normalized_efficiency_scale: float = 10.0  # Used when reward_formula="multiplicative" and normalize_reward=True
     failure_penalty: float = -1.0  # Penalty for 0-log grasps
+    # Pay reward only for grasps the sim actually despawns. `logs_grasped` is counted by
+    # proximity + per-log rise BEFORE the lift-height gate, but _despawn_grasped_logs is gated
+    # ON that lift. Cycles that pass the first and fail the second remove NOTHING from the rack
+    # yet were still paid (12-18% of cycles, measured 2026-08-08). That is a reward-hacking
+    # channel: PPO can raise return by finding poses that trip the counter without completing a
+    # lift, which is why training reward rose while deployed argmax clearing fell. Reported
+    # metrics deliberately keep the ungated count so the reported-vs-TRUE accounting stays
+    # comparable with rows recorded before this fix. Set False to reproduce the old behaviour.
+    reward_requires_lift: bool = True
     use_alignment_reward: bool = True  # Multiply/add alignment term (ablate by setting False)
     # use_stability_reward: penalize off-center grasps that cause grapple tilt
     # multiplicative: reward × stability, additive: + stability term
@@ -1771,6 +1780,12 @@ class CraneDirectEnvFull(DirectRLEnv):
         # Grasp outcome tracking for hierarchical RL
         self._grasp_reward_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.float32)
         self._prev_logs_grasped = torch.zeros(self.num_envs, device=self.device, dtype=torch.float32)
+        # Reward-vs-truth audit (see _audit_reward). Path is per-process so concurrent runs on
+        # the multi-GPU boxes do not interleave into one file.
+        self._reward_audit = []
+        self._reward_audit_path = os.environ.get(
+            "REWARD_AUDIT_PATH",
+            f"/workspace/crane_testbed/logs/reward_audit/audit_{os.getpid()}.jsonl")
         self._prev_grasp_alignment = torch.zeros(self.num_envs, device=self.device, dtype=torch.float32)
 
         # Episode-level metrics for TensorBoard (reset per episode)
@@ -5098,8 +5113,18 @@ class CraneDirectEnvFull(DirectRLEnv):
                                 "stability": float(stability),
                                 "theta_rad": [round(t, 5) for t in self._stab_theta_full[i]],
                             })
-                        reward = self._compute_grasp_reward(logs_grasped, alignment, stability, i, knocked_off)
+                        # See cfg.reward_requires_lift: _lift_ok (computed above) gates the
+                        # despawn below, so a cycle that fails it clears nothing. Pay on the
+                        # gated count; keep `logs_grasped` ungated for the metrics/logging.
+                        _rew_logs = logs_grasped
+                        if getattr(self.cfg, "reward_requires_lift", True) and not _lift_ok:
+                            _rew_logs = 0
+                        reward = self._compute_grasp_reward(_rew_logs, alignment, stability, i, knocked_off)
                         self._grasp_reward_buf[i] = reward
+                        # Guardrail data for the reward-vs-truth correlation check: a fine-tune
+                        # whose reward does not track actual rack decrease is hacking, not
+                        # learning. Consumed by check_reward_alignment.py.
+                        self._audit_reward(reward, logs_grasped, _rew_logs, _lift_ok, i)
                         self._prev_logs_grasped[i] = float(logs_grasped)
                         self._prev_grasp_alignment[i] = alignment
                         self._prev_grasp_stability[i] = stability
@@ -5844,6 +5869,29 @@ class CraneDirectEnvFull(DirectRLEnv):
         # Always return the count - the caller decides whether to penalize
         return out_of_bounds_count
 
+
+    def _audit_reward(self, reward, logs_grasped, rew_logs, lift_ok, env_i):
+        """Append one reward-vs-truth record, flushed periodically to jsonl.
+
+        A fine-tune whose reward does not track actual rack decrease is hacking the objective,
+        not learning the task - which is exactly what happened before cfg.reward_requires_lift
+        (training reward rose while deployed argmax clearing fell). Recording both every cycle
+        makes that detectable within a few hundred cycles instead of after a wasted run.
+        Analysed by scripts/envs/check_reward_alignment.py.
+        """
+        rec = {"reward": float(reward), "logs_grasped": int(logs_grasped),
+               "rew_logs": int(rew_logs), "lift_ok": bool(lift_ok),
+               "rack_before_despawn": int(self._count_logs_in_rack(env_i)), "env": int(env_i)}
+        self._reward_audit.append(rec)
+        if len(self._reward_audit) >= 200:
+            try:
+                os.makedirs(os.path.dirname(self._reward_audit_path), exist_ok=True)
+                with open(self._reward_audit_path, "a") as fh:
+                    for r in self._reward_audit:
+                        fh.write(json.dumps(r) + "\n")
+            except Exception as e:                      # never let logging kill a long run
+                print(f"[reward-audit] write failed ({e}); dropping buffer")
+            self._reward_audit = []
 
     def _compute_grasp_reward(self, logs_grasped: int, alignment: float, stability: float, env_i: int, knocked_off: int = 0) -> float:
         """Compute reward for a grasp attempt.
