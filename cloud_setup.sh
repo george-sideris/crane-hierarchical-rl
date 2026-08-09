@@ -11,9 +11,9 @@
 #   ./cloud_setup.sh sweep 50 10  # argmax-eval every 50th checkpoint, 10 eps, and rank them
 #   ./cloud_setup.sh fetch NAME   # tar the artifacts - RUN BEFORE TERMINATING THE INSTANCE
 #
-# Container providers (RunPod, Vast): you land INSIDE a GPU container, so there is no docker
-# daemon and `setup` will not work - run an Isaac Sim image as the pod, clone into it, and use
-# preflight / ladder / train / sweep / fetch only. `setup` is for VM providers (Lambda, GCP).
+# Container providers (RunPod, Vast): use runpod_setup.sh instead - NONE of the stages below
+# work there. You land INSIDE the GPU container, and every stage drives it from outside via
+# `docker exec`. This script is for VM providers (Lambda, GCP), where you get a docker daemon.
 #
 # HARD REQUIREMENT: an RTX card. Isaac Sim renders through RTX/Vulkan ray tracing and this env
 # renders a camera to build its observation, so A100/H100 (no RT cores) will fail with
