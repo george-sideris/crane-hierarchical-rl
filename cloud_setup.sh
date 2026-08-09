@@ -139,14 +139,21 @@ ladder () {
     docker exec "$CONTAINER" bash -c "pkill -f 'num_envs $n '" 2>/dev/null
     sleep 5
     local c res
-    c=$(docker exec "$CONTAINER" bash -c "grep -c CYCLE $log" 2>/dev/null || echo 0)
-    if docker exec "$CONTAINER" bash -c "grep -qi 'state is corrupted\|corrupted' $log" 2>/dev/null; then
-      res="PHYSX CORRUPTED -> raise PhysxCfg buffers"
-    elif docker exec "$CONTAINER" bash -c "grep -qi 'out of memory\|OUT_OF_DEVICE_MEMORY' $log" 2>/dev/null; then
-      res="OOM"
+    # grep -c prints 0 AND exits 1 on zero matches, so `|| echo 0` would append a second 0 and
+    # give "0\n0", which breaks the [ -gt ] below.
+    c=$(docker exec "$CONTAINER" bash -c "grep -c CYCLE $log" 2>/dev/null); c=${c:-0}
+    # ORDER MATTERS. A rung that runs out of VRAM logs BOTH OUT_OF_DEVICE_MEMORY and "state is
+    # corrupted" (failed allocations surface later as illegal memory access), so testing
+    # corruption first mislabels an OOM and tells you to RAISE PhysxCfg buffers, which allocates
+    # even more VRAM and makes it strictly worse. Measured on an A40, 2026-08-09: rung 64 peaked
+    # at 45389 of 46068 MiB with 123 OOM lines and 198 corruption lines. Check OOM first.
+    if docker exec "$CONTAINER" bash -c "grep -qi 'out of memory\|OUT_OF_DEVICE_MEMORY' $log" 2>/dev/null; then
+      res="OOM -> lower num_envs (roughly 830 MiB per env + 4.1 GB fixed)"
+    elif docker exec "$CONTAINER" bash -c "grep -qi 'state is corrupted\|corrupted' $log" 2>/dev/null; then
+      res="PHYSX CORRUPTED (no OOM) -> raise PhysxCfg buffers"
     elif [ "${c:-0}" -gt 0 ]; then res="ok"; else res="no cycles - see $log"; fi
     printf "%6s %10s %12s %14s %s\n" "$n" "$peak" "$c" \
-      "$(python3 -c "print(f'{${c:-0}/($secs/60):.1f}')" 2>/dev/null || echo '?')" "$res"
+      "$(awk -v c="${c:-0}" -v s="$secs" 'BEGIN{printf "%.1f", c/(s/60)}')" "$res"
   done
   echo
   echo "Pick the largest rung that is 'ok' AND still gaining cycles/min. If cycles/min has"
@@ -192,8 +199,8 @@ sweep () {
   local every="${1:-50}" eps="${2:-10}"
   local rundir
   rundir=$(docker exec "$CONTAINER" bash -c \
-    "ls -dt /workspace/crane_testbed/logs/rsl_rl/crane_scoring_ppo_v2/*/ 2>/dev/null | head -1" | tr -d '\r')
-  [ -z "$rundir" ] && { echo "no crane_scoring_ppo_v2 run found"; return 1; }
+    "ls -dt /workspace/crane_testbed/logs/rsl_rl/crane_pointcloud_gaze_scoring_ppo_v2/*/ 2>/dev/null | head -1" | tr -d '\r')
+  [ -z "$rundir" ] && { echo "no crane_pointcloud_gaze_scoring_ppo_v2 run found"; return 1; }
   say "argmax sweep over $rundir (every ${every} iters, ${eps} episodes each)"
   local ckpts
   ckpts=$(docker exec "$CONTAINER" bash -c "ls ${rundir}model_*.pt 2>/dev/null | grep -v _bc_format" | tr -d '\r')
@@ -232,7 +239,7 @@ fetch () {
   local tar="/workspace/crane_testbed/logs/cloud_${stamp}.tgz"
   say "packing artifacts"
   docker exec "$CONTAINER" bash -c "cd /workspace/crane_testbed && tar czf $tar \
-    logs/rsl_rl/crane_scoring_ppo_v2 \
+    logs/rsl_rl/crane_pointcloud_gaze_scoring_ppo_v2 \
     logs/reward_audit \
     logs/p3v2_train.log \
     logs/sim_eval/sweep_iter* \

@@ -6,6 +6,7 @@
 #
 #   ./runpod_setup.sh preflight    # is this pod usable (RTX? isaaclab visible? volume sane?)
 #   ./runpod_setup.sh bootstrap    # clone crane_testbed onto persistent storage
+#   ./runpod_setup.sh install      # install IsaacLab into a bare isaac-sim image (see POD IMAGE)
 #   ./runpod_setup.sh ladder       # measure the REAL env-count ceiling on this card
 #   ./runpod_setup.sh train N      # launch the PPO-v2 fine-tune with N envs
 #   ./runpod_setup.sh sweep 50 10  # argmax-eval every 50th checkpoint, 10 eps, and rank them
@@ -17,11 +18,13 @@
 # cloud_setup.sh remains the VM-provider path (Lambda, GCP) and is unchanged. There is no
 # `setup` verb here because you cannot build the image from inside it - see POD IMAGE below.
 #
-# POD IMAGE: bring an image that ALREADY has Isaac Lab installed. Either push your local
-# isaac-lab-base to a registry, or try NVIDIA's prebuilt one first:
-#   docker run --rm --gpus all nvcr.io/nvidia/isaac-lab:latest python -c "import isaaclab"
-# Installing Isaac Lab in-pod costs 30-60 min of billed GPU time and walks straight into the
-# `packaging` conflict that isaaclab_patches/ exists to fix.
+# POD IMAGE: there is NO prebuilt image matching this tree. Checked 2026-08-09:
+# nvcr.io/nvidia/isaac-lab:latest does not exist, and isaac-lab:2.0.0 is IsaacLab 2.0 against
+# our v2.2.1 code. nvcr.io/nvidia/isaac-sim:5.0.0 IS public and needs no NGC credentials, so
+# the supported path is: run isaac-sim:5.0.0 as the pod, then `install` (30-60 min of billed
+# GPU time). `install` replicates the two Dockerfile.base patches as shell steps, so it does
+# not hit the `packaging` conflict. Pushing your local isaac-lab-base to a registry also works
+# and skips the install, at the cost of a 23.7 GB upload.
 #
 # STORAGE - THE ONE THAT SILENTLY EATS POD-MINUTES: RunPod mounts both the volume disk and a
 # network volume at /workspace, and a network volume REPLACES whatever the image had there.
@@ -39,11 +42,18 @@
 # RTX 6000 Ada.
 set -u
 
-ISAACLAB_DIR="${ISAACLAB_DIR:-/workspace/isaaclab}"
+ISAACSIM_ROOT="${ISAACSIM_ROOT:-/isaac-sim}"
+BASE_COMMIT="4f81564f3cd2266459f45a35154cd85eaa3d9b4b"   # what isaaclab_patches was taken against
 # Persistent storage. /data is the mount path preflight expects; falls back to /workspace so
 # the script still runs on a volume-less pod (everything is then lost on stop - use fetch).
 if [ -z "${PERSIST:-}" ]; then
   if [ -d /data ] && [ -w /data ]; then PERSIST=/data; else PERSIST=/workspace; fi
+fi
+# An image that already ships IsaacLab has it at /workspace/isaaclab and wins. Otherwise a
+# fresh `install` goes on persistent storage, so a pod stop does not throw away 45 min of work.
+if [ -z "${ISAACLAB_DIR:-}" ]; then
+  if [ -x /workspace/isaaclab/isaaclab.sh ]; then ISAACLAB_DIR=/workspace/isaaclab
+  else ISAACLAB_DIR="$PERSIST/isaaclab"; fi
 fi
 CRANE_DIR="${CRANE_DIR:-$PERSIST/crane_testbed}"
 REPO_URL="${REPO_URL:-git@github.com:george-sideris/RLCraneTestbed.git}"
@@ -92,7 +102,7 @@ preflight () {
       echo "  !! with Volume Mount Path = /data (it cannot be changed on a running pod)."
     else
       echo "  !! /workspace is not a mount, so the image itself has no Isaac Lab."
-      echo "  !! Use an Isaac Lab image, not a bare Isaac Sim one."
+      echo "  !! Expected on a bare isaac-sim image - run: $0 bootstrap && $0 install"
     fi
     ok=1
   fi
@@ -137,17 +147,88 @@ bootstrap () {
     say "crane_testbed already at $CRANE_DIR"
   fi
 
-  say "verifying the toolchain can import isaaclab"
-  if "$ISAACLAB_DIR/isaaclab.sh" -p -c "import isaaclab; print('isaaclab ok')" 2>&1 | tail -3; then
-    :
-  else
-    echo "  !! import failed - the pod image is not a working Isaac Lab image"
-    return 1
-  fi
-
   [ -f "$CKPT" ] && echo "  BC checkpoint present" || echo "  !! BC checkpoint MISSING at $CKPT"
   mkdir -p "$CRANE_DIR/logs"
-  echo "  bootstrap done - next: $0 ladder"
+
+  # The env resolves assets through a HARDCODED /workspace/crane_testbed prefix (the laptop's
+  # docker-compose layout), so a repo living anywhere else dies with
+  #   FileNotFoundError: USD file not found at path at: '/workspace/crane_testbed/assets/scenes/crane.usd'
+  # about 3 minutes into a run, after Isaac Sim has finished booting. Point the expected path at
+  # wherever the repo actually is, so artifacts still persist on the volume.
+  if [ "$CRANE_DIR" != "/workspace/crane_testbed" ]; then
+    say "linking /workspace/crane_testbed -> $CRANE_DIR (env hardcodes the /workspace prefix)"
+    ln -sfn "$CRANE_DIR" /workspace/crane_testbed && ls -ld /workspace/crane_testbed
+  fi
+
+  say "checking for IsaacLab"
+  if [ -x "$ISAACLAB_DIR/isaaclab.sh" ] && \
+     "$ISAACLAB_DIR/isaaclab.sh" -p -c "import isaaclab" >/dev/null 2>&1; then
+    echo "  present and importable - next: $0 ladder"
+  else
+    echo "  not installed (expected on a bare isaac-sim image) - next: $0 install"
+  fi
+}
+
+# ---------------------------------------------------------------- install
+# Put IsaacLab into a bare nvcr.io/nvidia/isaac-sim image, replicating Dockerfile.base without
+# docker. Skips the two parts that exist only for the image build: the singularity NVIDIA binary
+# placeholders (a pod has the real nvidia-smi injected, and stubbing it would break preflight)
+# and the bind-mount cache dirs. Needs bootstrap first, for isaaclab_patches/.
+install () {
+  [ -d "$CRANE_DIR" ] || { echo "run bootstrap first - install needs isaaclab_patches/"; return 1; }
+  local patches="$CRANE_DIR/isaaclab_patches"
+
+  say "apt dependencies"
+  apt-get update -qq && apt-get install -y --no-install-recommends \
+    build-essential cmake git libglib2.0-0 ncurses-term wget || return 1
+
+  if [ ! -d "$ISAACLAB_DIR" ]; then
+    say "cloning IsaacLab at the patch base commit"
+    git clone https://github.com/isaac-sim/IsaacLab.git "$ISAACLAB_DIR" || return 1
+    git -C "$ISAACLAB_DIR" checkout "$BASE_COMMIT" || \
+      echo "  base commit missing; staying on default branch and using 3-way apply"
+  fi
+
+  say "applying IsaacLab-side patches"
+  ( cd "$ISAACLAB_DIR" || exit 1
+    if git apply --check "$patches/isaaclab_local_changes.patch" 2>/dev/null; then
+      git apply "$patches/isaaclab_local_changes.patch"; echo "  applied cleanly"
+    elif git apply -3 "$patches/isaaclab_local_changes.patch" 2>/dev/null; then
+      echo "  applied with 3-way merge (upstream moved)"
+    else
+      echo "  !! patch did not apply. The only hunk that matters in-pod is flatdict==4.0.0 in"
+      echo "  !! source/isaaclab/setup.py - the two Dockerfile hunks are build-only. Apply by hand."
+    fi )
+
+  say "linking _isaac_sim -> $ISAACSIM_ROOT"
+  chmod +x "$ISAACLAB_DIR/isaaclab.sh"
+  ln -sfn "$ISAACSIM_ROOT" "$ISAACLAB_DIR/_isaac_sim"
+
+  # The COPY line from Dockerfile.base: Isaac Sim's prebundled torch vendors packaging without
+  # _structures.py, but torch._vendor.packaging.version imports it.
+  say "patching Isaac Sim's prebundled torch"
+  local vendored="$ISAACSIM_ROOT/exts/omni.isaac.ml_archive/pip_prebundle/torch/_vendor/packaging/_structures.py"
+  if [ -d "$(dirname "$vendored")" ]; then
+    cp "$patches/_structures.py" "$vendored" && echo "  patched"
+  else
+    echo "  !! vendor dir missing: $(dirname "$vendored")"
+    echo "  !! Isaac Sim's layout changed - check the fix is still needed before forcing it."
+  fi
+
+  say "installing IsaacLab (30-60 min, and this is the billed part)"
+  "$ISAACLAB_DIR/isaaclab.sh" -p -m pip install toml || return 1
+  "$ISAACLAB_DIR/isaaclab.sh" -p "$ISAACLAB_DIR/tools/install_deps.py" apt "$ISAACLAB_DIR/source" || \
+    echo "  install_deps apt returned nonzero - continuing"
+  # Pin packaging==23.0: Isaac Sim's prebundled packaging 23.0 shares files with pip's own
+  # vendored copy, so any upgrade (uninstall 23.0 then install new) deletes _structures.py
+  # from pip's vendor and breaks pip mid-install.
+  echo "packaging==23.0" > /tmp/pip-constraints.txt
+  PIP_CONSTRAINT=/tmp/pip-constraints.txt "$ISAACLAB_DIR/isaaclab.sh" --install || return 1
+  "$ISAACLAB_DIR/isaaclab.sh" -p -m pip uninstall -y quadprog >/dev/null 2>&1
+
+  say "verifying"
+  "$ISAACLAB_DIR/isaaclab.sh" -p -c "import isaaclab; print('isaaclab ok')" 2>&1 | tail -3
+  echo "  next: $0 preflight   (should be all-clear now)"
 }
 
 # ---------------------------------------------------------------- ladder
@@ -187,14 +268,22 @@ ladder () {
     wait "$pid" 2>/dev/null
     sleep 5
     local c res
-    c=$(grep -c CYCLE "$log" 2>/dev/null || echo 0)
-    if grep -qi 'state is corrupted\|corrupted' "$log" 2>/dev/null; then
-      res="PHYSX CORRUPTED -> raise PhysxCfg buffers"
-    elif grep -qi 'out of memory\|OUT_OF_DEVICE_MEMORY' "$log" 2>/dev/null; then
-      res="OOM"
+    # NOT `grep -c ... || echo 0`: grep -c already prints 0, and it EXITS 1 on zero matches, so
+    # the fallback fires too and c becomes "0\n0", which then blows up the [ -gt ] below.
+    c=$(grep -c CYCLE "$log" 2>/dev/null); c=${c:-0}
+    # ORDER MATTERS. A rung that runs out of VRAM logs BOTH OUT_OF_DEVICE_MEMORY and
+    # "state is corrupted" (failed allocations surface later as illegal memory access), so
+    # testing corruption first mislabels an OOM and tells you to RAISE PhysxCfg buffers, which
+    # allocates even more VRAM and makes it strictly worse. Measured on the A40, 2026-08-09:
+    # rung 64 peaked at 45389 of 46068 MiB with 123 OOM lines and 198 corruption lines.
+    # Check OOM first, and only call it a buffer problem when there is no OOM anywhere.
+    if grep -qi 'out of memory\|OUT_OF_DEVICE_MEMORY' "$log" 2>/dev/null; then
+      res="OOM -> lower num_envs (this card fits ~$(awk -v t="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1)" 'BEGIN{printf "%d", (t*0.9-4087)/830}') envs)"
+    elif grep -qi 'state is corrupted\|corrupted' "$log" 2>/dev/null; then
+      res="PHYSX CORRUPTED (no OOM) -> raise PhysxCfg buffers"
     elif [ "${c:-0}" -gt 0 ]; then res="ok"; else res="no cycles - see $log"; fi
     printf "%6s %10s %12s %14s %s\n" "$n" "$peak" "$c" \
-      "$(python3 -c "print(f'{${c:-0}/($secs/60):.1f}')" 2>/dev/null || echo '?')" "$res"
+      "$(awk -v c="${c:-0}" -v s="$secs" 'BEGIN{printf "%.1f", c/(s/60)}')" "$res"
   done
   echo
   echo "Pick the largest rung that is 'ok' AND still gaining cycles/min. If cycles/min has"
@@ -241,8 +330,8 @@ NOTE
 sweep () {
   local every="${1:-50}" eps="${2:-10}"
   local rundir
-  rundir=$(ls -dt "$CRANE_DIR"/logs/rsl_rl/crane_scoring_ppo_v2/*/ 2>/dev/null | head -1)
-  [ -z "$rundir" ] && { echo "no crane_scoring_ppo_v2 run found"; return 1; }
+  rundir=$(ls -dt "$CRANE_DIR"/logs/rsl_rl/crane_pointcloud_gaze_scoring_ppo_v2/*/ 2>/dev/null | head -1)
+  [ -z "$rundir" ] && { echo "no crane_pointcloud_gaze_scoring_ppo_v2 run found"; return 1; }
   say "argmax sweep over $rundir (every ${every} iters, ${eps} episodes each)"
   local ckpts
   ckpts=$(ls "${rundir}"model_*.pt 2>/dev/null | grep -v _bc_format)
@@ -277,7 +366,7 @@ fetch () {
   local tar="$PERSIST/cloud_${stamp}.tgz"
   say "packing artifacts"
   ( cd "$CRANE_DIR" && tar czf "$tar" \
-    logs/rsl_rl/crane_scoring_ppo_v2 \
+    logs/rsl_rl/crane_pointcloud_gaze_scoring_ppo_v2 \
     logs/reward_audit \
     logs/p3v2_train.log \
     logs/sim_eval/sweep_iter* \
@@ -285,8 +374,8 @@ fetch () {
   echo
   echo "Get it off the pod BEFORE terminating. Either:"
   echo "  runpodctl send $tar          # prints a one-time code; on the laptop: runpodctl receive CODE"
-  echo "or, if you exposed SSH on the pod:"
-  echo "  rsync -avz <pod>:${tar} ~/IsaacLab/crane_testbed/logs/"
+  echo "or over ssh from the laptop (NOT rsync - the image does not ship it):"
+  echo "  ssh -p <port> root@<ip> 'cat ${tar}' > ~/IsaacLab/crane_testbed/logs/cloud_${stamp}.tgz"
   echo
   echo "Then on the laptop:  tar xzf logs/cloud_${stamp}.tgz -C ."
 }
@@ -294,9 +383,10 @@ fetch () {
 case "${1:-}" in
   preflight) preflight ;;
   bootstrap) bootstrap ;;
+  install)   install ;;
   ladder)    shift; ladder "$@" ;;
   train)     shift; train "$@" ;;
   sweep)     shift; sweep "$@" ;;
   fetch)     shift; fetch "$@" ;;
-  *) sed -n '2,16p' "$0" ;;
+  *) sed -n '2,13p' "$0" ;;
 esac

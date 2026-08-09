@@ -1,0 +1,33 @@
+# Thin wrapper over the locally built isaac-lab-base, so a RunPod pod is drivable.
+#
+# Build context is this directory (crane_testbed/), NOT the IsaacLab root:
+#   docker build -f Dockerfile.runpod -t ghcr.io/george-sideris/isaac-lab-crane:5.0.0-ssh .
+#
+# Two problems it solves, both discovered on pod winvxsndlrvrj3 (2026-08-09):
+#  1. The isaac-sim base sets ENTRYPOINT ["/bin/sh","-c","/isaac-sim/runheadless.sh"]. RunPod's
+#     start command therefore arrives as ignored positional parameters, the pod boots into the
+#     Isaac Sim app, and there is no shell. RunPod's v2 API cannot override an entrypoint, so it
+#     has to be fixed here.
+#  2. Pods need sshd for a control channel and the base image ships none.
+#
+# Building FROM isaac-lab-base rather than isaac-sim also means IsaacLab is already installed and
+# patched, so `runpod_setup.sh install` is not needed on pods that use this image - that is a
+# 30-60 min saving of billed GPU time on EVERY pod, for about 4 GB more upload.
+FROM isaac-lab-base:latest
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        openssh-server && \
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /var/run/sshd && \
+    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+
+COPY runpod_entrypoint.sh /usr/local/bin/runpod_entrypoint.sh
+RUN chmod +x /usr/local/bin/runpod_entrypoint.sh
+
+EXPOSE 22
+
+# Replaces the inherited sh -c entrypoint. Exec form, so a RunPod start command arrives as real
+# arguments ("$@") rather than as ignored positional parameters.
+ENTRYPOINT ["/usr/local/bin/runpod_entrypoint.sh"]
+CMD []
