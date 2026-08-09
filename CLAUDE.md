@@ -205,6 +205,24 @@ unified across chapters and it is easy to reintroduce a symbol collision.
 
 Built artifacts (`thesis_main.pdf`, `thesis_overleaf.zip`, LaTeX aux files) are gitignored.
 
+One-time setup per machine (git config is local, it does not travel with the clone):
+
+```bash
+git submodule update --init docs/thesis
+git config submodule.recurse true            # pull/checkout descend into the submodule
+git config push.recurseSubmodules on-demand  # pushing here also pushes thesis commits
+git config status.submoduleSummary true
+```
+
+Day to day:
+
+- Code only: `git pull` / `git push` as before, nothing changes.
+- Thesis edited locally: commit inside `docs/thesis`, then `git add docs/thesis && git commit`
+  here. A single `git push` sends both, because of `push.recurseSubmodules`.
+- Thesis edited in Overleaf: `git submodule update --remote --merge docs/thesis` to fetch it,
+  then commit the moved pointer here. Plain `git pull` will NOT bring Overleaf's commits in --
+  it restores the pointer this repo recorded, which can look like the edits vanished.
+
 ## IsaacLab-side changes
 
 The surrounding IsaacLab checkout has its own local edits (`docker/Dockerfile.base`,
