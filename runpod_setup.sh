@@ -8,7 +8,7 @@
 #   ./runpod_setup.sh bootstrap    # clone crane_testbed onto persistent storage
 #   ./runpod_setup.sh install      # install IsaacLab into a bare isaac-sim image (see POD IMAGE)
 #   ./runpod_setup.sh ladder       # measure the REAL env-count ceiling on this card
-#   ./runpod_setup.sh train N      # launch the PPO-v2 fine-tune with N envs
+#   ./runpod_setup.sh train N [I]  # launch the PPO-v2 fine-tune with N envs, max I iters
 #   ./runpod_setup.sh sweep 50 10  # argmax-eval every 50th checkpoint, 10 eps, and rank them
 #   ./runpod_setup.sh fetch NAME   # tar the artifacts - RUN BEFORE TERMINATING THE POD
 #
@@ -293,14 +293,18 @@ ladder () {
 
 # ---------------------------------------------------------------- train
 train () {
-  local n="${1:-16}"
-  say "launching PPO-v2 BC->RL fine-tune with $n envs (batch = ${n} x 8)"
+  local n="${1:-16}" iters="${2:-1000}" task="${3:-Isaac-Crane-PointCloud-Gaze-Scoring-PPO-v2}"
+  # An iteration is n x 8 cycles, so per-iteration wall time GROWS with n even though
+  # cycles/min improves: measured on the A40, 8.3 min/iter at 32 envs, 9.5 at 40. Checkpoints
+  # land every save_interval iterations and are the only thing you should judge the run by
+  # (argmax eval, never the reward curve), so 10 keeps feedback at roughly 95 min at 40 envs.
+  say "launching BC->RL fine-tune: task=$task, $n envs (batch = ${n} x 8), max $iters iters"
   crane "nohup $ISAACLAB_DIR/isaaclab.sh -p scripts/rsl_rl/train.py \
-      --task Isaac-Crane-PointCloud-Gaze-Scoring-PPO-v2 --bc_checkpoint $CKPT \
+      --task $task --bc_checkpoint $CKPT \
       --freeze_encoder --sigma_init 0.05 \
       --critic_warmup_iters 25 --anneal_sigma_iters 100 --anneal_sigma_to 0.01 \
-      --seed 42 --num_envs $n --max_iterations 400 --headless \
-      $PLATFORM_V2 agent.num_steps_per_env=8 \
+      --seed 42 --num_envs $n --max_iterations $iters --headless \
+      $PLATFORM_V2 agent.num_steps_per_env=8 agent.save_interval=10 \
       > logs/p3v2_train.log 2>&1 &"
   sleep 90
   grep -c CYCLE "$CRANE_DIR/logs/p3v2_train.log" 2>/dev/null

@@ -1637,6 +1637,20 @@ gym.register(
     },
 )
 
+@configclass
+class CranePointCloudGazeEnvCfg_ScoringPPO_CC5(CranePointCloudGazeEnvCfg_ScoringPPO):
+    """Dose-response arm of the cycle-cost experiment on the SCORING line: cycle_cost=5.
+
+    Same rationale as the CosSin CC5 arm (2026-08-03): at cycle_cost=1 the per-cycle penalty
+    is too small a share of episode return to steer selection. On this line the live A40 run
+    (2026-08-09, 40 envs) logged ~10.9 net reward per cycle, i.e. gross ~11.9, so cost 1 is
+    ~8% of a mean grab. At 5 a mean 18-log grab still nets ~+7 but an empty grab nets -5 and
+    a 1-2 log grab goes negative: strong pressure on exactly the endgame selection where the
+    2026-08-03 field baselines concentrated their failures. Registered as a SEPARATE task so
+    PPO-v2 rows stay comparable."""
+    cycle_cost: float = 5.0
+
+
 # P3b: same env, rebuilt PPO settings (batch 512, dense checkpoints). See
 # CranePPORunnerCfg_ScoringV2 for the post-mortem of why v0's settings were uninterpretable.
 gym.register(
@@ -1645,6 +1659,16 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": CranePointCloudGazeEnvCfg_ScoringPPO,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_ScoringV2",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-Gaze-Scoring-PPO-v2-CC5",
+    entry_point="crane_pointcloud_gaze_direct_env:CranePointCloudGazeDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudGazeEnvCfg_ScoringPPO_CC5,
         "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_ScoringV2",
     },
 )
