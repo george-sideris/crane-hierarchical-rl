@@ -8,6 +8,12 @@
 #   ./cloud_setup.sh setup        # clone IsaacLab, apply patches, build the container
 #   ./cloud_setup.sh ladder       # measure the REAL env-count ceiling on this card
 #   ./cloud_setup.sh train N      # launch the PPO-v2 fine-tune with N envs
+#   ./cloud_setup.sh sweep 50 10  # argmax-eval every 50th checkpoint, 10 eps, and rank them
+#   ./cloud_setup.sh fetch NAME   # tar the artifacts - RUN BEFORE TERMINATING THE INSTANCE
+#
+# Container providers (RunPod, Vast): you land INSIDE a GPU container, so there is no docker
+# daemon and `setup` will not work - run an Isaac Sim image as the pod, clone into it, and use
+# preflight / ladder / train / sweep / fetch only. `setup` is for VM providers (Lambda, GCP).
 #
 # HARD REQUIREMENT: an RTX card. Isaac Sim renders through RTX/Vulkan ray tracing and this env
 # renders a camera to build its observation, so A100/H100 (no RT cores) will fail with
@@ -176,10 +182,74 @@ WATCH THESE, in order of how much they have cost before:
 NOTE
 }
 
+# ---------------------------------------------------------------- sweep
+# Rank checkpoints by ARGMAX eval, which is the whole point: the policy trains stochastic and
+# DEPLOYS argmax, so the reward curve does not tell you which checkpoint to keep. Selecting on
+# training reward is one of the four things that made the earlier fine-tunes uninterpretable.
+# Short rows (10 episodes) are for RANKING only - re-run the winner chunked at 100 episodes
+# before putting a number in the thesis.
+sweep () {
+  local every="${1:-50}" eps="${2:-10}"
+  local rundir
+  rundir=$(docker exec "$CONTAINER" bash -c \
+    "ls -dt /workspace/crane_testbed/logs/rsl_rl/crane_scoring_ppo_v2/*/ 2>/dev/null | head -1" | tr -d '\r')
+  [ -z "$rundir" ] && { echo "no crane_scoring_ppo_v2 run found"; return 1; }
+  say "argmax sweep over $rundir (every ${every} iters, ${eps} episodes each)"
+  local ckpts
+  ckpts=$(docker exec "$CONTAINER" bash -c "ls ${rundir}model_*.pt 2>/dev/null | grep -v _bc_format" | tr -d '\r')
+  for c in $ckpts; do
+    local n; n=$(basename "$c" .pt | sed 's/model_//')
+    [ $((n % every)) -ne 0 ] && continue
+    local out="/workspace/crane_testbed/logs/sim_eval/sweep_iter${n}"
+    docker exec "$CONTAINER" bash -c "test -f ${out}/.done" 2>/dev/null && { echo "  [skip] iter $n"; continue; }
+    echo "  -- iter $n"
+    docker exec "$CONTAINER" bash -c "cd /workspace/crane_testbed && \
+      export PYTHONPATH=/workspace/crane_testbed/source/crane_testbed:/workspace/crane_testbed/scripts/envs && \
+      /workspace/isaaclab/_isaac_sim/python.sh scripts/envs/rsl_rl_to_scoring.py \
+        --rsl_rl $c --template $CKPT" >/dev/null 2>&1 || { echo "     convert FAILED"; continue; }
+    docker exec "$CONTAINER" bash -c "cd /workspace/crane_testbed && \
+      export PYTHONPATH=/workspace/crane_testbed/source/crane_testbed:/workspace/crane_testbed/scripts/envs && \
+      mkdir -p $out && /workspace/isaaclab/isaaclab.sh -p scripts/envs/play_bc_pointcloud.py \
+        --policy_type scoring --crop_margin 0.5 --checkpoint ${c%.pt}_bc_format.pt \
+        --gaze --raw_pcd --crop_to_bounds --headless --num_envs 8 --num_episodes $eps \
+        --seed 42 --save_metrics --save_decisions $PLATFORM_V2 \
+        --output_dir $out > ${out}.log 2>&1 && touch ${out}/.done"
+  done
+  say "ranking (TRUE columns are the citable ones)"
+  docker exec "$CONTAINER" bash -c "cd /workspace/crane_testbed && \
+    python3 scripts/envs/summarize_eval_rows.py --dir logs/sim_eval \
+      --rows \$(ls -d logs/sim_eval/sweep_iter*/ 2>/dev/null | xargs -n1 basename | tr '\n' ' ')"
+  echo
+  echo "Compare against the P2c BC init (78.07 TRUE success, 23.09 cycles, 96% full clears)."
+  echo "If no checkpoint beats it, that is the result - report it rather than hunting seeds."
+}
+
+# ---------------------------------------------------------------- fetch
+# Rented instances are usually WIPED on terminate, and logs/ is gitignored so nothing comes
+# home on its own. Run this BEFORE stopping the pod.
+fetch () {
+  local stamp="${1:-run}"
+  local tar="/workspace/crane_testbed/logs/cloud_${stamp}.tgz"
+  say "packing artifacts"
+  docker exec "$CONTAINER" bash -c "cd /workspace/crane_testbed && tar czf $tar \
+    logs/rsl_rl/crane_scoring_ppo_v2 \
+    logs/reward_audit \
+    logs/p3v2_train.log \
+    logs/sim_eval/sweep_iter* \
+    logs/ladder_*.log 2>/dev/null; ls -lh $tar"
+  echo
+  echo "Copy it home BEFORE terminating the instance:"
+  echo "  rsync -avz <pod>:${tar} ~/IsaacLab/crane_testbed/logs/"
+  echo
+  echo "Then on the laptop:  tar xzf logs/cloud_${stamp}.tgz -C ."
+}
+
 case "${1:-}" in
   preflight) preflight ;;
   setup)     setup ;;
   ladder)    shift; ladder "$@" ;;
   train)     shift; train "$@" ;;
-  *) sed -n '2,14p' "$0" ;;
+  sweep)     shift; sweep "$@" ;;
+  fetch)     shift; fetch "$@" ;;
+  *) sed -n '2,16p' "$0" ;;
 esac
