@@ -1,0 +1,3 @@
+[submodule "docs/thesis"]
+	path = docs/thesis
+	url = git@github.com:george-sideris/masters-thesis.git

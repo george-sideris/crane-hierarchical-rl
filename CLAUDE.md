@@ -196,11 +196,12 @@ its file references as historical where they conflict with this file.
 
 ## Thesis
 
-The master's thesis lives in `docs/` (root `thesis_main.tex`, 8 chapters, build with
-`pdflatex + bibtex + pdflatex x2` from that directory). Chapter map, notation conventions,
-the two stability definitions, the algorithm blocks and the figure provenance are documented
-in `docs/CLAUDE.md` - read that before editing any chapter, because the notation was unified
-across chapters and it is easy to reintroduce a symbol collision.
+The master's thesis is a separate repository (`george-sideris/masters-thesis`, linked to
+Overleaf via GitHub sync) carried here as a submodule at `docs/thesis`. Run
+`git submodule update --init docs/thesis` after cloning. Chapter map, notation conventions,
+the two stability definitions, the algorithm blocks and the figure provenance are in
+`docs/thesis/CLAUDE.md` - read that before editing any chapter, because the notation was
+unified across chapters and it is easy to reintroduce a symbol collision.
 
 Built artifacts (`thesis_main.pdf`, `thesis_overleaf.zip`, LaTeX aux files) are gitignored.
 

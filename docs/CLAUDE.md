@@ -370,100 +370,29 @@ Penalties: `failure_penalty` (0 logs grasped), `empty_target_penalty`, `knocked_
 
 ---
 
-# Master's Thesis (docs/)
+# Master's Thesis
 
-Root file `thesis_main.tex`, 8 chapters in `thesis_chapter_{intro,background,simulation,
-sim_study,sim2real,bc_policies,bcrl,conclusion}.tex`, bibliography `thesis_references.bib`.
-McGill-style front matter (report class, Palatino, double-spaced, red headrule) with Abstract,
-Abrege, Acknowledgements, Preface, List of Acronyms, List of Symbols, and a List of Algorithms.
-
-Build from `docs/`:
+The thesis is no longer kept here. It lives in its own repository,
+`github.com/george-sideris/masters-thesis`, carried by this repo as a submodule at
+`docs/thesis`, because Overleaf's GitHub sync maps a whole repository to a project and
+cannot point at a subdirectory.
 
 ```bash
-pdflatex thesis_main && bibtex thesis_main && pdflatex thesis_main && pdflatex thesis_main
+git submodule update --init docs/thesis     # first clone
+cd docs/thesis && pdflatex thesis_main && bibtex thesis_main && pdflatex thesis_main && pdflatex thesis_main
 ```
 
-`\graphicspath` is `{figures/}` only, so every referenced figure must live under `docs/figures/`.
-The built PDF, the Overleaf zip and all LaTeX aux files are gitignored: regenerate, do not commit.
+Read `docs/thesis/CLAUDE.md` before editing any chapter: it carries the chapter map, the
+unified notation (and the symbol collisions that must not come back), both stability
+definitions, the algorithm blocks, and the figure provenance.
 
-To get an Overleaf project, rebuild the zip (tex + bib + only the referenced figures) with:
+Working rules now that Overleaf can write to that repo:
 
-```bash
-python3 docs/make_overleaf_zip.py
-```
-
-It writes `docs/thesis_overleaf.zip`; upload that to Overleaf as a new project. Re-run it after
-adding or renaming a figure, otherwise the Overleaf copy is missing files the local build has.
-Any `docs/thesis_overleaf/` directory is a stale unzip of an older zip, not a source - the
-canonical sources are the `.tex` files in `docs/` itself.
-
-## Chapter map
-
-| Ch | File | Content |
-|----|------|---------|
-| 3 | simulation | Isaac Lab testbed, physics tuning, FSM, decision-level MDP, outcome scores, heuristic expert |
-| 4 | sim_study | Four-method comparison (heuristic / RL / BC / BC->RL). Stability column deliberately excluded |
-| 5 | sim2real | ROS 2 control chain, task-space accuracy, camera + rack calibration, deposition, deploy safeguards |
-| 6 | bc_policies | Regression vs scoring BC, explicit differences, field trials and failure taxonomy |
-| 7 | bcrl | RL fine-tuning: gen-1 Gaussian lessons, categorical-over-points AC, asymmetric critic, reward |
-
-## Notation conventions (unified 2026-08-08 - keep consistent)
-
-`P` observed cloud; `p_i` a point; `N` point budget; `m` crop margin; `[b_min, b_max]` action box;
-`C` admissible candidate set; `nu` ZED axial noise coefficient; `xi_t` privileged state vector;
-`M` dataset size; `g` grasp target (bold) but plain `g` the PointNet global feature; `s_i` per-point
-score; `delta_i` depth residual; `q_i` doubled-angle yaw pair; `n` throughput; `alpha` alignment;
-`varsigma` stability; `d` digging depth; `d^xy_i` horizontal distance. `theta` is overloaded on
-purpose (policy parameters vs geometric angle) and the List of Symbols says so.
-
-Symbols that were WRONG before the unification pass and must not come back: `o_t` for the cloud,
-`s_t` for the privileged state (collides with the score), `g` for throughput (collides with the
-global feature), `A` for alignment, `alpha` for the noise coefficient, `K` for dataset size,
-`d_i` for horizontal distance.
-
-## Stability has two definitions, both correct
-
-- snapshot (Ch4 campaigns): `varsigma = (max(0, z_g . z_w))^4`, one sample at the end of the hold.
-- windowed (current, Ch6/Ch7 and the crane): `varsigma = (cos thetabar)^4` with `thetabar` the mean
-  of `theta_t = arccos(clamp0(z_g . z_w))` over the trailing 1 s of the hold, accepted once the
-  window variance stays under 1e-4 rad^2 for 0.5 s, else best-effort at a 4 s timeout. No outer
-  clamp is needed because each sample is already in [0, pi/2].
-
-Ch3 defines both; always record which is in force. Source of truth is `crane_rl_env_gaze.py`
-(`STABILITY_*` constants and the lift-hold block). Separately, the Ch4 stability results are
-withdrawn because the passive chain was overdamped (stiffness 300) - a different issue.
-
-## Algorithm blocks
-
-3.1 grasp-cycle FSM, 3.2 observation pipeline, 3.3 heuristic expert, 5.1 grapple + floor
-calibration, 6.1 scoring decode with admissibility masking. Style: `algorithm` + `algpseudocode`
-with the `\algin` / `\algout` / `\algstage` helpers defined in `thesis_main.tex`. Algorithm 3.2 is
-the single definition of the observation pipeline and is cited from both the BC chapter and the
-deployment safeguards - it is what backs the "operation for operation identical" claim.
-
-## Figure provenance worth remembering
-
-- `figures/real_trials/clearing_grid.jpg` (Fig 6.6) - the double-mound scoring trial cycle by
-  cycle. Built by `trial_recompute_scores.py` -> `trial_render_score_insets.py` ->
-  `trial_build_clearing_grid.py`. See the header comments; the notes below are the traps.
-- Source video is the GoPro timelapse of run `logs/bc_pointcloud/scoring_margin05_2048_c/
-  policy_debug/run_20260805_194008`. Frame time = camera start stamp + frame index, at a 1 s
-  timelapse interval played at 29.97 fps (29.97 s of wall time per second of video). Cycles 1-3
-  precede the recording; there is a ~10 min pause between cycles 22 and 23.
-- The rack being cleared is the GROUND-LEVEL BUNK in the foreground; the flatbed behind is the
-  TRAILER (deposit target). Easy to get backwards and it inverts the whole reading.
-- Per-point scores are NOT logged (the npz holds points/target/bounds only). They are recomputed
-  by running `scoring_policy.pt` over the saved cloud. The npz cloud is in real (rack-shifted)
-  coordinates: subtract `rack_y_shift` from y before the network, add it back to the decoded
-  target. 31/32 cycles then reproduce the logged target to under 6 mm.
-- Success/failure labels come from the manually scored `~/Documents/real_trials.ods`, NOT from
-  deposit events in `decisions.jsonl` - a choke still emits a deposit, so the two disagree.
-- Inset camera must sit on the timelapse camera's side of the rack (`eye = ctr + [-6.5,-1.8,3.4]`)
-  or left/right are mirrored relative to the photograph. Perpendicular to the long axis also keeps
-  the render wide and short so the overlay stays a slim corner strip.
-- open3d 0.13 here uses `rendering.Material`, not `MaterialRecord`; this matplotlib has no `turbo`.
-
-## Professor style preferences
-
-No em dashes. No re-quoting table numbers in the body text, reference the table. Stability symbol
-is `\varsigma`. "top-of-pile targeting strategy". No bold inline paragraph titles in the Discussion.
+- Pull the submodule (`git -C docs/thesis pull`) before editing chapters locally, in case
+  the Overleaf side pushed first.
+- After committing in the submodule, record the new pointer here:
+  `git add docs/thesis && git commit`. A stale pointer is the normal state between edits,
+  not a problem, but do not let it drift for long.
+- `docs/figures/` still exists for the IROS drafts, which share many of the same figures.
+  The thesis reads only `docs/thesis/figures/`, so a figure used by both is duplicated;
+  `trial_build_clearing_grid.py` writes into the submodule copy.

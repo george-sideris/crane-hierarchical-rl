@@ -16,7 +16,9 @@ S = "/home/george/IsaacLab/crane_testbed/docs/figures/real_trials/_build/"
 RUN = ("/home/george/IsaacLab/crane_testbed/logs/bc_pointcloud/"
        "scoring_margin05_2048_c/policy_debug/run_20260805_194008/")
 VID = "/home/george/Downloads/GX010129.MP4"
-OUT = "/home/george/IsaacLab/crane_testbed/docs/figures/real_trials/clearing_grid.jpg"
+# the thesis is a submodule (its own repo, synced to Overleaf); write the figure
+# straight into it so the thesis repo carries the current version
+OUT = "/home/george/IsaacLab/crane_testbed/docs/thesis/figures/real_trials/clearing_grid.jpg"
 SERIF = ("/usr/local/texlive/2025/texmf-dist/fonts/opentype/public/"
          "tex-gyre/texgyrepagella-regular.otf")
 
