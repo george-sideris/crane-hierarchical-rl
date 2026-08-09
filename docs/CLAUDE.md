@@ -386,6 +386,17 @@ pdflatex thesis_main && bibtex thesis_main && pdflatex thesis_main && pdflatex t
 `\graphicspath` is `{figures/}` only, so every referenced figure must live under `docs/figures/`.
 The built PDF, the Overleaf zip and all LaTeX aux files are gitignored: regenerate, do not commit.
 
+To get an Overleaf project, rebuild the zip (tex + bib + only the referenced figures) with:
+
+```bash
+python3 docs/make_overleaf_zip.py
+```
+
+It writes `docs/thesis_overleaf.zip`; upload that to Overleaf as a new project. Re-run it after
+adding or renaming a figure, otherwise the Overleaf copy is missing files the local build has.
+Any `docs/thesis_overleaf/` directory is a stale unzip of an older zip, not a source - the
+canonical sources are the `.tex` files in `docs/` itself.
+
 ## Chapter map
 
 | Ch | File | Content |
