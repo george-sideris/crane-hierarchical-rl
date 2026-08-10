@@ -294,17 +294,26 @@ ladder () {
 # ---------------------------------------------------------------- train
 train () {
   local n="${1:-16}" iters="${2:-1000}" task="${3:-Isaac-Crane-PointCloud-Gaze-Scoring-PPO-v2}"
-  # An iteration is n x 8 cycles, so per-iteration wall time GROWS with n even though
-  # cycles/min improves: measured on the A40, 8.3 min/iter at 32 envs, 9.5 at 40. Checkpoints
-  # land every save_interval iterations and are the only thing you should judge the run by
-  # (argmax eval, never the reward curve), so 10 keeps feedback at roughly 95 min at 40 envs.
-  say "launching BC->RL fine-tune: task=$task, $n envs (batch = ${n} x 8), max $iters iters"
+  # Anything after the task is passed through to train.py verbatim. argparse is last-wins, so
+  # ablation arms can override a default guard, e.g.:  train 40 1000 <task> --critic_warmup_iters 0
+  local extra="${*:4}"
+  # An iteration is n x steps cycles, so per-iteration wall time GROWS with n even though
+  # cycles/min improves: measured on the A40, 8.3 min/iter at 32 envs, 9.5 at 40 (8 steps).
+  # Checkpoints land every save_interval iterations and are the only thing you should judge
+  # the run by (argmax eval, never the reward curve).
+  # Scratch tasks get NO BC flags: no init to protect (warmup/anneal exist to guard the BC
+  # prior) and sigma comes from the runner cfg (0.15) since train.py only applies --sigma_init
+  # in the bc_checkpoint branch. They also keep the runner's num_steps_per_env (16) - scratch
+  # needs the bigger batch, and the curriculum divisor is sized to it.
+  local bcflags="--bc_checkpoint $CKPT --freeze_encoder --sigma_init 0.05 \
+      --critic_warmup_iters 25 --anneal_sigma_iters 100 --anneal_sigma_to 0.01"
+  local stepflag="agent.num_steps_per_env=8"
+  case "$task" in *Scratch*) bcflags=""; stepflag="" ;; esac
+  say "launching RL: task=$task, $n envs, max $iters iters ${extra:+(extra: $extra)}"
   crane "nohup $ISAACLAB_DIR/isaaclab.sh -p scripts/rsl_rl/train.py \
-      --task $task --bc_checkpoint $CKPT \
-      --freeze_encoder --sigma_init 0.05 \
-      --critic_warmup_iters 25 --anneal_sigma_iters 100 --anneal_sigma_to 0.01 \
+      --task $task $bcflags \
       --seed 42 --num_envs $n --max_iterations $iters --headless \
-      $PLATFORM_V2 agent.num_steps_per_env=8 agent.save_interval=10 \
+      $PLATFORM_V2 $stepflag agent.save_interval=10 $extra \
       > logs/p3v2_train.log 2>&1 &"
   sleep 90
   grep -c CYCLE "$CRANE_DIR/logs/p3v2_train.log" 2>/dev/null

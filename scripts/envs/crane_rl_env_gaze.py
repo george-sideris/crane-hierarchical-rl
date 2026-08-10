@@ -1345,6 +1345,7 @@ class CraneDirectEnvCfgFull(DirectRLEnvCfg):
     # List of (episode_threshold, num_active_logs) tuples, e.g.:
     # [(0, 15), (200, 50), (500, 100), (1000, 200)]
     curriculum_schedule: list[tuple[int, int]] | None = None
+    curriculum_steps_per_env: int = 4   # divisor mapping step() calls to iterations; match the runner
 
     # Camera configuration (ZED X style RGBD camera)
     # GAZE ENV: the policy camera is MOUNTED ON THE BASEMAST (the env's `mast` link, which
@@ -1622,7 +1623,11 @@ class CraneDirectEnvFull(DirectRLEnv):
         # Curriculum state (thresholds are in learning iterations)
         self._total_episodes_completed = 0  # for logging
         self._curriculum_step_count = 0  # total step() calls
-        self._curriculum_num_steps_per_env = 4  # steps per iteration (matches rsl_rl_cfg)
+        # Steps-per-iteration divisor for mapping step() calls to learning iterations. Was
+        # hardcoded 4 (matched an OLD runner cfg); ScoringScratch uses 16 and fine-tunes pass
+        # agent.num_steps_per_env=8, so a stale divisor advances the schedule 2-4x too fast.
+        # Set curriculum_steps_per_env in the task cfg to the runner's num_steps_per_env.
+        self._curriculum_num_steps_per_env = int(getattr(self.cfg, "curriculum_steps_per_env", 4) or 4)
         if self.cfg.curriculum_schedule is not None and len(self.cfg.curriculum_schedule) > 0:
             self._curriculum_active_logs = self.cfg.curriculum_schedule[0][1]
         else:

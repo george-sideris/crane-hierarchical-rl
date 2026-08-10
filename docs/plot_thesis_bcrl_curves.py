@@ -151,10 +151,12 @@ def main():
     x_max = max(50, int(max(steps_ret.max() if len(steps_ret) else 0,
                             max((e[0] for e in eps), default=0)) * 1.15))
 
-    # BC-init references: parser values over the first iterations (pure/near-pure BC)
-    bc_eps = [e for e in eps if e[0] <= 2] or eps
-    bc_cycles = float(np.mean([e[2] for e in bc_eps]))
-    bc_fullclear = 100.0 * sum(1 for e in bc_eps if e[1] >= 99.999) / len(bc_eps)
+    # BC references = the P2c ARGMAX eval row (the citable bar), NOT early-window episodes.
+    # Early completed episodes are length-censored (only short episodes can finish by iter 2:
+    # measured 17.1 cycles/100% clears at it<=2 vs 27.0/83% at steady state FROM THE SAME
+    # FROZEN ACTOR during critic warmup), so they flatter BC and would fake an RL improvement.
+    bc_cycles = 23.09
+    bc_fullclear = 96.0
 
     fig = plt.figure(figsize=(3.5, 4.2))
     gs_grid = fig.add_gridspec(3, 2, height_ratios=[2.2, 1, 1], hspace=0.55, wspace=0.85)

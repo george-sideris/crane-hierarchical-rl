@@ -1638,6 +1638,28 @@ gym.register(
 )
 
 @configclass
+class CranePointCloudGazeEnvCfg_ScoringPPO_CC0(CranePointCloudGazeEnvCfg_ScoringPPO):
+    """Dose-response arm cycle_cost=0: completes the 0/1/5 grid with PPO-v2 (=1) and CC5 (=5).
+    Ablation row for the winner's recipe - shows what the per-cycle price contributes."""
+    cycle_cost: float = 0.0
+
+
+@configclass
+class CranePointCloudGazeEnvCfg_ScoringScratchCurr(CranePointCloudGazeEnvCfg_ScoringPPO):
+    """Scratch RL + pile-size curriculum: the ablation the from-scratch claim needs.
+
+    The thesis claims RL fails from scratch (~56% clearing) regardless of obs type; "did you
+    try a curriculum?" is the obvious committee rebuttal. This arm answers it on platform-v2:
+    25 logs until iter 80, then 50/100/200. Thresholds sized for the ScoringScratch runner
+    (16 steps/env x 40 envs = 640 cycles/iter, ~72 iters/day on the A40) so the full-pile
+    stage still gets ~4 days-equivalent by a Friday sweep. curriculum_steps_per_env MUST match
+    the runner's num_steps_per_env: the env-side divisor was a stale hardcoded 4 that advanced
+    schedules 2-4x too fast (fixed in crane_rl_env_gaze.py, 2026-08-10)."""
+    curriculum_schedule = [(0, 25), (80, 50), (160, 100), (240, 200)]
+    curriculum_steps_per_env: int = 16
+
+
+@configclass
 class CranePointCloudGazeEnvCfg_ScoringPPO_CC5(CranePointCloudGazeEnvCfg_ScoringPPO):
     """Dose-response arm of the cycle-cost experiment on the SCORING line: cycle_cost=5.
 
@@ -1670,6 +1692,26 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": CranePointCloudGazeEnvCfg_ScoringPPO_CC5,
         "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_ScoringV2",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-Gaze-Scoring-PPO-v2-CC0",
+    entry_point="crane_pointcloud_gaze_direct_env:CranePointCloudGazeDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudGazeEnvCfg_ScoringPPO_CC0,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_ScoringV2",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-Gaze-Scoring-Scratch-Curr-v0",
+    entry_point="crane_pointcloud_gaze_direct_env:CranePointCloudGazeDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudGazeEnvCfg_ScoringScratchCurr,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_ScoringScratch",
     },
 )
 
