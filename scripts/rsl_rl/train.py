@@ -416,7 +416,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"[INFO]: Optimizer overridden with encoder_lr_scale param groups (base_lr={base_lr})")
 
     # load the checkpoint
-    if args_cli.bc_checkpoint:
+    # --resume takes precedence over --bc_checkpoint: a resumed run must restore the FULL
+    # runner state (critic + optimizer + iteration count) from its own checkpoint, not re-init
+    # from the BC prior. Without this, relaunching a crashed fine-tune with the recipe's usual
+    # flags plus --resume silently threw away all training progress (the bc branch was an
+    # if/elif ahead of the resume branch).
+    if args_cli.bc_checkpoint and not agent_cfg.resume:
         # BC fine-tuning: load only actor weights, skip optimizer
         print(f"[INFO]: Loading BC checkpoint for fine-tuning: {args_cli.bc_checkpoint}")
         bc_ckpt = torch.load(args_cli.bc_checkpoint, map_location=agent_cfg.device, weights_only=False)
