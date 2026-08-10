@@ -334,8 +334,8 @@ NOTE
 sweep () {
   local every="${1:-50}" eps="${2:-10}"
   local rundir
-  rundir=$(ls -dt "$CRANE_DIR"/logs/rsl_rl/crane_pointcloud_gaze_scoring_ppo_v2/*/ 2>/dev/null | head -1)
-  [ -z "$rundir" ] && { echo "no crane_pointcloud_gaze_scoring_ppo_v2 run found"; return 1; }
+  rundir=$(ls -dt "$CRANE_DIR"/logs/rsl_rl/crane_pointcloud_gaze_scoring_ppo_v2*/*/ 2>/dev/null | head -1)
+  [ -z "$rundir" ] && { echo "no crane_pointcloud_gaze_scoring_ppo_v2* run found"; return 1; }
   say "argmax sweep over $rundir (every ${every} iters, ${eps} episodes each)"
   local ckpts
   ckpts=$(ls "${rundir}"model_*.pt 2>/dev/null | grep -v _bc_format)
@@ -370,7 +370,7 @@ fetch () {
   local tar="$PERSIST/cloud_${stamp}.tgz"
   say "packing artifacts"
   ( cd "$CRANE_DIR" && tar czf "$tar" \
-    logs/rsl_rl/crane_pointcloud_gaze_scoring_ppo_v2 \
+    logs/rsl_rl/crane_pointcloud_gaze_scoring_ppo_v2* \
     logs/reward_audit \
     logs/p3v2_train.log \
     logs/sim_eval/sweep_iter* \
