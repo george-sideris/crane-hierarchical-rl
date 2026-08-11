@@ -836,6 +836,35 @@ def plan_grid_yz_pattern_c(center_y_local: float, rows: int, layers: int, spacin
     
     return positions
 
+def plan_single_log_scatter(center_y_local: float, rows: int, layers: int, spacing_y: float, spacing_z: float,
+                            base_z: float, cap: int, row_y_jitter: float, layer_y_offset: float, seed: Optional[int]):
+    """Scatter `cap` isolated logs on the rack floor (no stacking), random positions each reset.
+
+    cap=1 is the from-scratch sanity check: one log lands at a random y anywhere in the rack
+    span, so the policy must localize and grasp it wherever it appears (proven learnable,
+    argmax 0% -> 100% clears by iter 40, 2026-08-10). cap>1 serves the scatter curriculum:
+    the logs are STRATIFIED into one slot each across the span, jittered inside their slot,
+    so they stay isolated (endgame-like states) and never spawn interpenetrated. z is fixed
+    to base_z (floor); x is the shared rack_world_x like every other pattern (logs lie along x).
+    """
+    import random
+    if seed is not None:
+        random.seed(seed)
+    n = max(int(cap), 0)
+    if n <= 0:
+        return []
+    full_span = (rows - 1) * spacing_y
+    half_span = 0.5 * full_span
+    slot = full_span / n
+    positions = []
+    for i in range(n):
+        lo = -half_span + i * slot
+        # keep ~half a lattice spacing to the slot edges so adjacent logs cannot overlap
+        margin = min(0.5 * spacing_y, 0.4 * slot)
+        yc = center_y_local + random.uniform(lo + margin, lo + slot - margin)
+        positions.append((yc, base_z))
+    return positions
+
 def plan_grid_yz_random(center_y_local: float, rows: int, layers: int, spacing_y: float, spacing_z: float,
                        base_z: float, cap: int, row_y_jitter: float, layer_y_offset: float, seed: Optional[int]):
     """Generate random log pile with varied spacing, jitter, and a HEIGHT PROFILE.
@@ -1250,6 +1279,16 @@ class CraneDirectEnvCfgFull(DirectRLEnvCfg):
     spacing_z: float = args_cli.spacing_z
     base_z: float = args_cli.base_z
     num_logs: int = args_cli.num_logs
+    # Sanity-check mode: spawn exactly one log per env at a random floor position in the
+    # rack each reset (overrides curriculum/DR log counts and pile patterns). Used to
+    # verify the RL pipeline can learn the trivial task before blaming task difficulty.
+    single_log_mode: bool = False
+    # Scatter curriculum: while the curriculum log count is <= scatter_max_logs, spawn that
+    # many ISOLATED floor logs (plan_single_log_scatter) instead of a stacked pile, so early
+    # rungs drill the endgame/localization skill a dense pile never teaches from scratch.
+    # Rungs above the threshold fall through to the normal pile patterns.
+    scatter_curriculum: bool = False
+    scatter_max_logs: int = 25
     rack_usd: str = args_cli.rack_usd
     # ZED stereo noise model on the raw camera cloud (sim2real). See get_pointcloud_world.
     zed_noise: bool = args_cli.zed_noise
@@ -1332,7 +1371,22 @@ class CraneDirectEnvCfgFull(DirectRLEnvCfg):
     # to clear in an order that keeps the remainder consolidated instead of scattered.
     # 0.0 = off (legacy). Try ~1.0 (about one log's worth of reward).
     cycle_cost: float = 0.0
+    # HISTORICAL TRAP (found 2026-08-11): cycle_cost was only ever subtracted on the FAILURE
+    # branch of _compute_grasp_reward, so successful cycles were never charged and the CC dose
+    # arms priced empty grabs, not time. With per-log pay and quality multipliers <= 1, splitting
+    # one big bite into several small perfect bites then RAISES total reward for free; episodes
+    # stretch into the 30-cycle cap and full clears collapse (observed on arm A: 96% -> 0% full
+    # clears while completed-episode reward rose). cycle_cost_on_success=True charges every
+    # cycle, making the objective the logs-per-cycle the comment above always claimed. Kept as
+    # an opt-in flag so existing rows stay reproducible.
+    cycle_cost_on_success: bool = False
     clearing_bonus_scale: float = 0.0
+    # Compute the clearing fraction for the bonus as (starting - remaining - knocked_off) /
+    # starting instead of 1 - remaining/starting. _count_logs_in_rack cannot distinguish
+    # deposited from knocked-off (both live in _deposited_logs), termination fires on a
+    # knocked-clean rack, and arm A's knocked-off rate grew 0.69 -> 3.42/episode as it
+    # degraded - an unguarded full-clear bonus would pay for shoving logs off the rack.
+    clearing_bonus_exclude_knocked: bool = False
     # Proportional clearing bonus: True = bonus proportional to % cleared, False = binary (100% only)
     proportional_clearing_bonus: bool = False
     clearing_bonus_threshold: float = 1.0  # Min clearing fraction for binary bonus (1.0 = 100%, 0.95 = 95%)
@@ -1797,6 +1851,12 @@ class CraneDirectEnvFull(DirectRLEnv):
         self._episode_successful_grasps = torch.zeros(self.num_envs, device=self.device, dtype=torch.int32)
         self._episode_failed_grasps = torch.zeros(self.num_envs, device=self.device, dtype=torch.int32)
         self._episode_return = torch.zeros(self.num_envs, device=self.device, dtype=torch.float32)
+        # RL-view episode return: accumulates self.reward_buf verbatim each step, so the logged
+        # value reconciles with rsl_rl's Train/mean_reward by construction. _episode_return is
+        # accumulated inside the grasp block only and misses e.g. safety-timeout penalties
+        # (observed 1.8x apart on 2026-08-10); keep both, cite this one.
+        self._episode_rl_return = torch.zeros(self.num_envs, device=self.device, dtype=torch.float32)
+        self._completed_ep_rl_returns = collections.deque(maxlen=100)
         self._episode_total_logs_grasped = torch.zeros(self.num_envs, device=self.device, dtype=torch.int32)
         self._episode_alignment_sum_weighted = torch.zeros(self.num_envs, device=self.device, dtype=torch.float32)  # Sum of (logs * alignment)
         self._episode_stability_sum_weighted = torch.zeros(self.num_envs, device=self.device, dtype=torch.float32)  # Sum of (logs * stability)
@@ -2034,17 +2094,24 @@ class CraneDirectEnvFull(DirectRLEnv):
         clearing_bonus_scale = getattr(self.cfg, 'clearing_bonus_scale', 0.0)
         if clearing_bonus_scale > 0.0:
             proportional = getattr(self.cfg, 'proportional_clearing_bonus', False)
+            exclude_knocked = getattr(self.cfg, 'clearing_bonus_exclude_knocked', False)
             for i in range(self.num_envs):
                 if terminated[i]:
+                    # Knock-off guard: _count_logs_in_rack cannot tell deposited from knocked
+                    # off (both are in _deposited_logs) and termination fires on a knocked-clean
+                    # rack, so the naive clearing_pct pays for shoving logs off the rack.
+                    # _logs_knocked_off holds the exact episode total here (incremented before
+                    # termination, zeroed only in _reset_idx after this block).
+                    knocked = int(self._logs_knocked_off[i]) if exclude_knocked else 0
                     if proportional:
                         starting_logs = int(self._per_env_log_counts[i])
                         remaining = self._count_logs_in_rack(i)
-                        clearing_pct = 1.0 - (remaining / max(starting_logs, 1))
+                        clearing_pct = max(0.0, 1.0 - ((remaining + knocked) / max(starting_logs, 1)))
                         bonus = clearing_pct * clearing_bonus_scale
                     else:
                         starting_logs = int(self._per_env_log_counts[i])
                         remaining = self._count_logs_in_rack(i)
-                        clearing_pct = 1.0 - (remaining / max(starting_logs, 1))
+                        clearing_pct = max(0.0, 1.0 - ((remaining + knocked) / max(starting_logs, 1)))
                         tiered = getattr(self.cfg, 'clearing_bonus_thresholds', None)
                         if tiered is not None:
                             # Tiered: +scale for each threshold crossed
@@ -2057,6 +2124,9 @@ class CraneDirectEnvFull(DirectRLEnv):
                     self._episode_return[i] += bonus
                     self._last_clearing_bonus[i] = bonus
 
+        # RL-view return accumulation: reward_buf is final here (grasp reward + terminal bonus).
+        self._episode_rl_return += self.reward_buf
+
         truncated = torch.zeros_like(terminated)
 
         # Reset terminated envs
@@ -2064,6 +2134,8 @@ class CraneDirectEnvFull(DirectRLEnv):
         if len(reset_ids) > 0:
             # Cache completed-episode returns before reset zeroes them
             self._completed_ep_returns.extend(self._episode_return[reset_ids].tolist())
+            self._completed_ep_rl_returns.extend(self._episode_rl_return[reset_ids].tolist())
+            self._episode_rl_return[reset_ids] = 0.0
             # Record true clearing (1 - remaining/starting) BEFORE reset repopulates the rack.
             for i in reset_ids.tolist():
                 starting = max(int(self._per_env_log_counts[i]), 1)
@@ -3176,8 +3248,10 @@ class CraneDirectEnvFull(DirectRLEnv):
             env_o = self.scene.env_origins[env_id]
             rack_world_x = env_o[0] + self.cfg.rack_x
 
-            # Log count: curriculum > DR > default
-            if self.cfg.curriculum_schedule is not None:
+            # Log count: single-log sanity mode > curriculum > DR > default
+            if getattr(self.cfg, "single_log_mode", False):
+                per_env_target = 1
+            elif self.cfg.curriculum_schedule is not None:
                 fallback = self.cfg.curriculum_schedule[0][1] if self.cfg.curriculum_schedule else self.cfg.num_logs
                 per_env_target = int(min(per_env_cap, getattr(self, '_curriculum_active_logs', fallback)))
             elif self.cfg.enable_domain_randomization:
@@ -3188,7 +3262,14 @@ class CraneDirectEnvFull(DirectRLEnv):
             self._per_env_log_counts[env_id] = per_env_target
 
             # Select pattern function
-            if getattr(args_cli, "profile_piles", False):
+            if getattr(self.cfg, "single_log_mode", False):
+                # One isolated log at a random floor position, re-rolled every reset
+                pattern_func = plan_single_log_scatter
+            elif (getattr(self.cfg, "scatter_curriculum", False)
+                  and per_env_target <= int(getattr(self.cfg, "scatter_max_logs", 25))):
+                # Scatter-curriculum rung: isolated floor logs instead of a stacked pile
+                pattern_func = plan_single_log_scatter
+            elif getattr(args_cli, "profile_piles", False):
                 # Randomized height profiles on a stable hex lattice (BC y-localization data).
                 pattern_func = plan_grid_yz_hex_profile
             elif randomize_patterns:
@@ -3520,11 +3601,20 @@ class CraneDirectEnvFull(DirectRLEnv):
             # Terminate episode if:
             # 1. All logs deposited (200 logs)
             # 2. 30 cycles completed
+            # In single-log / scatter-curriculum mode terminate as soon as the spawned logs
+            # are cleared; otherwise a 1-cycle task would drag through max_grasp_cycles empty
+            # cycles. Regular tasks keep the historical 200 threshold untouched.
+            count_gated = (getattr(self.cfg, "single_log_mode", False)
+                           or getattr(self.cfg, "scatter_curriculum", False))
             for i in range(self.num_envs):
                 logs_deposited = len(self._deposited_logs[i])
                 cycles = self._cycle_count[i].item()
 
-                if logs_deposited >= 200 or cycles >= args_cli.max_grasp_cycles:
+                if count_gated and hasattr(self, '_per_env_log_counts'):
+                    deposit_target = int(self._per_env_log_counts[i])
+                else:
+                    deposit_target = 200
+                if logs_deposited >= deposit_target or cycles >= args_cli.max_grasp_cycles:
                     terminated[i] = True
 
             time_out = torch.zeros_like(terminated)
@@ -3606,6 +3696,8 @@ class CraneDirectEnvFull(DirectRLEnv):
                 "alignment": alignment,
                 "stability": stability,
                 "episode_return": episode_return,
+                "episode_return_rl": (statistics.mean(self._completed_ep_rl_returns)
+                                      if len(self._completed_ep_rl_returns) > 0 else 0.0),
                 "pile_clearing_pct": pile_clearing_pct,
 
                 # Logs knocked out of bounds (tracked separately; not penalized by default)
@@ -6010,6 +6102,13 @@ class CraneDirectEnvFull(DirectRLEnv):
                 total_reward = efficiency * align_factor * stability_factor
 
         total_reward += knocked_off_penalty
+
+        # Charge the per-cycle time cost on SUCCESSFUL cycles too (cfg.cycle_cost_on_success).
+        # Historically only the failure branch above subtracted cycle_cost, so splitting one
+        # large bite into several small high-quality bites was free and reward-optimal; see the
+        # cfg comment. Opt-in to keep legacy rows reproducible.
+        if getattr(self.cfg, "cycle_cost_on_success", False):
+            total_reward -= float(getattr(self.cfg, "cycle_cost", 0.0) or 0.0)
 
         if getattr(self.cfg, "debug_reward", False):
             print(

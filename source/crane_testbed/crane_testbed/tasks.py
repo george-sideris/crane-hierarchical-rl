@@ -1660,16 +1660,43 @@ class CranePointCloudGazeEnvCfg_ScoringScratchCurr(CranePointCloudGazeEnvCfg_Sco
 
 
 @configclass
+class CranePointCloudGazeEnvCfg_ScoringPPO_CB(CranePointCloudGazeEnvCfg_ScoringPPO):
+    """CB = the split-and-stretch fix (designed 2026-08-11 from arm A's collapse).
+
+    Diagnosis: cycle_cost was only charged on FAILED cycles (see _compute_grasp_reward), so with
+    per-log pay and quality multipliers <= 1, splitting one large bite into several small perfect
+    bites raised total reward for free; episodes stretched into the 30-cycle cap and full clears
+    fell 96% -> 0% while completed-episode reward ROSE (arm A, iters 25-120). The CC arms priced
+    empty grabs only, which is why CC5 resisted partially (14% full) without fixing it.
+
+    Two coupled changes, deliberately shipped together as the fix candidate (component ablations
+    can run post-deployment on freed pods):
+      1. cycle_cost=2.0 charged on EVERY cycle (cycle_cost_on_success=True): splitting an 18-log
+         bite into 3 costs 4 extra vs a quality gain of ~18*(1.0-0.85)=2.7, so splitting loses.
+      2. Terminal full-clear bonus 150 (threshold 1.0), computed on knock-adjusted clearing
+         (clearing_bonus_exclude_knocked=True): finishing a 200-log pile in ~16 cycles nets
+         roughly gross - 32 + 150, strictly dominating any cap-length episode; knocked-off logs
+         (which grew 0.69 -> 3.42/ep as A degraded) cannot substitute for clearing.
+
+    NOTE the paper-era conclusion "reward shaping did not fix the plateau" concerned FROM-SCRATCH
+    exploration; this targets a different failure (completion economics of a competent policy)."""
+    cycle_cost: float = 2.0
+    cycle_cost_on_success: bool = True
+    clearing_bonus_scale: float = 150.0
+    clearing_bonus_threshold: float = 1.0
+    clearing_bonus_exclude_knocked: bool = True
+
+
+@configclass
 class CranePointCloudGazeEnvCfg_ScoringPPO_CC5(CranePointCloudGazeEnvCfg_ScoringPPO):
     """Dose-response arm of the cycle-cost experiment on the SCORING line: cycle_cost=5.
 
-    Same rationale as the CosSin CC5 arm (2026-08-03): at cycle_cost=1 the per-cycle penalty
-    is too small a share of episode return to steer selection. On this line the live A40 run
-    (2026-08-09, 40 envs) logged ~10.9 net reward per cycle, i.e. gross ~11.9, so cost 1 is
-    ~8% of a mean grab. At 5 a mean 18-log grab still nets ~+7 but an empty grab nets -5 and
-    a 1-2 log grab goes negative: strong pressure on exactly the endgame selection where the
-    2026-08-03 field baselines concentrated their failures. Registered as a SEPARATE task so
-    PPO-v2 rows stay comparable."""
+    CORRECTED 2026-08-11: cycle_cost is charged on the FAILURE branch only (successful cycles
+    were never charged before cycle_cost_on_success existed), so this arm prices EMPTY grabs at
+    -6 (-1 failure -5 cost) and does NOT price time on successful cycles. The original docstring
+    claimed a mean 18-log grab "nets ~+7" at cost 5; in reality it pays full gross (~15-18).
+    Still a valid dose arm for the empty-grab penalty; not a time-pricing arm. Registered as a
+    SEPARATE task so PPO-v2 rows stay comparable."""
     cycle_cost: float = 5.0
 
 
@@ -1681,6 +1708,16 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": CranePointCloudGazeEnvCfg_ScoringPPO,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_ScoringV2",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-Gaze-Scoring-PPO-v2-CB",
+    entry_point="crane_pointcloud_gaze_direct_env:CranePointCloudGazeDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudGazeEnvCfg_ScoringPPO_CB,
         "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_ScoringV2",
     },
 )
@@ -1711,6 +1748,83 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": CranePointCloudGazeEnvCfg_ScoringScratchCurr,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_ScoringScratch",
+    },
+)
+
+
+# --- Single-log sanity check (implementation test for from-scratch RL) ---
+# One log spawns at a random floor position in the rack every reset. If scratch PPO
+# cannot learn to pick it up, the pipeline (obs/action/reward wiring) is broken and
+# the "RL fails from scratch on the full pile" result cannot be attributed to task
+# difficulty. Two obs levels: state (no perception at all, purest wiring check) and
+# the scoring point-cloud line (adds the perception stack on top).
+
+@configclass
+class CraneDirectEnvCfg_Full_SingleLog(CraneDirectEnvCfg_Full_v0):
+    """State-obs single-log sanity check: top-N log obs, no cameras, from scratch."""
+    single_log_mode: bool = True
+
+
+@configclass
+class CranePointCloudGazeEnvCfg_ScoringScratchSingleLog(CranePointCloudGazeEnvCfg_ScoringPPO):
+    """Scoring-line single-log sanity check, from scratch.
+
+    cycle_cost=0: at cycle_cost=1 a successful 1-log grab nets roughly zero return
+    (the per-cycle price cancels the single-log payoff), which would flatten the very
+    gradient this check is supposed to expose. Reward here must be pure grasp/deposit
+    success."""
+    single_log_mode: bool = True
+    cycle_cost: float = 0.0
+
+
+gym.register(
+    id="Isaac-Crane-Full-MR-SingleLog-v0",
+    entry_point="crane_rl_env_full:CraneDirectEnvFull",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CraneDirectEnvCfg_Full_SingleLog,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_Full",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-Gaze-Scoring-Scratch-SingleLog-v0",
+    entry_point="crane_pointcloud_gaze_direct_env:CranePointCloudGazeDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudGazeEnvCfg_ScoringScratchSingleLog,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_ScoringScratch",
+    },
+)
+
+
+@configclass
+class CranePointCloudGazeEnvCfg_ScoringScratchScatterCurr(CranePointCloudGazeEnvCfg_ScoringPPO):
+    """Pure-RL scatter curriculum: 1 -> 5 -> 25 isolated floor logs -> full 200-log pile.
+
+    The single-log sanity run (2026-08-10, pod gkfxpmgd4vrg8y) showed scratch PPO learns the
+    isolated-log endgame skill fast (argmax 0% -> 100% full clears by iter 40) while dense-pile
+    scratch training never visits those states. This arm feeds the endgame states FIRST, then
+    grows the pile. Differs from ScoringScratchCurr (small PILES first) in that early rungs are
+    SCATTERED singles, i.e. actual endgame geometry, not miniature piles.
+    cycle_cost=0: on the 1-log rung a cost of 1 cancels the entire payoff of a successful grab
+    and inverts the gradient; this arm is the existence proof for pure-RL clearing, not a
+    cycle-efficiency arm. Thresholds sized for ~640-cycle iterations (~14 min on the A40):
+    the 1-log rung gets 40 iters (proven sufficient), then 5/25, full pile from iter 180.
+    """
+    scatter_curriculum: bool = True
+    curriculum_schedule = [(0, 1), (40, 5), (100, 25), (180, 200)]
+    curriculum_steps_per_env: int = 16
+    cycle_cost: float = 0.0
+
+
+gym.register(
+    id="Isaac-Crane-PointCloud-Gaze-Scoring-Scratch-ScatterCurr-v0",
+    entry_point="crane_pointcloud_gaze_direct_env:CranePointCloudGazeDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudGazeEnvCfg_ScoringScratchScatterCurr,
         "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_ScoringScratch",
     },
 )
