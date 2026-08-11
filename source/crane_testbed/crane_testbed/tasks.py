@@ -1742,6 +1742,63 @@ gym.register(
     },
 )
 
+@configclass
+class CranePointCloudGazeEnvCfg_ScoringScratchMN(CranePointCloudGazeEnvCfg_ScoringPPO):
+    """Scratch reward ablation MN: multiplicative NORMALIZED (efficiency = logs/available,
+    scale 10). Scoring-line successor to the paper's Full-MN row - the paper measured reward
+    ablations where scratch never cleared (Gaussian line, ~56% plateau); on the scoring head
+    scratch works, so reward structure is measurable for the first time. Differs from
+    Scratch-v0 (=F, multiplicative raw) in normalize_reward only."""
+    normalize_reward: bool = True
+
+
+@configclass
+class CranePointCloudGazeEnvCfg_ScoringScratchAN(CranePointCloudGazeEnvCfg_ScoringPPO):
+    """Scratch reward ablation AN: ADDITIVE normalized formula (paper's Full-AN successor)."""
+    reward_formula: str = "additive"
+    normalize_reward: bool = True
+
+
+@configclass
+class CranePointCloudGazeEnvCfg_ScoringScratchNQ(CranePointCloudGazeEnvCfg_ScoringPPO):
+    """Scratch reward ablation NQ: NO quality terms (alignment/stability multipliers off,
+    reward = raw log count minus failure penalties). The paper's "simplified reward
+    landscape" row; also probes whether the quality-multiplier splitting incentive
+    (found 2026-08-11) matters when there is no BC prior to exploit it."""
+    use_alignment_reward: bool = False
+    use_stability_reward: bool = False
+
+
+gym.register(
+    id="Isaac-Crane-PointCloud-Gaze-Scoring-Scratch-MN-v0",
+    entry_point="crane_pointcloud_gaze_direct_env:CranePointCloudGazeDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudGazeEnvCfg_ScoringScratchMN,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_ScoringScratch",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-Gaze-Scoring-Scratch-AN-v0",
+    entry_point="crane_pointcloud_gaze_direct_env:CranePointCloudGazeDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudGazeEnvCfg_ScoringScratchAN,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_ScoringScratch",
+    },
+)
+
+gym.register(
+    id="Isaac-Crane-PointCloud-Gaze-Scoring-Scratch-NQ-v0",
+    entry_point="crane_pointcloud_gaze_direct_env:CranePointCloudGazeDirectEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CranePointCloudGazeEnvCfg_ScoringScratchNQ,
+        "rsl_rl_cfg_entry_point": "crane_testbed.agents.rsl_rl_cfg:CranePPORunnerCfg_ScoringScratch",
+    },
+)
+
 gym.register(
     id="Isaac-Crane-PointCloud-Gaze-Scoring-Scratch-Curr-v0",
     entry_point="crane_pointcloud_gaze_direct_env:CranePointCloudGazeDirectEnv",
