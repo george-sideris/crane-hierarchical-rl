@@ -351,23 +351,34 @@ def save_raw_pipeline_viz(pipeline_data, x, y, z, yaw, step_idx, viz_dir,
     base_pts = pipeline_data["base_points"]
     log_pts = pipeline_data.get("log_base_points", np.zeros((0, 3)))
 
-    # Background: all raw points as faint gray
+    # The height-coloured layer used to be the log-only cloud drawn over faint gray raw
+    # points. The gaze pipeline has no log segmentation, so that layer comes back empty and
+    # the panel rendered flat gray. Fall back to colouring the raw cloud by height, which is
+    # what the panel is actually showing in the raw-input configuration.
+    lp = np.zeros((0, 3))
+    if len(log_pts) > 0:
+        m = np.any(log_pts != 0.0, axis=1)
+        lp = log_pts[m] if m.any() else log_pts
+
+    bg = np.zeros((0, 3))
     if len(base_pts) > 0:
-        mask = np.any(base_pts != 0.0, axis=1)
-        bg = base_pts[mask] if mask.any() else base_pts
+        m = np.any(base_pts != 0.0, axis=1)
+        bg = base_pts[m] if m.any() else base_pts
+
+    if len(lp) > 0:
+        # segmented layer available: gray context underneath, logs in viridis
         if len(bg) > 0:
             ax_pcd.scatter(bg[:, 1], bg[:, 0], c='#aaaaaa', s=0.3, alpha=0.3, rasterized=True)
+        colour_pts, psize, palpha = lp, 1.0, 0.7
+    else:
+        colour_pts, psize, palpha = bg, 0.6, 0.6
 
-    # Foreground: log-only points in viridis
-    if len(log_pts) > 0:
-        mask = np.any(log_pts != 0.0, axis=1)
-        lp = log_pts[mask] if mask.any() else log_pts
-        if len(lp) > 0:
-            sc = ax_pcd.scatter(lp[:, 1], lp[:, 0], c=lp[:, 2], cmap='viridis',
-                                s=1.0, alpha=0.7, rasterized=True)
-            cb = plt.colorbar(sc, ax=ax_pcd, fraction=0.046, pad=0.04)
-            cb.ax.tick_params(labelsize=5)
-            cb.set_label('Z (m)', fontsize=6)
+    if len(colour_pts) > 0:
+        sc = ax_pcd.scatter(colour_pts[:, 1], colour_pts[:, 0], c=colour_pts[:, 2],
+                            cmap='viridis', s=psize, alpha=palpha, rasterized=True)
+        cb = plt.colorbar(sc, ax=ax_pcd, fraction=0.046, pad=0.04)
+        cb.ax.tick_params(labelsize=5)
+        cb.set_label('Z (m)', fontsize=6)
     if bounds_min is not None and bounds_max is not None:
         from matplotlib.patches import Rectangle
         bw = bounds_max[1] - bounds_min[1]
@@ -506,17 +517,31 @@ def _render_rgb_panel(ax, d, show_title=False, panel_label='(a)',
         ax.set_ylabel(row_label, fontsize=8, fontweight='bold', rotation=90, labelpad=8)
 
 
+def _attach_colorbar(ax, mappable, label):
+    """Add a colourbar that matches the height of the axes as actually drawn.
+
+    colorbar(ax=..., fraction=...) sizes itself from the axes' cell, not from the box left
+    after set_aspect('equal') shrinks it. Every panel here is wide and shallow, so that put
+    colourbars two to three times taller than the panel they annotate. The axes_grid1
+    divider tracks the aspect-constrained position instead.
+    """
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+    cax = make_axes_locatable(ax).append_axes("right", size="2.5%", pad=0.05)
+    cb = plt.colorbar(mappable, cax=cax)
+    cb.ax.tick_params(labelsize=5)
+    cb.set_label(label, fontsize=6)
+    return cb
+
+
 def _render_depth_panel(ax, d, depth_range, show_title=False, panel_label='(b)'):
     """Render raw depth panel on the given axes."""
-    import matplotlib.pyplot as plt
     depth_img = d["depth"].copy()
     depth_clipped = np.clip(depth_img, depth_range[0], depth_range[1])
     depth_clipped[np.isinf(depth_img)] = np.nan
     im_d = ax.imshow(depth_clipped, cmap='viridis',
                      vmin=depth_range[0], vmax=depth_range[1])
-    cb_d = plt.colorbar(im_d, ax=ax, fraction=0.046, pad=0.04)
-    cb_d.ax.tick_params(labelsize=5)
-    cb_d.set_label('depth (m)', fontsize=6)
+    _attach_colorbar(ax, im_d, 'depth (m)')
     if show_title:
         ax.set_title(f'{panel_label} Raw depth', fontsize=9, fontweight='bold')
     ax.set_xticks([])
@@ -524,49 +549,58 @@ def _render_depth_panel(ax, d, depth_range, show_title=False, panel_label='(b)')
 
 
 def _render_pcd_panel(ax, d, bounds_min, bounds_max, show_title=False,
-                      panel_label='(c)'):
-    """Render 3D PCD (base frame, top-down) panel on the given axes."""
+                      panel_label='(c)', zlim=None):
+    """Render 3D PCD (base frame, top-down) panel on the given axes.
+
+    Colours the whole raw cloud by height, floor included. The earlier version drew the raw
+    cloud as a 0.3pt gray backdrop under a height-coloured log-segmentation layer, which had
+    two failure modes in the thesis figure: the gaze pipeline carries no segmentation, so the
+    coloured layer was sometimes empty and the panel rendered flat gray; and where the layer
+    was present, the raw cloud (the rack floor especially) was invisible once the figure was
+    scaled to \\linewidth, so panel (c) looked like it had lost the floor that panel (d)
+    plainly showed. Pass zlim to share a colour scale with the FPS panel, without which the
+    two panels autoscale independently and put the same scene on two different scales.
+    """
     import matplotlib.pyplot as plt
     base_pts = d["base_points"]
-    log_pts = d.get("log_base_points", np.zeros((0, 3)))
     sc_pcd = None
 
-    # Background: all raw points as faint gray
+    bg = np.zeros((0, 3))
     if len(base_pts) > 0:
-        mask = np.any(base_pts != 0.0, axis=1)
-        bg = base_pts[mask] if mask.any() else base_pts
-        if len(bg) > 0:
-            ax.scatter(bg[:, 1], bg[:, 0], c='#aaaaaa', s=0.3, alpha=0.3, rasterized=True)
+        m = np.any(base_pts != 0.0, axis=1)
+        bg = base_pts[m] if m.any() else base_pts
 
-    # Foreground: log-only points in viridis
-    if len(log_pts) > 0:
-        mask = np.any(log_pts != 0.0, axis=1)
-        lp = log_pts[mask] if mask.any() else log_pts
-        if len(lp) > 0:
-            sc_pcd = ax.scatter(lp[:, 1], lp[:, 0], c=lp[:, 2], cmap='viridis',
-                                s=1.0, alpha=0.7, rasterized=True)
+    if len(bg) > 0:
+        kw = {} if zlim is None else {"vmin": zlim[0], "vmax": zlim[1]}
+        sc_pcd = ax.scatter(bg[:, 1], bg[:, 0], c=bg[:, 2],
+                            cmap='viridis', s=0.6, alpha=0.6, rasterized=True, **kw)
 
     if bounds_min is not None and bounds_max is not None:
         ax.set_xlim(bounds_min[1] - 0.5, bounds_max[1] + 0.5)
         ax.set_ylim(bounds_max[0] + 0.5, bounds_min[0] - 0.5)
     if show_title:
         ax.set_title(f'{panel_label} 3D points', fontsize=9, fontweight='bold')
-    if sc_pcd is not None:
-        cb_pcd = plt.colorbar(sc_pcd, ax=ax, fraction=0.046, pad=0.04)
-        cb_pcd.ax.tick_params(labelsize=5)
-        cb_pcd.set_label('Z (m)', fontsize=6)
     ax.set_aspect('equal')
+    if sc_pcd is not None:
+        _attach_colorbar(ax, sc_pcd, 'Z (m)')
     ax.tick_params(labelsize=5)
+    # Base-frame axes are swapped for the top-down view: horizontal is y, vertical is x.
+    # Without labels the reader cannot tell which crane axis is which.
+    ax.set_xlabel('y (m)', fontsize=6)
+    ax.set_ylabel('x (m)', fontsize=6)
 
 
 def _render_fps_panel(ax, d, bounds_min, bounds_max, show_title=False,
-                      panel_label='(d)'):
-    """Render FPS PCD + grapple prediction panel on the given axes."""
+                      panel_label='(d)', zlim=None):
+    """Render FPS PCD + grapple prediction panel on the given axes.
+
+    Every resampled point is height-coloured, floor included, on the same scale as the raw
+    cloud panel when zlim is given.
+    """
     import matplotlib.pyplot as plt
     from matplotlib.patches import Rectangle
 
     fps_pts = d["fps_points"]
-    log_pts = d.get("log_base_points", np.zeros((0, 3)))
     logs_grasped = d.get("logs_grasped")
     alignment = d.get("alignment")
     success = logs_grasped is not None and logs_grasped > 0
@@ -575,27 +609,11 @@ def _render_fps_panel(ax, d, bounds_min, bounds_max, show_title=False,
     mask = np.any(fps_pts != 0.0, axis=1)
     pts = fps_pts[mask] if mask.any() else fps_pts
 
-    # Compute floor threshold from log points
-    if len(log_pts) > 0:
-        valid_log = log_pts[np.any(log_pts != 0.0, axis=1)]
-        z_floor_thresh = valid_log[:, 2].min() - 0.05 if len(valid_log) > 0 else -999
-    else:
-        z_floor_thresh = -999
-
     sc_fps = None
     if len(pts) > 0:
-        floor_mask = pts[:, 2] < z_floor_thresh
-        log_mask = ~floor_mask
-
-        # Floor points: faint gray
-        if floor_mask.any():
-            ax.scatter(pts[floor_mask, 1], pts[floor_mask, 0],
-                       c='#aaaaaa', s=0.5, alpha=0.25, rasterized=True)
-        # Log-height points: viridis
-        if log_mask.any():
-            sc_fps = ax.scatter(pts[log_mask, 1], pts[log_mask, 0],
-                                c=pts[log_mask, 2], cmap='viridis',
-                                s=2.0, alpha=0.7, rasterized=True)
+        kw = {} if zlim is None else {"vmin": zlim[0], "vmax": zlim[1]}
+        sc_fps = ax.scatter(pts[:, 1], pts[:, 0], c=pts[:, 2], cmap='viridis',
+                            s=2.0, alpha=0.7, rasterized=True, **kw)
 
     draw_grapple_footprint(ax, y, x, np.pi / 2 - yaw, width=1.5, length=0.5,
                            success=success, alpha=0.25)
@@ -632,12 +650,13 @@ def _render_fps_panel(ax, d, bounds_min, bounds_max, show_title=False,
         ax.set_ylim(bounds_max[0] + 0.5, bounds_min[0] - 0.5)
     if show_title:
         ax.set_title(f'{panel_label} FPS + prediction', fontsize=9, fontweight='bold')
-    if sc_fps is not None:
-        cb_fps = plt.colorbar(sc_fps, ax=ax, fraction=0.046, pad=0.04)
-        cb_fps.ax.tick_params(labelsize=5)
-        cb_fps.set_label('Z (m)', fontsize=6)
     ax.set_aspect('equal')
+    if sc_fps is not None:
+        _attach_colorbar(ax, sc_fps, 'Z (m)')
     ax.tick_params(labelsize=5)
+    # Same swapped base-frame axes as the raw cloud panel.
+    ax.set_xlabel('y (m)', fontsize=6)
+    ax.set_ylabel('x (m)', fontsize=6)
 
 
 # ---------------------------------------------------------------------------
@@ -880,6 +899,51 @@ def pick_early_late_grasps(grasp_data_list, rng=None):
 # Quadrant variants (2x2, \columnwidth = 3.5 in)
 # ---------------------------------------------------------------------------
 
+def _valid(pts):
+    """Drop the zero padding the fixed-size cloud buffers carry."""
+    if pts is None or len(pts) == 0:
+        return np.zeros((0, 3))
+    m = np.any(pts != 0.0, axis=1)
+    return pts[m] if m.any() else pts
+
+
+def _shared_zlim(d):
+    """Height range covering both cloud panels, or None if there is nothing to plot."""
+    zs = [p[:, 2] for p in (_valid(d.get("base_points")), _valid(d.get("fps_points")))
+          if len(p) > 0]
+    if not zs:
+        return None
+    lo = min(float(z.min()) for z in zs)
+    hi = max(float(z.max()) for z in zs)
+    return (lo, hi) if hi > lo else None
+
+
+def _dump_cloud_npz(d, episode_idx, viz_dir, suffix, bounds_min, bounds_max):
+    """Save the clouds behind this figure so it can be re-rendered without re-running sim.
+
+    The February pipeline figure could not be improved because its paper_viz directory was
+    deleted and only the PNG survived, so every restyle needed a fresh simulator run. The
+    npz keeps the raw and resampled clouds, the crop box and the commanded grasp, which is
+    everything the Open3D renderer on the host needs.
+    """
+    try:
+        out = os.path.join(viz_dir, f"episode_{episode_idx:03d}_cloud{suffix}.npz")
+        np.savez_compressed(
+            out,
+            base_points=_valid(d.get("base_points")),
+            fps_points=_valid(d.get("fps_points")),
+            bounds_min=np.asarray(bounds_min if bounds_min is not None else []),
+            bounds_max=np.asarray(bounds_max if bounds_max is not None else []),
+            target=np.array([d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0)], dtype=float),
+            yaw=float(d.get("yaw", 0.0)),
+            logs_grasped=int(d.get("logs_grasped") or 0),
+            step_idx=int(d.get("step_idx", 0)),
+        )
+        print(f"[PaperViz] Saved clouds: {out}")
+    except Exception as exc:                      # never let viz bookkeeping kill an eval
+        print(f"[PaperViz] cloud dump failed: {exc}")
+
+
 def save_paper_pipeline_quadrant_single(grasp_data_list, episode_idx, viz_dir,
                                          depth_range=(1.0, 10.0),
                                          bounds_min=None, bounds_max=None,
@@ -895,17 +959,26 @@ def save_paper_pipeline_quadrant_single(grasp_data_list, episode_idx, viz_dir,
 
     d = grasp_data_list[0]
 
-    fig = plt.figure(figsize=(9, 6.7))
-    gs = gridspec.GridSpec(2, 2, figure=fig, wspace=0.32, hspace=0.25)
+    # One height scale across both cloud panels, taken from the raw cloud since it is the
+    # superset. Independent autoscaling put the same scene on two different colour scales.
+    zlim = _shared_zlim(d)
+    _dump_cloud_npz(d, episode_idx, viz_dir, suffix, bounds_min, bounds_max)
+
+    # Both rows hold wide, shallow content (the ZED frames are 8:3, the rack clouds about
+    # 3:1 once set_aspect('equal') is honoured). A taller figure does not make the panels
+    # bigger, it just pads dead space between the rows and stretches the colourbars past
+    # the axes they belong to, which is what the earlier 9x6.7 canvas did.
+    fig = plt.figure(figsize=(9, 3.9))
+    gs = gridspec.GridSpec(2, 2, figure=fig, wspace=0.30, hspace=0.42)
 
     _render_rgb_panel(fig.add_subplot(gs[0, 0]), d,
                       show_title=True, panel_label='(a)')
     _render_depth_panel(fig.add_subplot(gs[0, 1]), d, depth_range,
                         show_title=True, panel_label='(b)')
     _render_pcd_panel(fig.add_subplot(gs[1, 0]), d, bounds_min, bounds_max,
-                      show_title=True, panel_label='(c)')
+                      show_title=True, panel_label='(c)', zlim=zlim)
     _render_fps_panel(fig.add_subplot(gs[1, 1]), d, bounds_min, bounds_max,
-                      show_title=True, panel_label='(d)')
+                      show_title=True, panel_label='(d)', zlim=zlim)
 
     out_path = os.path.join(viz_dir, f"episode_{episode_idx:03d}_pipeline{suffix}.png")
     fig.savefig(out_path, dpi=180, bbox_inches='tight', facecolor='white')
