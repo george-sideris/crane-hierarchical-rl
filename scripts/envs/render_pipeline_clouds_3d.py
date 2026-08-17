@@ -66,10 +66,10 @@ def render(pts, bmin, bmax, zlim, target=None, yaw=None, point_size=3.2):
         sc.add_geometry("box", box, ml)
 
     if target is not None:
-        # The commanded z sits a digging depth BELOW the surface, so the marker is inside the
-        # pile by construction and a small sphere is simply buried, the more so at the point
-        # sizes this figure needs. A stem dropped from clear air marks the same target where
-        # nothing can occlude it, and the sphere still shows the depth it commands.
+        # The commanded z sits below the surface, so the marker is inside the pile by
+        # construction. An earlier version carried a stem up into clear air to escape the
+        # occlusion, which a black marker in a cloud this sparse does not need: the sphere
+        # and the yaw bar read through the gaps between points on their own.
         x, y, z = target
         # Black, not red: the height ramp ends in red, so a red marker is indistinguishable
         # from the rack posts and the pile crest it is drawn against. Nothing in the ramp is
@@ -78,12 +78,6 @@ def render(pts, bmin, bmax, zlim, target=None, yaw=None, point_size=3.2):
         s = o3d.geometry.TriangleMesh.create_sphere(radius=0.20)
         s.translate([x, y, z]); s.paint_uniform_color(col); s.compute_vertex_normals()
         sc.add_geometry("tgt", s, mm)
-        top = float(max(pts[:, 2].max(), z) + 0.3)
-        stem = o3d.geometry.LineSet(
-            points=o3d.utility.Vector3dVector([[x, y, top], [x, y, z]]),
-            lines=o3d.utility.Vector2iVector([[0, 1]]))
-        stem.paint_uniform_color(col)
-        sc.add_geometry("tgtstem", stem, mt)
         if yaw is not None:
             e1 = [x + 0.7 * np.cos(yaw), y + 0.7 * np.sin(yaw), z]
             e2 = [x - 0.7 * np.cos(yaw), y - 0.7 * np.sin(yaw), z]
