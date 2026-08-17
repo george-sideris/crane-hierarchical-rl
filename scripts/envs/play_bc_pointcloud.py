@@ -95,6 +95,9 @@ parser.add_argument("--video_fps", type=int, default=30, help="Output video fram
 parser.add_argument("--gaze", action="store_true",
                     help="Load the gaze env (basemast cam + PH_GAZE phase) instead of the full env. "
                          "(store_true to avoid argparse abbreviation clashing with the env's --env_spacing)")
+parser.add_argument("--single_log", action="store_true",
+                    help="Single-log sanity env: one log at a random rack floor position per episode "
+                         "(sets cfg.single_log_mode, matching the -SingleLog-v0 training tasks)")
 args_cli, _ = parser.parse_known_args()
 
 # IsaacLab imports
@@ -559,7 +562,21 @@ def get_pipeline_data(env, env_idx, num_points, depth_range=(1.0, 10.0)):
     masked_depth[~log_mask] = np.nan
     data["masked_depth"] = masked_depth
 
-    # --- (d) 3D points in world frame (all log points, before FPS) ---
+    # --- (d) 3D points before FPS ---
+    # Under --raw_pcd this has to be the raw cloud, the same input the FPS panel resamples.
+    # It used to be the semantically segmented log-only cloud either way, which drew a
+    # pre-FPS panel with the ground and rack removed next to an FPS panel that kept them,
+    # so cropping appeared to ADD structure, and the panel contradicted the claim that the
+    # pipeline segments nothing.
+    if getattr(args_cli, "raw_pcd", False):
+        base_pts_t = env.get_pointcloud_base(env_idx, max_points=20000, depth_range=depth_range)
+        data["world_points"] = np.zeros((0, 3))
+        data["base_points"] = base_pts_t.cpu().numpy()
+        fps_pts = get_log_pointcloud_base_frame(env, env_idx, num_points,
+                                                depth_range=depth_range, raw_pcd=True)
+        data["fps_points"] = fps_pts.cpu().numpy()
+        return data
+
     world_pts = env.get_log_pointcloud_world(env_idx, max_points=5000, depth_range=depth_range)
     data["world_points"] = world_pts.cpu().numpy()
 
@@ -1167,6 +1184,7 @@ def main():
 
     # Create environment
     cfg = CraneDirectEnvCfgFull()
+    cfg.single_log_mode = bool(args_cli.single_log)
     cfg.scene.num_envs = args_cli.num_envs
     cfg.sim.device = args_cli.device
     cfg.use_hierarchical_rl = True
@@ -1297,6 +1315,7 @@ def main():
     ep_failed_grasps = torch.zeros(env.num_envs, device=env.device, dtype=torch.int32)
     ep_alignment_sum = torch.zeros(env.num_envs, device=env.device)
     ep_stability_sum = torch.zeros(env.num_envs, device=env.device)
+    ep_grasped_weight_sum = torch.zeros(env.num_envs, device=env.device)
     ep_cycle_count = torch.zeros(env.num_envs, device=env.device, dtype=torch.int32)
     ep_clearing_curves = [[] for _ in range(env.num_envs)]  # per-env list of clearing % at each cycle
     ep_clearing_curves_cum = [[] for _ in range(env.num_envs)]  # legacy cumulative-grasp curve
@@ -1530,6 +1549,7 @@ def main():
                     ep_successful_grasps[i] += 1
                     ep_alignment_sum[i] += alignment * logs_grasped
                     ep_stability_sum[i] += stability * logs_grasped
+                    ep_grasped_weight_sum[i] += logs_grasped
                 else:
                     failed_grasps += 1
                     ep_failed_grasps[i] += 1
@@ -1577,8 +1597,14 @@ def main():
                     n_total = n_success + n_fail
                     per_ep_success_rates.append(n_success / max(1, n_total) * 100)
                     per_ep_throughputs.append(logs_cleared / max(1, n_success))
-                    per_ep_alignments.append(float(ep_alignment_sum[i].item()) / max(1, logs_cleared))
-                    per_ep_stabilities.append(float(ep_stability_sum[i].item()) / max(1, logs_cleared))
+                    # Weighted MEAN over grasped logs: divide by the weight sum actually used
+                    # in the numerator. The old denominator (logs_cleared) undercounts whenever
+                    # logs are grasped, dropped, and re-grasped, inflating alignment/stability
+                    # past their 1.0 ceiling in proportion to the RE-GRASP rate (found
+                    # 2026-08-12: summary stability up to 1.38 while per-cycle tops at 1.0).
+                    _w = float(ep_grasped_weight_sum[i].item())
+                    per_ep_alignments.append(float(ep_alignment_sum[i].item()) / max(1.0, _w))
+                    per_ep_stabilities.append(float(ep_stability_sum[i].item()) / max(1.0, _w))
 
                     print(f"[Play] Episode {episodes_done}: reward={ep_reward:.2f}, "
                           f"cleared={clear_pct:.1f}% ({logs_cleared}/{starting_logs}), knocked_off={ep_knocked_off}")
@@ -1702,6 +1728,7 @@ def main():
                     ep_failed_grasps[i] = 0
                     ep_alignment_sum[i] = 0.0
                     ep_stability_sum[i] = 0.0
+                    ep_grasped_weight_sum[i] = 0.0
                     ep_cycle_count[i] = 0
                     ep_clearing_curves[i] = []
                     ep_clearing_curves_cum[i] = []

@@ -131,7 +131,7 @@ def fit_aspect(img, ar):
 
 
 def compose_quad(rgb, depth, cloud_raw, cloud_fps, out_path, depth_range=(1.0, 10.0),
-                 annotation=None, drop_rgb=False):
+                 annotation=None, drop_rgb=False, zlim=None):
     """Lay the pipeline stages out as the thesis figure.
 
     The cloud panels are the Open3D perspective renders rather than the flat top-down
@@ -163,15 +163,24 @@ def compose_quad(rgb, depth, cloud_raw, cloud_fps, out_path, depth_range=(1.0, 1
             cb = plt.colorbar(im, cax=cax)
             cb.ax.tick_params(labelsize=5)
             cb.set_label("depth (m)", fontsize=6)
-        # Named for the simulator because the crane does not unproject: the ZED SDK hands the
-        # node a registered cloud and this stage does not exist there.
-        ax.set_title("%s Depth (simulation)" % label, fontsize=9, fontweight="bold")
+        ax.set_title("%s Raw depth" % label, fontsize=9, fontweight="bold")
         ax.set_xticks([]); ax.set_yticks([])
 
     def cloud_panel(ax, img, label, title, note=None):
         ax.imshow(img)
         ax.set_title("%s %s" % (label, title), fontsize=9, fontweight="bold")
         ax.set_xticks([]); ax.set_yticks([])
+        # The cloud panels are colour-coded by height and previously said so nowhere, so the
+        # depth image was the only panel carrying a scale. Same ramp the renderer applies.
+        if zlim is not None:
+            from matplotlib.colors import ListedColormap, Normalize
+            from matplotlib.cm import ScalarMappable
+            ramp = height_colors(np.linspace(zlim[0], zlim[1], 256), *zlim) * 0.55 + 0.35
+            sm = ScalarMappable(norm=Normalize(*zlim), cmap=ListedColormap(ramp))
+            cax = make_axes_locatable(ax).append_axes("right", size="2.5%", pad=0.05)
+            cb = plt.colorbar(sm, cax=cax)
+            cb.ax.tick_params(labelsize=5)
+            cb.set_label("height (m)", fontsize=6)
         if note:
             ax.text(0.02, 0.98, note, transform=ax.transAxes, fontsize=6,
                     verticalalignment="top", color="#27ae60", fontweight="bold",
@@ -222,8 +231,10 @@ def main():
     if base.size == 0 or fps.size == 0:
         raise SystemExit("npz carries no cloud")
 
-    # One height ramp across both panels, from the raw cloud since it is the superset.
-    zlim = (float(base[:, 2].min()), float(base[:, 2].max()))
+    # One height ramp across both panels, taken from the cropped cloud. The raw cloud is the
+    # superset but it contains the grapple hanging metres above the rack, and scaling to that
+    # squeezes the whole pile into one colour. Raw points outside the range clamp to the ends.
+    zlim = (float(fps[:, 2].min()), float(fps[:, 2].max()))
     print("z range %.3f .. %.3f  raw %d pts  fps %d pts" % (*zlim, len(base), len(fps)))
 
     os.makedirs(args.out, exist_ok=True)
@@ -251,7 +262,7 @@ def main():
         # and the drawn target already carries the prediction. Whether that grasp went on to
         # lift 17 logs is a results-chapter question.
         compose_quad(z["rgb"], z["depth"].astype(float), panels["raw"], panels["fps"],
-                     args.quad, drop_rgb=args.no_rgb)
+                     args.quad, drop_rgb=args.no_rgb, zlim=zlim)
 
 
 if __name__ == "__main__":
