@@ -474,7 +474,9 @@ parser.add_argument("--solver", choices=["pgs","tgs"], default="pgs")
 parser.add_argument("--enhanced_determinism", action="store_true")
 
 # Visualization
-parser.add_argument("--viz_markers", action="store_true", default=True, help="Enable debug VisualizationMarkers.")
+# store_true with default=True could never be switched off, so debug markers rendered in
+# every run, figures and collected camera frames included. Opt in when debugging.
+parser.add_argument("--viz_markers", action="store_true", help="Enable debug VisualizationMarkers.")
 parser.add_argument("--show_action_bounds", action="store_true", help="Show translucent box for action/rack bounds.")
 parser.add_argument("--show_trailer_bounds", action="store_true", help="Show wireframe box for the trailer deposit scan bounds.")
 # Trailer scan box, base_link frame. Tune live to sit inside the trailer (raise xmin to clear the left poles).
@@ -1952,9 +1954,14 @@ class CraneDirectEnvFull(DirectRLEnv):
         # 1. Process action (target selection) at HOVER_UP
         action = action.to(self.device)
 
-        # Snapshot remaining count before the cycle for knocked-off calculation
+        # Snapshot remaining count before the cycle for knocked-off calculation.
+        # Also zero the per-cycle grasp count HERE (not in _reset_idx, where play scripts
+        # still need to read it): without this, an episode's final grasp count leaks into
+        # the next episode's first cycle and the knocked-off delta over-accounts
+        # ([ACCOUNTING] mismatch at cycle 0, found 2026-08-12).
         for i in range(self.num_envs):
             self._prev_logs_remaining[i] = self._count_logs_in_rack(i)
+            self._prev_logs_grasped[i] = 0.0
 
         # Suppress debug prints during internal loop to avoid terminal spam (set BEFORE _pre_physics_step)
         self._in_hierarchical_loop = True
@@ -4063,11 +4070,25 @@ class CraneDirectEnvFull(DirectRLEnv):
                     current_lin_vel[start_idx:end_idx] = 0.0
                     current_ang_vel[start_idx:end_idx] = 0.0
 
-                # Write updated state to simulation
+                # Write updated state to simulation - ONLY the resetting envs' log slots.
+                # Writing all N*200 bodies on every reset (the old behavior) re-injected a
+                # cloned snapshot into every OTHER env's in-flight physics ~80 times per
+                # 100-ep eval, waking sleeping bodies and perturbing mid-cycle piles
+                # (cross-episode contamination, found 2026-08-12).
                 root_pose = torch.cat([current_pos, current_quat], dim=-1)
                 root_vel = torch.cat([current_lin_vel, current_ang_vel], dim=-1)
-                logs.write_root_pose_to_sim(root_pose)
-                logs.write_root_velocity_to_sim(root_vel)
+                _reset_envs = [int(e.item()) if isinstance(e, torch.Tensor) else int(e)
+                               for e in (env_ids if env_ids is not None else range(self.num_envs))]
+                if len(_reset_envs) >= self.num_envs:
+                    logs.write_root_pose_to_sim(root_pose)
+                    logs.write_root_velocity_to_sim(root_vel)
+                else:
+                    sel = torch.cat([
+                        torch.arange(e * max_logs_per_env, (e + 1) * max_logs_per_env,
+                                     device=self.device, dtype=torch.long)
+                        for e in _reset_envs])
+                    logs.write_root_pose_to_sim(root_pose[sel], env_ids=sel)
+                    logs.write_root_velocity_to_sim(root_vel[sel], env_ids=sel)
 
         c_root = self.crane.data.default_root_state.clone()
         c_root[:, :3] += self.scene.env_origins
@@ -4150,24 +4171,34 @@ class CraneDirectEnvFull(DirectRLEnv):
         for i in range(self.num_envs):
             if env_ids is None or i in env_ids:
                 self._set_gripper(i, open_fraction=1.0)
-        self._phase[:] = self.PH_GAZE  # GAZE: reset enters the gaze phase
-        self._has_log[:] = False
-        self._timer[:] = 0
-        self._dwell[:] = 0
-        self._lift_hold_timer[:] = 0
-        self._stab_theta_win = [[] for _ in range(self.num_envs)]
-        self._stab_theta_full = [[] for _ in range(self.num_envs)]  # _stab_records kept (per-run log)
-        self._stab_dwell[:] = 0
-        self._stab_settle_steps[:] = 0
-        self._phase_timer[:] = 0
-        self._yaw_targets[:] = 0.0
-        self._target_log_pos_b.zero_()
-        self._target_log_quat_w.zero_()
-        self._dbg_target_bg.zero_()
-        self._target_frozen.zero_()
-        self._frozen_target_bg.zero_()
-        self._frozen_target_upperpassive.zero_()
-        self._heuristic_ready.zero_()
+        # FSM state resets are PER-ENV (found 2026-08-12): the old whole-vector writes
+        # ([:] / .zero_()) yanked every NON-resetting env back to PH_GAZE mid-cycle each
+        # time any single env finished an episode - aborting in-flight carries, orphaning
+        # held loads, and dumping logs mid-swing. In a 20-env 100-ep eval that fired ~80
+        # times and was the dominant cross-episode contamination channel (full clears
+        # decayed 96% -> ~50% from Q1 to Q4 while chunked/fresh-process evals stayed flat).
+        _rids = (self.crane._ALL_INDICES if env_ids is None else
+                 (env_ids if isinstance(env_ids, torch.Tensor)
+                  else torch.tensor(list(env_ids), device=self.device, dtype=torch.long))).to(torch.long)
+        self._phase[_rids] = self.PH_GAZE  # GAZE: reset enters the gaze phase
+        self._has_log[_rids] = False
+        self._timer[_rids] = 0
+        self._dwell[_rids] = 0
+        self._lift_hold_timer[_rids] = 0
+        for _i in _rids.cpu().tolist():
+            self._stab_theta_win[_i] = []
+            self._stab_theta_full[_i] = []  # _stab_records kept (per-run log)
+        self._stab_dwell[_rids] = 0
+        self._stab_settle_steps[_rids] = 0
+        self._phase_timer[_rids] = 0
+        self._yaw_targets[_rids] = 0.0
+        self._target_log_pos_b[_rids] = 0.0
+        self._target_log_quat_w[_rids] = 0.0
+        self._dbg_target_bg[_rids] = 0.0
+        self._target_frozen[_rids] = 0
+        self._frozen_target_bg[_rids] = 0.0
+        self._frozen_target_upperpassive[_rids] = 0.0
+        self._heuristic_ready[_rids] = 0
 
         # --- Reset target-selection buffers (for just these envs) ---
         if env_ids is None:
