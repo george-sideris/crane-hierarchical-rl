@@ -303,6 +303,30 @@ parser.add_argument("--profile_piles", action="store_true",
                          "hex-packed, support-constrained lattice that holds its shape through settling. "
                          "Use for BC collection so 'where the pile top is' becomes learnable "
                          "(flat piles cannot teach y-localization). Overrides the pattern choice.")
+parser.add_argument("--pile_peak_center", type=float, default=None,
+                    help="Crest position for the single-mound profile, as a fraction of "
+                         "the rack length (default: drawn from U(0.15, 0.85)).")
+parser.add_argument("--pile_mound_centers", type=float, nargs=2, default=None,
+                    metavar=("C1", "C2"),
+                    help="Peak positions for the forced two-mound profile, as fractions of the "
+                         "rack length (default 0.25 0.75). Push them apart for a wider valley.")
+parser.add_argument("--pile_mound_width", type=float, default=None,
+                    help="Gaussian width of the forced two-mound peaks, as a fraction of the "
+                         "rack length (default 0.09). Narrower peaks leave more bare rack "
+                         "between them.")
+parser.add_argument("--pile_repose_deg", type=float, nargs=2, default=None,
+                    metavar=("MIN", "MAX"),
+                    help="Repose-angle range that slope-limits the carved height profile "
+                         "(default 15 22, calibrated to the real pile being ~0.35 m proud). "
+                         "This is what caps mound height, not settling: at the pinned "
+                         "two-mound width it holds the rise near 0.25 m regardless of "
+                         "friction. Raise it for a figure or a diagnostic that needs "
+                         "pronounced mounds; leave it unset for collection and evaluation.")
+parser.add_argument("--pile_amp", type=float, nargs=2, default=None,
+                    metavar=("MIN", "MAX"),
+                    help="Mound amplitude range in metres above the profile floor "
+                         "(default 0.25 0.60). Mostly clipped by the repose limit above, so "
+                         "raising it alone changes little.")
 parser.add_argument("--force_pile_profile", type=str, default=None,
                     choices=["flat", "mound", "ramp_far", "ramp_near", "two_mounds", "jagged"],
                     help="Pin the --profile_piles height profile instead of drawing it at random "
@@ -1020,6 +1044,11 @@ def plan_grid_yz_hex_profile(center_y_local: float, rows: int, layers: int, spac
     profile = random.choice(["flat", "mound", "mound", "ramp_far", "ramp_near",
                              "two_mounds", "jagged", "jagged"])
     peak_c = random.uniform(0.15, 0.85)
+    # Pin the single mound's crest for figures. Left free, the crest lands anywhere and a
+    # figure panel cannot be matched to the real pile it is meant to mirror.
+    _pk = getattr(args_cli, "pile_peak_center", None)
+    if _pk is not None:
+        peak_c = float(_pk)
     # NARROW mounds on a wide floor: a wide bulge raises half the columns, so max-median
     # prominence stays ~0.1 even when the shape survives; the real pile is a LOCALIZED mound
     # (~0.34 max-median). Repose slope-limiting below keeps narrow shapes physical.
@@ -1041,6 +1070,12 @@ def plan_grid_yz_hex_profile(center_y_local: float, rows: int, layers: int, spac
             # exp(-0.5*(0.25/0.09)^2) ~= 0.02 of peak, so the valley sits essentially at the
             # floor: a policy that averages the two valid modes aims into a hole.
             tm_c1, tm_c2, p_width = 0.25, 0.75, 0.09
+            _ctr = getattr(args_cli, "pile_mound_centers", None)
+            if _ctr:
+                tm_c1, tm_c2 = float(_ctr[0]), float(_ctr[1])
+            _wid = getattr(args_cli, "pile_mound_width", None)
+            if _wid:
+                p_width = float(_wid)
     # jagged: 2-5 bumps at random centers/widths/heights -> multi-peaked uneven surface
     bumps = [(random.uniform(0.05, 0.95), random.uniform(0.04, 0.13), random.uniform(0.35, 1.0))
              for _ in range(random.randint(2, 5))]
@@ -1067,9 +1102,15 @@ def plan_grid_yz_hex_profile(center_y_local: float, rows: int, layers: int, spac
     # (The first version scaled heights to hit cap and only constrained |dh|<=1 per HALF-column,
     # which permits ~60 deg walls -> 2.6 m towers that always collapsed to ~0.11 m prominence.
     # The real pile is only ~0.35 m proud at <=~20 deg.)
-    amp = random.uniform(0.25, 0.60)                       # peak height above the profile floor (m)
+    # The amplitude and the repose limit together decide how proud a mound can be, and the
+    # limit usually wins: at the pinned two-mound width the slope caps the rise near 0.25 m,
+    # so most of the amp draw is clipped away before any log is placed. Both are overridable
+    # for figures and diagnostics; unset leaves the calibrated defaults untouched.
+    _amp_rng = getattr(args_cli, "pile_amp", None) or (0.25, 0.60)
+    _rep_rng = getattr(args_cli, "pile_repose_deg", None) or (15.0, 22.0)
+    amp = random.uniform(float(_amp_rng[0]), float(_amp_rng[1]))   # peak height above the floor (m)
     pitch = spacing_y / 2.0
-    max_slope = math.tan(math.radians(random.uniform(15.0, 22.0)))   # repose-limited
+    max_slope = math.tan(math.radians(random.uniform(float(_rep_rng[0]), float(_rep_rng[1]))))
     prof = [amp * (f - floor_f) / max(1.0 - floor_f, 1e-6) for f in fr]   # 0..amp (m)
     # Fine-scale surface roughness on top of the macro shape (real piles are uneven
     # everywhere, not smooth between mounds). Slope-limiting below keeps it physical.
