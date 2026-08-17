@@ -71,12 +71,12 @@ def render(pts, bmin, bmax, zlim, target=None, yaw=None, point_size=3.2):
         s = o3d.geometry.TriangleMesh.create_sphere(radius=0.17)
         s.translate([x, y, z]); s.paint_uniform_color(col); s.compute_vertex_normals()
         sc.add_geometry("tgt", s, mm)
-        top = float(max(pts[:, 2].max(), z) + 0.75)
+        top = float(max(pts[:, 2].max(), z) + 0.3)
         stem = o3d.geometry.LineSet(
             points=o3d.utility.Vector3dVector([[x, y, top], [x, y, z]]),
             lines=o3d.utility.Vector2iVector([[0, 1]]))
         stem.paint_uniform_color(col)
-        sc.add_geometry("tgtstem", stem, mt)
+        sc.add_geometry("tgtstem", stem, ml)
         if yaw is not None:
             e1 = [x + 0.7 * np.cos(yaw), y + 0.7 * np.sin(yaw), z]
             e2 = [x - 0.7 * np.cos(yaw), y - 0.7 * np.sin(yaw), z]
@@ -113,6 +113,23 @@ def autocrop(img, tol=6):
     return img[y0:y1, x0:x1]
 
 
+def fit_aspect(img, ar):
+    """Pad an image out to aspect ratio ar with its own background colour.
+
+    The camera frames are 16:9 and the cropped renders are whatever the scene happens to
+    occupy, so imshow gave every panel a different size and the grid looked ragged. Padding
+    rather than cropping keeps the whole scene and leaves each panel the same shape.
+    """
+    h, w = img.shape[:2]
+    bg = img[0, 0]
+    tw, th = max(w, int(round(h * ar))), max(h, int(round(w / ar)))
+    out = np.empty((th, tw, img.shape[2]), dtype=img.dtype)
+    out[:, :] = bg
+    y0, x0 = (th - h) // 2, (tw - w) // 2
+    out[y0:y0 + h, x0:x0 + w] = img
+    return out
+
+
 def compose_quad(rgb, depth, cloud_raw, cloud_fps, out_path, depth_range=(1.0, 10.0),
                  annotation=None, drop_rgb=False):
     """Lay the pipeline stages out as the thesis figure.
@@ -131,6 +148,12 @@ def compose_quad(rgb, depth, cloud_raw, cloud_fps, out_path, depth_range=(1.0, 1
     import matplotlib.pyplot as plt
     from mpl_toolkits.axes_grid1 import make_axes_locatable
 
+    # Every panel is shown at one shape so the grid reads as a grid. The camera frames set
+    # it, since they are the only panels whose framing is not ours to choose.
+    ar = (rgb.shape[1] / rgb.shape[0]) if rgb is not None else 16 / 9
+    cloud_raw = fit_aspect(cloud_raw, ar)
+    cloud_fps = fit_aspect(cloud_fps, ar)
+
     def depth_panel(ax, label):
         if depth is not None:
             dep = np.clip(depth, depth_range[0], depth_range[1])
@@ -140,7 +163,9 @@ def compose_quad(rgb, depth, cloud_raw, cloud_fps, out_path, depth_range=(1.0, 1
             cb = plt.colorbar(im, cax=cax)
             cb.ax.tick_params(labelsize=5)
             cb.set_label("depth (m)", fontsize=6)
-        ax.set_title("%s Raw depth" % label, fontsize=9, fontweight="bold")
+        # Named for the simulator because the crane does not unproject: the ZED SDK hands the
+        # node a registered cloud and this stage does not exist there.
+        ax.set_title("%s Depth (simulation)" % label, fontsize=9, fontweight="bold")
         ax.set_xticks([]); ax.set_yticks([])
 
     def cloud_panel(ax, img, label, title, note=None):
@@ -222,14 +247,11 @@ def main():
             raise SystemExit(
                 "npz has no rgb/depth; re-run the eval with --paper_viz after the "
                 "camera-frame dump was added to _dump_cloud_npz")
-        n_logs = int(z["logs_grasped"]) if "logs_grasped" in keys else 0
-        lines = ["HIT (%d)" % n_logs if n_logs > 0 else "MISS"]
-        for key, label in (("alignment", "align"), ("stability", "stab")):
-            if key in keys and float(z[key]) >= 0:
-                lines.append("%s=%.2f" % (label, float(z[key])))
+        # No outcome legend: this figure is about what the policy sees and what it commands,
+        # and the drawn target already carries the prediction. Whether that grasp went on to
+        # lift 17 logs is a results-chapter question.
         compose_quad(z["rgb"], z["depth"].astype(float), panels["raw"], panels["fps"],
-                     args.quad, annotation="\n".join(lines) if n_logs > 0 else None,
-                     drop_rgb=args.no_rgb)
+                     args.quad, drop_rgb=args.no_rgb)
 
 
 if __name__ == "__main__":
