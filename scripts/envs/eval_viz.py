@@ -925,11 +925,14 @@ def _dump_cloud_npz(d, episode_idx, viz_dir, suffix, bounds_min, bounds_max):
     deleted and only the PNG survived, so every restyle needed a fresh simulator run. The
     npz keeps the raw and resampled clouds, the crop box and the commanded grasp, which is
     everything the Open3D renderer on the host needs.
+
+    The camera frames go in too. Compositing the thesis figure host-side needs the RGB and
+    depth panels as arrays, and without them a restyle that only changes the cloud panels
+    still had to re-run the simulator just to recover the top row.
     """
     try:
         out = os.path.join(viz_dir, f"episode_{episode_idx:03d}_cloud{suffix}.npz")
-        np.savez_compressed(
-            out,
+        arrays = dict(
             base_points=_valid(d.get("base_points")),
             fps_points=_valid(d.get("fps_points")),
             bounds_min=np.asarray(bounds_min if bounds_min is not None else []),
@@ -938,7 +941,14 @@ def _dump_cloud_npz(d, episode_idx, viz_dir, suffix, bounds_min, bounds_max):
             yaw=float(d.get("yaw", 0.0)),
             logs_grasped=int(d.get("logs_grasped") or 0),
             step_idx=int(d.get("step_idx", 0)),
+            alignment=float(d.get("alignment") if d.get("alignment") is not None else -1.0),
+            stability=float(d.get("stability") if d.get("stability") is not None else -1.0),
         )
+        if d.get("rgb") is not None:
+            arrays["rgb"] = np.asarray(d["rgb"])
+        if d.get("depth") is not None:
+            arrays["depth"] = np.asarray(d["depth"], dtype=np.float32)
+        np.savez_compressed(out, **arrays)
         print(f"[PaperViz] Saved clouds: {out}")
     except Exception as exc:                      # never let viz bookkeeping kill an eval
         print(f"[PaperViz] cloud dump failed: {exc}")
