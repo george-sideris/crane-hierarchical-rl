@@ -32,7 +32,11 @@ W, H = 1400, 900
 
 
 def height_colors(z, lo, hi):
-    """The turbo-ish ramp used by the replay figure, so the two chapters match."""
+    """The turbo-ish ramp used by the replay figure, so the two chapters match.
+
+    Deliberately not viridis: that is the depth image's colormap, and reusing it here would
+    make the cloud panels read as another view of the same heatmap.
+    """
     t = np.clip((z - lo) / (hi - lo), 0, 1)
     return np.stack([np.clip(1.5 - np.abs(4 * t - 3), 0, 1),
                      np.clip(1.5 - np.abs(4 * t - 2), 0, 1),
@@ -67,8 +71,11 @@ def render(pts, bmin, bmax, zlim, target=None, yaw=None, point_size=3.2):
         # sizes this figure needs. A stem dropped from clear air marks the same target where
         # nothing can occlude it, and the sphere still shows the depth it commands.
         x, y, z = target
-        col = [0.85, 0.05, 0.05]
-        s = o3d.geometry.TriangleMesh.create_sphere(radius=0.17)
+        # Black, not red: the height ramp ends in red, so a red marker is indistinguishable
+        # from the rack posts and the pile crest it is drawn against. Nothing in the ramp is
+        # dark, so black separates from every point in the cloud.
+        col = [0.05, 0.05, 0.05]
+        s = o3d.geometry.TriangleMesh.create_sphere(radius=0.20)
         s.translate([x, y, z]); s.paint_uniform_color(col); s.compute_vertex_normals()
         sc.add_geometry("tgt", s, mm)
         top = float(max(pts[:, 2].max(), z) + 0.3)
@@ -76,7 +83,7 @@ def render(pts, bmin, bmax, zlim, target=None, yaw=None, point_size=3.2):
             points=o3d.utility.Vector3dVector([[x, y, top], [x, y, z]]),
             lines=o3d.utility.Vector2iVector([[0, 1]]))
         stem.paint_uniform_color(col)
-        sc.add_geometry("tgtstem", stem, ml)
+        sc.add_geometry("tgtstem", stem, mt)
         if yaw is not None:
             e1 = [x + 0.7 * np.cos(yaw), y + 0.7 * np.sin(yaw), z]
             e2 = [x - 0.7 * np.cos(yaw), y - 0.7 * np.sin(yaw), z]
@@ -166,13 +173,24 @@ def compose_quad(rgb, depth, cloud_raw, cloud_fps, out_path, depth_range=(1.0, 1
         ax.set_title("%s Raw depth" % label, fontsize=9, fontweight="bold")
         ax.set_xticks([]); ax.set_yticks([])
 
-    def cloud_panel(ax, img, label, title, note=None):
+    def reserve_cax(ax):
+        """Take the colourbar's width out of the axes whether or not one is drawn.
+
+        A colourbar steals width from the axes it is attached to, so a panel without one
+        renders wider than a panel with one and the grid stops lining up. Panels that show
+        no bar reserve the space and hide it.
+        """
+        cax = make_axes_locatable(ax).append_axes("right", size="2.5%", pad=0.05)
+        cax.set_axis_off()
+        return cax
+
+    def cloud_panel(ax, img, label, title, note=None, scale=False):
         ax.imshow(img)
         ax.set_title("%s %s" % (label, title), fontsize=9, fontweight="bold")
         ax.set_xticks([]); ax.set_yticks([])
-        # The cloud panels are colour-coded by height and previously said so nowhere, so the
-        # depth image was the only panel carrying a scale. Same ramp the renderer applies.
-        if zlim is not None:
+        # Both cloud panels share one height ramp, so one bar serves both and sits on the
+        # resampled panel; putting it on each crowded the label into the neighbouring panel.
+        if zlim is not None and scale:
             from matplotlib.colors import ListedColormap, Normalize
             from matplotlib.cm import ScalarMappable
             ramp = height_colors(np.linspace(zlim[0], zlim[1], 256), *zlim) * 0.55 + 0.35
@@ -181,6 +199,8 @@ def compose_quad(rgb, depth, cloud_raw, cloud_fps, out_path, depth_range=(1.0, 1
             cb = plt.colorbar(sm, cax=cax)
             cb.ax.tick_params(labelsize=5)
             cb.set_label("height (m)", fontsize=6)
+        else:
+            reserve_cax(ax)
         if note:
             ax.text(0.02, 0.98, note, transform=ax.transAxes, fontsize=6,
                     verticalalignment="top", color="#27ae60", fontweight="bold",
@@ -192,7 +212,7 @@ def compose_quad(rgb, depth, cloud_raw, cloud_fps, out_path, depth_range=(1.0, 1
         depth_panel(fig.add_subplot(gs[0, 0]), "(a)")
         cloud_panel(fig.add_subplot(gs[0, 1]), cloud_raw, "(b)", "3D points")
         cloud_panel(fig.add_subplot(gs[0, 2]), cloud_fps, "(c)", "FPS + prediction",
-                    note=annotation)
+                    note=annotation, scale=True)
     else:
         fig = plt.figure(figsize=(9, 5.2))
         gs = fig.add_gridspec(2, 2, wspace=0.12, hspace=0.22)
@@ -201,10 +221,11 @@ def compose_quad(rgb, depth, cloud_raw, cloud_fps, out_path, depth_range=(1.0, 1
             ax.imshow(rgb)
         ax.set_title("(a) RGB", fontsize=9, fontweight="bold")
         ax.set_xticks([]); ax.set_yticks([])
+        reserve_cax(ax)
         depth_panel(fig.add_subplot(gs[0, 1]), "(b)")
         cloud_panel(fig.add_subplot(gs[1, 0]), cloud_raw, "(c)", "3D points")
         cloud_panel(fig.add_subplot(gs[1, 1]), cloud_fps, "(d)", "FPS + prediction",
-                    note=annotation)
+                    note=annotation, scale=True)
 
     fig.savefig(out_path, dpi=200, bbox_inches="tight", facecolor="white")
     plt.close(fig)

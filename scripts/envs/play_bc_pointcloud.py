@@ -1690,7 +1690,7 @@ def main():
                             save_paper_pipeline_quadrant_single,
                             save_paper_pipeline_quadrant_rgb_fps,
                             save_paper_pipeline_quadrant_depth_fps,
-                            pick_early_late_grasps,
+                            pick_early_late_grasps, pick_representative_grasp,
                         )
                         # Pipeline: random successful early + late grasp
                         paper_rep = pick_early_late_grasps(trimmed)
@@ -1699,9 +1699,12 @@ def main():
                             bounds_min=ep_bounds_min,
                             bounds_max=ep_bounds_max,
                         )
-                        # Quadrant variants (2x2, \columnwidth)
+                        # Quadrant variants (2x2, \columnwidth). The single-grasp quadrant is
+                        # the thesis pipeline figure, so it gets a typical decision chosen
+                        # deterministically instead of a random draw.
                         save_paper_pipeline_quadrant_single(
-                            paper_rep, episodes_done, paper_viz_dir,
+                            pick_representative_grasp(trimmed, ep_bounds_min, ep_bounds_max),
+                            episodes_done, paper_viz_dir,
                             bounds_min=ep_bounds_min, bounds_max=ep_bounds_max,
                         )
                         save_paper_pipeline_quadrant_rgb_fps(

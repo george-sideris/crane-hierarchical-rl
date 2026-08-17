@@ -865,6 +865,40 @@ def save_paper_pipeline_viz(grasp_data_list, episode_idx, viz_dir,
                                   suffix=suffix)
 
 
+def pick_representative_grasp(grasp_data_list, bounds_min=None, bounds_max=None):
+    """Pick one ordinary grasp for the observation-pipeline figure.
+
+    The figure is a reader's first sight of what a policy commands, so the decision it shows
+    should be a typical one. The random early/late pick used before landed on a grasp pinned
+    to the bed-floor clamp at the far end of the rack, beside a corner post, which reads as
+    the policy targeting structure and floor.
+
+    Preferences, applied in order and each dropped if nothing survives it: the grasp lifted
+    logs; its commanded z clears the lower face of the action box, so the bed-floor clamp of
+    the action space is not what set the depth; and it sits away from the rack ends where the
+    posts and end board are. Among survivors, take the earliest, which is the fullest pile.
+    Deterministic, so the figure does not change identity on a re-run.
+    """
+    if not grasp_data_list:
+        return []
+
+    def _filters():
+        yield lambda g: (g.get("logs_grasped") or 0) > 0
+        if bounds_min is not None:
+            yield lambda g: g.get("z") is not None and g["z"] > float(bounds_min[2]) + 0.10
+        if bounds_min is not None and bounds_max is not None:
+            lo, hi = float(bounds_min[1]), float(bounds_max[1])
+            span = hi - lo
+            yield lambda g: g.get("y") is not None and lo + 0.2 * span < g["y"] < hi - 0.2 * span
+
+    pool = list(grasp_data_list)
+    for keep in _filters():
+        narrowed = [g for g in pool if keep(g)]
+        if narrowed:
+            pool = narrowed
+    return [min(pool, key=lambda g: g.get("step_idx", 0))]
+
+
 def pick_early_late_grasps(grasp_data_list, rng=None):
     """Pick one random successful early grasp and one random successful late grasp.
 
