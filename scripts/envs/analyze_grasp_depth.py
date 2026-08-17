@@ -161,10 +161,12 @@ def check_shape(pts, shape):
 
 
 def categorize(logs, note):
-    if re.search(r"rack|pole|noise|air|structure", note):
-        return "structure"
+    # Chokes first: a choke note may mention the rack incidentally ("knocked 1
+    # log off rack"), and choking is an execution failure, not targeting.
     if re.search(r"chok", note):
         return "choke"
+    if re.search(r"rack|pole|noise|air|structure", note):
+        return "structure"
     if re.search(r"not deep enough|did not go as deep", note):
         return "shallow-exec"   # executed shallow from a calibration bias, command looked normal
     if logs > 0:
