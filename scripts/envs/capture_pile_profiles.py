@@ -30,6 +30,9 @@ _ap.add_argument("--settle_renders", type=int, default=60)
 _ap.add_argument("--converge_renders", type=int, default=400,
                  help="renders after hiding the crane, so the accumulated image loses "
                       "its ghost before the overview frame is read")
+_ap.add_argument("--solver", choices=["pgs","tgs"], default="tgs",
+                 help="PhysX solver. The play/collect/train scripts all set TGS "
+                      "(solver_type 1), so tgs is what the policies actually run on")
 _ap.add_argument("--rack_usd", type=str, default=None,
                  help="override the rack asset, for testing collision authoring")
 _ap.add_argument("--ang_damping", type=float, default=3.0,
@@ -123,7 +126,7 @@ def main():
     cfg.camera_cfg.width = 1280
     cfg.camera_cfg.height = 720
     cfg.camera_cfg.data_types = ["rgb", "depth", "semantic_segmentation"]
-    cfg.sim.physx.solver_type = 1
+    cfg.sim.physx.solver_type = 1 if _mine.solver == "tgs" else 0
     cfg.sim.physx.enable_stabilization = True
     # Creates the world-space overview camera. The basemast camera is the policy's viewpoint,
     # not a presentation one: it sits low and oblique, so the pile is foreshortened and the
