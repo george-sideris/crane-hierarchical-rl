@@ -27,6 +27,7 @@ TRIALS = [
     ("Scoring single",  ("BC", "single"),        "#dd8452", "-"),
     ("Scoring double",  ("BC", "double"),        "#c44e52", "-"),
     ("Scoring flat",    ("BC", "flat"),          "#8172b2", "-"),
+    ("BC->RL flat",     ("BCRL", "flat"),        "#937860", "-"),
     ("BC->RL double",   None,                    "#2ca02c", "-"),
 ]
 BCRL_CSV = "~/Downloads/log_loader_ML_experimental_data(03_BC_RL).csv"
