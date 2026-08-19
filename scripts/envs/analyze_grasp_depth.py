@@ -269,19 +269,28 @@ def main():
             ("BC$\\to$RL successes", np.array([s[3] for s in samples if s[0] == "BCRL" and s[4] == "success"]), "#55a868"),
             ("Chokes (all policies)", np.array([s[3] for s in samples if s[4] == "choke"]), "#c44e52"),
         ]
-        fig, ax = plt.subplots(figsize=(7.0, 3.4))
+        fig, ax = plt.subplots(figsize=(7.0, 3.7))
         rng = np.random.RandomState(0)
         for i, (name, a, color) in enumerate(groups):
+            # violin behind the points; small n keeps its own spread honest via bw tweak
+            if len(a) >= 5:
+                vp = ax.violinplot([a], positions=[i], vert=False, widths=0.78,
+                                   showextrema=False, bw_method=0.35)
+                for b in vp["bodies"]:
+                    b.set_facecolor(color); b.set_alpha(0.18); b.set_edgecolor("none")
+                    b.set_zorder(2)
             y = i + rng.uniform(-0.16, 0.16, len(a))
-            ax.scatter(a, y, s=14, alpha=0.65, color=color, edgecolors="none", zorder=3)
+            ax.scatter(a, y, s=13, alpha=0.7, color=color, edgecolors="none", zorder=3)
             ax.scatter([np.median(a)], [i], marker="|", s=380, color="black", zorder=4, linewidths=1.8)
+            ax.text(0.128, i, f"n={len(a)}", fontsize=7.5, color="0.25", va="center")
         ax.axvline(0.0, color="0.35", lw=0.9)
         ax.axvline(-LOG_RADIUS, color="0.35", lw=0.9, ls="--")
-        ax.text(0.004, -0.62, "observed surface", fontsize=7.5, color="0.25", rotation=90, va="top")
-        ax.text(-LOG_RADIUS + 0.004, -0.62, "raw dataset label (log center)", fontsize=7.5, color="0.25", rotation=90, va="top")
+        ax.text(0.004, -0.72, "observed surface", fontsize=7.5, color="0.25", rotation=90, va="top")
+        ax.text(-LOG_RADIUS + 0.004, -0.72, "raw dataset label (log center)", fontsize=7.5, color="0.25", rotation=90, va="top")
         ax.set_yticks(range(len(groups)))
         ax.set_yticklabels([g[0] for g in groups], fontsize=8.5)
         ax.set_xlabel("commanded grasp depth below the local observed surface [m]", fontsize=9)
+        ax.set_xlim(right=0.16)
         ax.invert_yaxis()
         ax.grid(axis="x", lw=0.4, alpha=0.4)
         fig.tight_layout()
