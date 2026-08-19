@@ -39,7 +39,7 @@ import zipfile
 import numpy as np
 
 SURF_R = 0.20          # horizontal radius for the local surface [m]
-LOG_RADIUS = 0.056     # sim expert convention: grasp z = surface - LOG_RADIUS
+LOG_RADIUS = 0.056     # raw dataset label: the collection expert records the log CENTER
 
 # Trial registry: spreadsheet block/column -> run directory.
 # Baseline shapes verified against the first-cycle cloud profile (see check_shape).
@@ -278,7 +278,7 @@ def main():
         ax.axvline(0.0, color="0.35", lw=0.9)
         ax.axvline(-LOG_RADIUS, color="0.35", lw=0.9, ls="--")
         ax.text(0.004, -0.62, "observed surface", fontsize=7.5, color="0.25", rotation=90, va="top")
-        ax.text(-LOG_RADIUS + 0.004, -0.62, "sim expert convention", fontsize=7.5, color="0.25", rotation=90, va="top")
+        ax.text(-LOG_RADIUS + 0.004, -0.62, "raw dataset label (log center)", fontsize=7.5, color="0.25", rotation=90, va="top")
         ax.set_yticks(range(len(groups)))
         ax.set_yticklabels([g[0] for g in groups], fontsize=8.5)
         ax.set_xlabel("commanded grasp depth below the local observed surface [m]", fontsize=9)

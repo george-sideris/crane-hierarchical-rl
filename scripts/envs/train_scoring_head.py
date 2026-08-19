@@ -217,8 +217,17 @@ def main():
             hit = float((err_xy < 0.30).float().mean() * 100)
         sched.step(vloss)
 
+        # per-epoch history for training-curve figures (append-only jsonl)
+        m = agg["n"]
+        with open(os.path.join(a.output_dir, "history.jsonl"), "a") as hf:
+            hf.write(json.dumps({"epoch": ep, "train": agg["loss"] / m,
+                                 "cls": agg["cls"] / m, "dz": agg["dz"] / m,
+                                 "yaw": agg["yaw"] / m, "neg": agg["neg"] / m,
+                                 "val": vloss, "xy_err": float(err_xy.median()),
+                                 "within30": hit,
+                                 "lr": opt.param_groups[0]["lr"]}) + "\n")
+
         if ep % 10 == 0 or ep == a.epochs - 1:
-            m = agg["n"]
             print(f"Epoch {ep:3d}/{a.epochs} | train {agg['loss']/m:.4f} "
                   f"(cls {agg['cls']/m:.3f} dz {agg['dz']/m:.4f} yaw {agg['yaw']/m:.3f} "
                   f"neg {agg['neg']/m:.3f}) | "
