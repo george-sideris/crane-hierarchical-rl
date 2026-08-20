@@ -25,4 +25,6 @@ mkdir -p logs/battery_ckpts/$ARM
 cp "$RUN"/model_*.pt logs/battery_ckpts/$ARM/ 2>/dev/null
 rm -f logs/battery_ckpts/$ARM/model_0.pt
 STRIDE=20 bash eval_scripts/thesis_battery.sh waves "$ARM" > /data/battery_waves.log 2>&1
+# stage 3: the citable row - deep 100-episode eval of this arm's best wave checkpoint
+bash eval_scripts/thesis_battery.sh deep "$ARM" > /data/battery_deep.log 2>&1
 touch /data/CHAIN_DONE
