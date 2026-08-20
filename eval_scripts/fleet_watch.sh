@@ -9,8 +9,12 @@ while true; do
       'busy=$({ pgrep -c -f "rsl_rl/train[.]py|thesis_battery[.]sh|play_bc_pointcloud[.]py" 2>/dev/null | head -1; });
        cyc=$(grep -ac CYCLE /data/crane_testbed/logs/p3v2_train.log 2>/dev/null || echo 0);
        rows=$(find /data/crane_testbed/logs/sim_eval/battery -name .done 2>/dev/null | wc -l);
+       # eval jobs write no CYCLE count and no .done until they finish, so growing log
+       # bytes is the progress signal that covers train and eval alike
+       kb=$(cat /data/crane_testbed/logs/p3v2_train.log /data/crane_testbed/logs/sim_eval/battery/*.log 2>/dev/null | wc -c);
+       kb=$((kb/1000));
        err=$(grep -aE "Traceback|CUDA error|out of memory|ERROR_DEVICE_LOST" /data/crane_testbed/logs/p3v2_train.log 2>/dev/null | grep -cv "Warp CUDA error");
-       echo "$busy $((cyc+rows)) $err"' 2>/dev/null)
+       echo "$busy $((cyc+rows+kb)) $err"' 2>/dev/null)
     [ -z "$out" ] && { echo "$name: UNREACHABLE"; continue; }
     read -r busy prog err <<< "$out"
     if [ "${err:-0}" -gt "${last_err[$name]:-0}" ]; then echo "$name: error lines grew to $err"; fi
