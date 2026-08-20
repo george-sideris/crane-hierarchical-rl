@@ -164,3 +164,71 @@ scratchpad/inna/p-NN.png). Transcribed from the handwriting; page numbers are PD
 7. REAL vs SIMULATED: say "real crane testbed" explicitly wherever the machine is meant;
    several places read ambiguously.
 8. CONTRIBUTIONS: items 3 and 4 in Sec 1.3 read as findings, not contributions.
+
+## Second pass: pages not covered in the first transcription
+
+### p8 (Ch2, Sec 2.1.1-2.1.2)
+- "one step is one complete grasp cycle" -> "one step OF THE POLICY is ...".
+- "it is therefore bounded by the strategy it copies" -> "weaker than what?" and circles
+  "a weaker bound" - the bound-vs-weaker-bound phrasing is unclear.
+
+### p24 (Fig 3.3 pile shapes)
+- No marks. (Figure accepted as is.)
+
+### p25 (Sec 3.3 FSM) - TERMINOLOGY, the most serious page
+- Section title: "is this the terminology Isaac Labs uses? It doesn't quite make sense."
+- Circles "damped-least-squares differential IK controller in task space".
+- "the IK target is the top of the passive chain" -> "you mean tip of telescope?"
+- Circles "the IK link" + "?" ; "targets are specified for the grapple" circled:
+  "what does this mean? the grapple has a finite dimension, it is not a point in space."
+- Tolerances: "these are position tolerances, they only make sense for a point in space."
+- "fixed joint-space viewing pose q_gaze": POSE vs CONFIGURATION - "the crane is a
+  multi-body system and it can have a CONFIGURATION; POSE in robotics describes the
+  position/orientation of a single rigid body."
+- BOTTOM: "I am concerned Professor Kovecses will take objection to some of this
+  terminology and I don't feel comfortable with it either. What exactly is IK link/target?"
+
+### p28 (Sec 3.4.2 Observations)
+- "the two settings" circled: "which two settings? simulated + real?"
+- "and the simulator back-projects" -> "while".
+- "Everything downstream is shared" -> "between the simulation and implementation on the
+  real crane testbed?"
+- "extrinsic T_base<-cam" -> "transform"; "cropped to the box [b_min, b_max]" circled:
+  "how do 2 scalars define a box?"
+- "Algorithm 3.2 ... Figure 3.4" -> "separate out into another sentence".
+- "the cloud contains every surface" -> "points for every surface".
+- "4K-dimensional vector" -> "say 4 x (x,y,z,psi)?"
+- "which never runs on the machine" -> "on the real crane".
+- FOOTER: "homogeneous transforms in robotics are usually indicated with bold symbols."
+
+### p32 (Sec 3.4.4 outcomes / 3.5 randomization)
+- "grasp success rate (fraction of cycles with n>0)" -> "defined as the"; "pile clearing
+  rate" -> "computed as"; "the fraction of logs knocked out of bounds" -> "the NUMBER of
+  logs knocked out of bounds AS A FRACTION OF TOTAL NUMBER OF LOGS".
+- "Every policy trains in simulation and is judged on the crane" -> "is trained",
+  "evaluated"; "the variation the simulator offers" -> "variability".
+- "Between episodes the simulator redraws only the pile" -> "rebuilds ... as was described
+  in Section 3.2.4".
+- "the training pipeline adds its own augmentations" -> "of what?"
+- "the axial noise model" -> "not sure what this means".
+- MAJOR: "If you have to do so much cross-referencing into the future, maybe the
+  organization is not the best."
+
+### p35 (Alg 3.3 + Sec 3.6.2 geometric heuristic)
+- "The heuristic re-implements the same strategy" -> "the same GRASP strategy AS THE
+  PRIVILEGED EXPERT?"
+- "it takes the highest supported candidate" -> "how can a log be unsupported?"
+- "within a planar radius r_n" -> "circle in the ground plane of".
+- "don't know if Prof. Kovecses will know the meaning of 'kludge'/'nudge'" (re wording on
+  the next page).
+
+## Additional recurring themes (second pass)
+9. POSE vs CONFIGURATION: a multi-body system has a configuration; pose belongs to a single
+   rigid body. Fix q_gaze wording and anything calling a joint vector a "pose".
+10. IK LINK / IK TARGET is undefined and she explicitly asks what it is; the grapple is a
+    body, not a point, so "position tolerance" needs restating (e.g. tolerance on a defined
+    reference point of the grapple).
+11. Bold symbols for homogeneous transforms, per robotics convention.
+12. "cropped to the box [b_min, b_max]" - explain that these are opposite corners.
+13. Cross-referencing forward is pervasive enough that she questions the organization
+    (second independent flag, p32).
