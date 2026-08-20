@@ -1,7 +1,7 @@
 #!/bin/bash
 # Fleet watchdog: emit a line only on failure, stall, or exit. Loops until killed.
 cd "$(dirname "$0")/.." || exit 1
-declare -A last_prog last_err
+declare -A last_prog last_err seen
 while true; do
   while read -r port host name; do
     [ -z "$port" ] && continue
@@ -17,6 +17,11 @@ while true; do
        echo "$busy $((cyc+rows+kb)) $err"' 2>/dev/null)
     [ -z "$out" ] && { echo "$name: UNREACHABLE"; continue; }
     read -r busy prog err <<< "$out"
+    if [ -z "${seen[$name]:-}" ]; then
+      # first sight of this pod: record baselines, alert on nothing. Historical error
+      # lines from an old incident are not news every time the watchdog restarts.
+      seen[$name]=1; last_err[$name]=$err; last_prog[$name]=$prog; continue
+    fi
     if [ "${err:-0}" -gt "${last_err[$name]:-0}" ]; then echo "$name: error lines grew to $err"; fi
     last_err[$name]=$err
     if [ "${busy:-0}" -eq 0 ]; then echo "$name: IDLE (work finished or died)"; fi
