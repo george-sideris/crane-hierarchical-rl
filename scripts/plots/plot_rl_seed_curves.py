@@ -67,10 +67,10 @@ def load_run(d):
     v = ea.Scalars(tag)
     s = np.array([x.step for x in v], float)
     y = np.array([x.value for x in v], float)
-    k = min(SMOOTH, len(y))
-    y = np.convolve(y, np.ones(k) / k, mode="valid")
-    s = s[k - 1:]
-    return s, y
+    # expanding-window rolling mean: the first points average what exists so far,
+    # so the curve starts at the first logged iteration instead of SMOOTH-1 in
+    ys = np.array([y[max(0, i - SMOOTH + 1):i + 1].mean() for i in range(len(y))])
+    return s, ys
 
 
 def main():
