@@ -26,13 +26,21 @@ while read -r port host name; do
   if [ -z "$free" ] || [ "$free" -lt 35000 ]; then
     echo "$name: SKIP, only ${free:-?} MiB free"; continue
   fi
-  read -r arm task iters freeze seed < "$Q"
-  [ -z "$arm" ] && break
+  read -r kind a1 a2 a3 a4 a5 < "$Q"
+  [ -z "$kind" ] && break
   scp -o StrictHostKeyChecking=no -P "$port" -q "$CODE" "$ROS2" "root@$host:/data/" 2>/dev/null
+  [ "$kind" = bceval ] && scp -o StrictHostKeyChecking=no -P "$port" -q logs/fleet/bc_seed_ckpts.tgz "root@$host:/data/" 2>/dev/null
   timeout 90 ssh -n -o StrictHostKeyChecking=no -p "$port" "root@$host" \
-    'mkdir -p /data/crane_testbed && cd /data/crane_testbed && tar xzf /data/crane_code.tgz 2>/dev/null; tar xzf /data/ros2copy.tgz 2>/dev/null; ln -sfn /data/crane_testbed /workspace/crane_testbed; rm -f /data/CHAIN_DONE /data/train_finished' 2>/dev/null
+    'mkdir -p /data/crane_testbed && cd /data/crane_testbed && tar xzf /data/crane_code.tgz 2>/dev/null; tar xzf /data/ros2copy.tgz 2>/dev/null; tar xzf /data/bc_seed_ckpts.tgz 2>/dev/null; ln -sfn /data/crane_testbed /workspace/crane_testbed; rm -f /data/CHAIN_DONE /data/train_finished' 2>/dev/null
+  if [ "$kind" = bceval ]; then
+    cmd="bash eval_scripts/pod_bc_eval.sh $a1 $a2 $a3"
+    desc="bceval $a1"
+  else
+    cmd="bash eval_scripts/pod_chain.sh $a1 $a2 $a3 $a4 $a5"
+    desc="$a1 seed $a5"
+  fi
   timeout 40 ssh -n -o StrictHostKeyChecking=no -p "$port" "root@$host" \
-    "cd /data/crane_testbed && setsid nohup bash eval_scripts/pod_chain.sh $arm $task $iters $freeze $seed > /data/chain.log 2>&1 < /dev/null & true" 2>/dev/null
+    "cd /data/crane_testbed && setsid nohup $cmd > /data/chain.log 2>&1 < /dev/null & true" 2>/dev/null
   sed -i '1d' "$Q"
-  echo "LAUNCHED $arm seed $seed on $name; $(wc -l < "$Q") queued"
+  echo "LAUNCHED $desc on $name; $(wc -l < "$Q") queued"
 done < "$PODS"
