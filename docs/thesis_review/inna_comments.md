@@ -232,3 +232,71 @@ scratchpad/inna/p-NN.png). Transcribed from the handwriting; page numbers are PD
 12. "cropped to the box [b_min, b_max]" - explain that these are opposite corners.
 13. Cross-referencing forward is pervasive enough that she questions the organization
     (second independent flag, p32).
+
+## Third pass: the last unread pages
+
+### p7 (Ch2 opening)
+- "receives a scalar reward" circled: "what is a scalar reward and why is it a scalar?"
+  (asks for the reward to be explained, not just named).
+- "The tasks in this thesis" -> insert "log-loading from large piles".
+- "is useful" note beside the reward clause.
+
+### p12 (Sec 2.2 forestry automation) - REFERENCES
+- "forwarder" -> "machine".
+- "leave open where to grasp" -> "leave open THE QUESTION OF where to grasp".
+- MAJOR: "You only have 4 references and 2 of them are to Jebellat + me, which is not at
+  all reasonable. => missing references => Elie's papers!"
+  ACTION NEEDED FROM GEORGE: supply the additional Ayoub citations (only ayoub2023grasp is
+  in thesis_references.bib today). A TODO marker sits at that spot in the chapter.
+
+### p13 (Sec 2.3 grasping in clutter)
+- "progressed from isolated objects to cluttered scenes" -> "applications involving those
+  with isolated objects and those with cluttered scenes".
+- "the mill yard" -> "the problem of grasping bunches of large logs from large log piles".
+- "its clutter" -> "whose?" (ambiguous possessive).
+- "the grapple captures bunches" -> "must pick up".
+- "success is usually scored one grasp at a time" -> "in bin-picking types of problems".
+- "from dense stack to empty rack" -> "from a dense LOG stack to an empty RACK".
+
+### p11 (Fig 2.1 actor-critic)
+- "spread off / need sentence here" - the figure sits immediately after a broken sentence;
+  needs a lead-in sentence before the figure.
+
+### p21 (Sec 3.2.1 log assets)
+- Table 3.1 margin: "are you describing other environments as well or just this one?"
+- "the deployment-era environment spawns" -> unclear, drop "deployment-era".
+- "every log sharing one end-to-tip orientation" circled: "not sure what you mean".
+- "impacts dissipate energy" -> "most of the PRE-IMPACT energy".
+
+### p22 (Sec 3.2.2-3.2.4) - STRUCTURE, the one George flagged
+- "convex decomposition for the rack" circled: "need a picture/figure of the rack, sample
+  where" (wants the rack collision geometry shown).
+- "for logs and grapple parts" -> "all?"
+- "eliminating tunneling" -> "missed contact detection" (avoid the game-physics term).
+- 3.2.3 heading, "Actuation" circled: "would put this into crane modeling".
+- "implicit PhysX PD drives" margin: "any chance of writing down a control law?"
+- "saturated PD velocity law with discrete stepping" circled: "not sure what you mean".
+- "Piles are initialized by spawning logs ..." bracketed: "would put this into 3.2.4,
+  Pile initialization + variation, or Pile Modeling".
+
+### p29 (Alg 3.2 + Sec 3.4.3 actions)
+- "the two are identical" -> "what are you referring to?"; "transfer gap" -> "sim-to-real";
+  "Algorithm 3.2" -> "which summarizes the observation pipeline".
+- "the grapple position" circled: "position of WHICH POINT?"
+- "Admissible targets lie" -> "must lie".
+- "the bed floor" -> "which bed?"
+- "as already indicated in Section 3.3" (the clamp is stated twice).
+
+### p31 (Sec 3.4.4 outcomes)
+- "The scripted policies of Section 3.6 write their targets directly into this space"
+  -> "don't quite understand the logic of this sentence".
+- "After the lift" -> "at the end of the cycle"; "measured by" -> "evaluated by".
+- "counts the logs held by the grapple (centers within a proximity radius)" -> "this is
+  evaluated by ..." (say how).
+- "the grapple jaw axis" circled: "has this axis been defined/drawn before? refer to
+  Figure 3.5."
+- "the alignment" -> "the alignment METRIC"; "scores the levelness of" -> "scores HOW
+  LEVELLED the grapple IS".
+
+### p1, p9, p10, p15, p16, p17
+- No margin annotations (ink-density check: <= 0.3%, consistent with scanner speckle).
