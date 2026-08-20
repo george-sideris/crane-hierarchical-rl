@@ -1120,8 +1120,14 @@ def main():
         assert args_cli.checkpoint, "--checkpoint is required for --policy_type scoring"
         _bmin = np.array([-5.364, -1.684, -1.30], dtype=np.float32)
         _bmax = np.array([-3.364, 5.316, 0.10], dtype=np.float32)
+        # dig=0: the scoring net's dz head ALREADY carries the digging depth, because
+        # train_scoring_head.py shifts the label to (surface - dig) before computing the
+        # residual. The deployed node applies a dig on top for its own reasons (it reads
+        # the checkpoint's training constant), and letting that default through here
+        # subtracts 0.25 m a second time: sim rows evaluated that way are not comparable
+        # to the citable set, which predates the node-side dig.
         _sc = ScoringHeadPolicy(args_cli.checkpoint, _bmin, _bmax, cossin=True,
-                                device=args_cli.device)
+                                device=args_cli.device, dig=0.0)
         num_points, metadata, action_dim = _sc.num_points, {}, 5
 
         def _enc(v, lo, hi):
