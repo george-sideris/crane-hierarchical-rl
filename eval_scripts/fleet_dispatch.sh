@@ -11,6 +11,10 @@ PODS=logs/fleet/pods.txt
 CODE=logs/fleet/crane_code.tgz
 ROS2=logs/fleet/ros2copy.tgz
 [ -s "$Q" ] || exit 0
+# pods created but never registered bill while idle and invisible: warn loudly.
+if [ -s logs/fleet/pending_pods.txt ]; then
+  echo "WARNING: $(wc -l < logs/fleet/pending_pods.txt) pod(s) in logs/fleet/pending_pods.txt are NOT in pods.txt - register or delete them"
+fi
 # always rebuild: a stale tar silently ships pods a script that does not exist yet
 tar czf "$CODE" --exclude='__pycache__' --exclude='*.pyc' \
   assets source scripts eval_scripts runpod_setup.sh fpi_crane_rl/fpi_crane_rl \
