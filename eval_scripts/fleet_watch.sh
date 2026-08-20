@@ -13,8 +13,12 @@ while true; do
        # bytes is the progress signal that covers train and eval alike
        kb=$(cat /data/crane_testbed/logs/p3v2_train.log /data/crane_testbed/logs/sim_eval/battery/*.log 2>/dev/null | wc -c);
        kb=$((kb/1000));
+       # CPU time of the simulator process: the one liveness signal that survives
+       # block-buffered logs and long episodes with no prints
+       pid=$(pgrep -f "kit/python/bin/python3" | head -1);
+       cpu=$(awk "{print int((\$14+\$15)/100)}" /proc/$pid/stat 2>/dev/null || echo 0);
        err=$(grep -aE "Traceback|CUDA error|out of memory|ERROR_DEVICE_LOST" /data/crane_testbed/logs/p3v2_train.log 2>/dev/null | grep -cv "Warp CUDA error");
-       echo "$busy $((cyc+rows+kb)) $err"' 2>/dev/null)
+       echo "$busy $((cyc+rows+kb+${cpu:-0})) $err"' 2>/dev/null)
     [ -z "$out" ] && { echo "$name: UNREACHABLE"; continue; }
     read -r busy prog err <<< "$out"
     if [ -z "${seen[$name]:-}" ]; then

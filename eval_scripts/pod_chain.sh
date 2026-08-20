@@ -6,6 +6,7 @@ set -u
 ARM=$1 TASK=$2 ITERS=$3 FREEZE=$4 SEED=$5
 cd /data/crane_testbed || exit 1
 export PYTHONPATH=/data/crane_testbed/source/crane_testbed:/data/crane_testbed/scripts/envs
+export PYTHONUNBUFFERED=1   # block-buffered stdout made live logs lag by ~15 min
 CKPT=/data/crane_testbed/logs/bc_pointcloud/scoring_margin05_2048_c/scoring_policy.pt
 BCFLAGS="--bc_checkpoint $CKPT --sigma_init 0.3 --critic_warmup_iters 0 \
   --anneal_sigma_iters 100 --anneal_sigma_to 0.01"

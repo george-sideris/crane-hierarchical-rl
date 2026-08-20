@@ -20,6 +20,7 @@ CRANE=${CRANE:-$PERSIST/crane_testbed}
 ISAACLAB=${ISAACLAB:-/workspace/isaaclab}
 cd "$CRANE" || exit 1
 export PYTHONPATH=$CRANE/source/crane_testbed:$CRANE/scripts/envs
+export PYTHONUNBUFFERED=1   # block-buffered stdout made live logs lag by ~15 min
 PLATFORM_V2="--profile_piles --log_scale_mean 1.0 --log_scale_jitter 0.10 \
 --log_ang_damping 3.0 --gripper_effort 2000 --num_logs 200"
 TPL=$CRANE/logs/battery_ckpts/template_scoring_policy.pt

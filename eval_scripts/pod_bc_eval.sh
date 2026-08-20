@@ -5,6 +5,7 @@ set -u
 TAG=$1 CKPT=$2 KIND=$3
 cd /data/crane_testbed || exit 1
 export PYTHONPATH=/data/crane_testbed/source/crane_testbed:/data/crane_testbed/scripts/envs
+export PYTHONUNBUFFERED=1   # block-buffered stdout made live logs lag by ~15 min
 OUT=/data/crane_testbed/logs/sim_eval/battery/deep_${TAG}
 [ -f "$OUT/.done" ] && { touch /data/CHAIN_DONE; exit 0; }
 mkdir -p "$OUT"
