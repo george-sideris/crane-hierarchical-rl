@@ -57,9 +57,9 @@ TAG = "Train/mean_reward"
 SMOOTH = 5   # iterations
 
 
-def load_run(d):
+def load_run(d, tag=TAG):
     ea = EventAccumulator(d); ea.Reload()
-    tag = TAG if TAG in ea.Tags()["scalars"] else None
+    tag = tag if tag in ea.Tags()["scalars"] else None
     if tag is None:
         cands = [t for t in ea.Tags()["scalars"] if t.endswith("mean_reward")]
         assert cands, f"no mean_reward tag in {d}: {ea.Tags()['scalars'][:6]}"
@@ -77,47 +77,32 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--argmax_tsv", default="",
                     help="optional TSV: family<TAB>seed<TAB>env_steps<TAB>full_pct "
-                         "(wave-protocol argmax rows; plotted as a second panel)")
+                         "(wave-protocol argmax rows; plotted as a separate figure)")
     ap.add_argument("--out", default="docs/thesis/figures/rl_training_curves.pdf")
     a = ap.parse_args()
 
-    two = bool(a.argmax_tsv) and os.path.exists(a.argmax_tsv)
-    fig, axes = plt.subplots(1, 2 if two else 1,
-                             figsize=(7.0 if two else 4.6, 2.7), squeeze=False)
-    ax = axes[0][0]
-
-    for name, fam in FAMILIES.items():
-        runs = [load_run(d) for d in fam["runs"]]
-        hi = min(r[0][-1] for r in runs)
-        grid = np.linspace(min(r[0][0] for r in runs), hi, 200)
-        Y = np.stack([np.interp(grid, s, y) for s, y in runs])
-        ax.plot(grid, Y.mean(0), color=fam["color"], lw=1.5,
-                label=f"{name} (N={len(runs)})")
-        ax.fill_between(grid, Y.mean(0) - Y.std(0), Y.mean(0) + Y.std(0),
-                        color=fam["color"], alpha=0.18, lw=0)
-    ax.set_xlabel("environment steps (grasp cycles)")
-    ax.set_ylabel("training return")
-    ax.legend(frameon=False, loc="lower right")
-    ax.grid(lw=0.4, alpha=0.4)
-
-    if two:
-        ax2 = axes[0][1]
-        import csv
-        rows = list(csv.reader(open(a.argmax_tsv), delimiter="\t"))
+    PANELS = [
+        ("Train/mean_reward",     "training return"),
+        ("Episode/throughput",    "throughput $n$ [logs/grasp]"),
+        ("Episode/stability",     "stability $\\varsigma$"),
+        ("Episode/alignment",     "alignment $\\alpha$"),
+    ]
+    fig, axes = plt.subplots(2, 2, figsize=(7.0, 4.8), sharex=True)
+    for (tag, ylab), ax in zip(PANELS, axes.flat):
         for name, fam in FAMILIES.items():
-            pts = [(float(r[2]), float(r[3]), r[1]) for r in rows if r[0] == name]
-            seeds = sorted(set(p[2] for p in pts))
-            for i, sd in enumerate(seeds):
-                sp = sorted((x, y) for x, y, s in pts if s == sd)
-                ax2.plot([p[0] for p in sp], [p[1] for p in sp],
-                         color=fam["color"], lw=1.1, alpha=0.5 + 0.2 * i,
-                         marker="o", ms=2.6,
-                         label=f"{name} seed {sd}" if i == 0 else None)
-        ax2.set_xlabel("environment steps (grasp cycles)")
-        ax2.set_ylabel("argmax full-clear rate [%]")
-        ax2.legend(frameon=False, loc="lower right")
-        ax2.grid(lw=0.4, alpha=0.4)
-
+            runs = [load_run(d, tag) for d in fam["runs"]]
+            hi = min(r[0][-1] for r in runs)
+            grid = np.linspace(max(r[0][0] for r in runs), hi, 200)
+            Y = np.stack([np.interp(grid, s, y) for s, y in runs])
+            ax.plot(grid, Y.mean(0), color=fam["color"], lw=1.5,
+                    label=f"{name} (N={len(runs)})")
+            ax.fill_between(grid, Y.mean(0) - Y.std(0), Y.mean(0) + Y.std(0),
+                            color=fam["color"], alpha=0.18, lw=0)
+        ax.set_ylabel(ylab)
+        ax.grid(lw=0.4, alpha=0.4)
+    for ax in axes[1]:
+        ax.set_xlabel("environment steps (grasp cycles)")
+    axes.flat[0].legend(frameon=False, loc="lower right", fontsize=6.5)
     fig.tight_layout()
     fig.savefig(a.out, dpi=200, bbox_inches="tight")
     print("wrote", a.out)
