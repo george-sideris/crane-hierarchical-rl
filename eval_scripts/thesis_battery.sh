@@ -27,7 +27,7 @@ OUT=$CRANE/logs/sim_eval/battery
 mkdir -p "$OUT"
 
 # arm -> wave stride (sig03fix is a 35-checkpoint archive; every 20 is plenty)
-stride() { case "$1" in sig03fix) echo 20 ;; *) echo 10 ;; esac; }
+stride() { [ -n "${STRIDE:-}" ] && { echo "$STRIDE"; return; }; case "$1" in sig03fix) echo 20 ;; *) echo 10 ;; esac; }
 
 convert() {  # convert <ckpt.pt> -> path of _bc_format.pt (cached)
   local c=$1 out=${1%.pt}_bc_format.pt
