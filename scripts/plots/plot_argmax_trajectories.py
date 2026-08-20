@@ -19,6 +19,7 @@ import json
 import re
 from collections import defaultdict
 
+import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -32,14 +33,16 @@ plt.rcParams.update({
 })
 
 STEPS_PER_ITER = 320          # 40 envs x 8 grasp cycles per rollout
-LABELS = {
-    "s44":       ("frozen encoder, asymmetric critic (locked recipe)", "#4c72b0"),
-    "symcritic": ("symmetric critic", "#dd8452"),
-    "unfroz":    ("encoder not frozen", "#c44e52"),
-    "scc44":     ("from scratch", "#937860"),
-    "mn":        ("multiplicative, normalized", "#8172b2"),
-    "an":        ("additive, normalized", "#55a868"),
-    "nq":        ("no quality terms", "#8c8c8c"),
+# family -> (label, colour, [arm tags, one per seed])
+FAMILIES = {
+    "locked":    ("frozen encoder, asymmetric critic", "#4c72b0", ["s42", "s43", "s44"]),
+    "symcritic": ("symmetric critic",                  "#dd8452", ["symcritic", "sc43", "sc44"]),
+    "unfroz":    ("encoder not frozen",                "#c44e52", ["unfroz", "uf43", "uf44"]),
+    "scratch":   ("from scratch",                      "#937860", ["scc0", "scc43", "scc44"]),
+    "mn":        ("multiplicative, normalized",        "#8172b2", ["mn", "mn43", "mn44"]),
+    "an":        ("additive, normalized",              "#55a868", ["an", "an43", "an44"]),
+    "nq":        ("no quality terms",                  "#8c8c8c", ["nq", "nq43", "nq44"]),
+    "gs":        ("Gaussian over coordinates",         "#555555", ["gs", "gs43", "gs44"]),
 }
 
 
@@ -60,23 +63,31 @@ def load_rows():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--arms", default="s44,symcritic,unfroz")
+    ap.add_argument("--families", default="locked,symcritic,unfroz")
     ap.add_argument("--out", default="docs/thesis/figures/rl_argmax_trajectories.pdf")
     a = ap.parse_args()
 
     arms = load_rows()
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.0, 2.7), sharex=True)
-    for arm in a.arms.split(","):
-        pts = sorted(arms.get(arm, {}).items())
-        if not pts:
-            print(f"  (no rows for {arm})")
+    for fam in a.families.split(","):
+        label, color, tags = FAMILIES[fam]
+        seeds = [sorted(arms[t].items()) for t in tags if arms.get(t)]
+        if not seeds:
+            print(f"  (no rows for {fam})")
             continue
-        label, color = LABELS.get(arm, (arm, None))
-        x = [it * STEPS_PER_ITER for it, _ in pts]
-        ax1.plot(x, [v[1] for _, v in pts], marker="o", ms=3, lw=1.3, color=color, label=label)
-        ax2.plot(x, [v[2] for _, v in pts], marker="o", ms=3, lw=1.3, color=color)
-        best = max(pts, key=lambda kv: (kv[1][1], -kv[1][2]))
-        print(f"{arm:10s} n={len(pts):2d}  best iter {best[0]:3d}: "
+        # band over the seeds that exist, on their common iteration grid
+        common = sorted(set.intersection(*[{it for it, _ in s_} for s_ in seeds])) if len(seeds) > 1 else [it for it, _ in seeds[0]]
+        x = [it * STEPS_PER_ITER for it in common]
+        for j, (ax, idx) in enumerate(((ax1, 1), (ax2, 2))):
+            Y = np.array([[dict(s_)[it][idx] for it in common] for s_ in seeds], float)
+            m, sd = Y.mean(0), Y.std(0)
+            ax.plot(x, m, marker="o", ms=3, lw=1.3, color=color,
+                    label=f"{label} (N={len(seeds)})" if j == 0 else None)
+            if len(seeds) > 1:
+                ax.fill_between(x, m - sd, m + sd, color=color, alpha=0.18, lw=0)
+        flat = [kv for s_ in seeds for kv in s_]
+        best = max(flat, key=lambda kv: (kv[1][1], -kv[1][2]))
+        print(f"{fam:10s} seeds={len(seeds)} pts={len(flat):2d}  best iter {best[0]:3d}: "
               f"full {best[1][1]:.1f}%, cycles {best[1][2]:.2f}")
     ax1.set_ylabel("argmax full-clear rate [%]")
     ax2.set_ylabel("argmax cycles to clear")
