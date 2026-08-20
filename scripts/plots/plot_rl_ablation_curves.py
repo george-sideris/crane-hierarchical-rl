@@ -80,7 +80,10 @@ def main():
     ax1.fill_between(grid, Y.mean(0) - Y.std(0), Y.mean(0) + Y.std(0),
                      color="#c44e52", alpha=0.18, lw=0)
     s, y = load(GS)
-    ax1.plot(s, y, color="#555555", lw=1.5, ls="--", label="Gaussian over coordinates (N=1)")
+    common_a = min(hi, s[-1])
+    m = s <= common_a
+    ax1.plot(s[m], y[m], color="#555555", lw=1.5, ls="--", label="Gaussian over coordinates (N=1)")
+    ax1.set_xlim(0, common_a * 1.02)
     ax1.set_ylabel("clearing at episode end [%]")
     ax1.set_xlabel("environment steps (grasp cycles)")
     ax1.legend(frameon=False, loc="lower right")
@@ -98,10 +101,13 @@ def main():
     ]
     ARMS = [("multiplicative, unnormalized (ours)", SCC_BAND[0], "#c44e52")] + REWARD_ARMS
     fig, axes = plt.subplots(2, 2, figsize=(7.0, 4.8), sharex=True)
+    # arms stopped at different steps for fleet-logistics reasons; compare on common support
+    common_b = min(load(d)[0][-1] for _, d, _ in ARMS)
     for (tag, ylab), ax in zip(PANELS, axes.flat):
         for name, d, c in ARMS:
             s, y = load(d, tag)
-            ax.plot(s, y, lw=1.3, color=c, label=name)
+            m = s <= common_b
+            ax.plot(s[m], y[m], lw=1.3, color=c, label=name)
         ax.set_ylabel(ylab)
         ax.grid(lw=0.4, alpha=0.4)
     for ax in axes[1]:
