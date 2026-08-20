@@ -3,22 +3,26 @@
 # State (survives session restarts): logs/fleet/seed_queue.txt, logs/fleet/pods.txt
 # Queue line: <arm> <task> <iters> <freeze:yes|no> <seed>. Launched lines are removed.
 cd "$(dirname "$0")/.." || exit 1
+# single-instance: concurrent passes raced and double-launched a job
+exec 9> logs/fleet/.dispatch.lock 2>/dev/null || true
+flock -n 9 || { echo "dispatch already running"; exit 0; }
 Q=logs/fleet/seed_queue.txt
 PODS=logs/fleet/pods.txt
 CODE=logs/fleet/crane_code.tgz
 ROS2=logs/fleet/ros2copy.tgz
 [ -s "$Q" ] || exit 0
-[ -f "$CODE" ] || tar czf "$CODE" --exclude='__pycache__' --exclude='*.pyc' \
+# always rebuild: a stale tar silently ships pods a script that does not exist yet
+tar czf "$CODE" --exclude='__pycache__' --exclude='*.pyc' \
   assets source scripts eval_scripts runpod_setup.sh fpi_crane_rl/fpi_crane_rl \
   fpi_crane_rl/package.xml logs/bc_pointcloud/scoring_margin05_2048_c/scoring_policy.pt \
   logs/bc_pointcloud/scoring_margin05_2048_c/config.json 2>/dev/null
-[ -f "$ROS2" ] || tar czf "$ROS2" --exclude='__pycache__' fpi_crane_ros2/fpi_crane_rl/fpi_crane_rl 2>/dev/null
+tar czf "$ROS2" --exclude='__pycache__' fpi_crane_ros2/fpi_crane_rl/fpi_crane_rl 2>/dev/null
 
 while read -r port host name; do
   [ -z "$port" ] && continue
   [ -s "$Q" ] || break
   busy=$(timeout 40 ssh -n -o StrictHostKeyChecking=no -o ConnectTimeout=12 -p "$port" "root@$host" \
-    'pgrep -c -f "rsl_rl/train.py|thesis_battery[.]sh|play_bc_pointcloud[.]py" 2>/dev/null || echo 0' 2>/dev/null)
+    '{ pgrep -c -f "rsl_rl/train[.]py|thesis_battery[.]sh|play_bc_pointcloud[.]py" 2>/dev/null | head -1; }' 2>/dev/null)
   [ -z "$busy" ] && continue          # unreachable this pass
   [ "$busy" -gt 0 ] && continue       # still working
   free=$(timeout 40 ssh -n -o StrictHostKeyChecking=no -o ConnectTimeout=12 -p "$port" "root@$host" \

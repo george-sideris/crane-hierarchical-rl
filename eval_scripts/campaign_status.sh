@@ -5,7 +5,7 @@ echo "=== PODS ==="
 while read -r port host name; do
   [ -z "$port" ] && continue
   out=$(timeout 30 ssh -n -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p "$port" "root@$host" \
-    'b=$(pgrep -c -f "rsl_rl/train.py|thesis_battery[.]sh|play_bc_pointcloud[.]py" 2>/dev/null || echo 0);
+    'b=$({ pgrep -c -f "rsl_rl/train[.]py|thesis_battery[.]sh|play_bc_pointcloud[.]py" 2>/dev/null | head -1; });
      it=$(grep -a "Learning iteration" /data/crane_testbed/logs/p3v2_train.log 2>/dev/null | tail -1 | grep -oE "[0-9]+/[0-9]+");
      rows=$(find /data/crane_testbed/logs/sim_eval/battery -name .done 2>/dev/null | wc -l);
      d=$(test -f /data/CHAIN_DONE && echo DONE || echo -);

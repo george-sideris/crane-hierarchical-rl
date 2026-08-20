@@ -6,7 +6,7 @@ while true; do
   while read -r port host name; do
     [ -z "$port" ] && continue
     out=$(timeout 60 ssh -n -o StrictHostKeyChecking=no -o ConnectTimeout=15 -p "$port" "root@$host" \
-      'busy=$(pgrep -c -f "rsl_rl/train.py|thesis_battery[.]sh|play_bc_pointcloud[.]py" 2>/dev/null || echo 0);
+      'busy=$({ pgrep -c -f "rsl_rl/train[.]py|thesis_battery[.]sh|play_bc_pointcloud[.]py" 2>/dev/null | head -1; });
        cyc=$(grep -ac CYCLE /data/crane_testbed/logs/p3v2_train.log 2>/dev/null || echo 0);
        rows=$(find /data/crane_testbed/logs/sim_eval/battery -name .done 2>/dev/null | wc -l);
        err=$(grep -aE "Traceback|CUDA error|out of memory|ERROR_DEVICE_LOST" /data/crane_testbed/logs/p3v2_train.log 2>/dev/null | grep -cv "Warp CUDA error");
