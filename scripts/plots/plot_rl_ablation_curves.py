@@ -51,11 +51,11 @@ REWARD_ARMS = [
 ]
 
 
-def load(d):
+def load(d, tag=TAG):
     import glob as g
     cands = g.glob(d + "*") if not g.os.path.isdir(d) else [d]
     ea = EventAccumulator(cands[0]); ea.Reload()
-    v = ea.Scalars(TAG)
+    v = ea.Scalars(tag)
     s = np.array([x.step for x in v], float)
     y = np.array([x.value for x in v], float)
     # expanding-window rolling mean: the first points average what exists so far,
@@ -66,11 +66,12 @@ def load(d):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="docs/thesis/figures/rl_ablation_curves.pdf")
+    ap.add_argument("--out_a", default="docs/thesis/figures/rl_scratch_exploration.pdf")
+    ap.add_argument("--out_b", default="docs/thesis/figures/rl_reward_structure.pdf")
     a = ap.parse_args()
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.0, 2.7), sharey=True)
-
+    # (A) from-scratch exploration: Gaussian control against the categorical band
+    fig, ax1 = plt.subplots(figsize=(4.6, 2.7))
     runs = [load(d) for d in SCC_BAND]
     hi = min(r[0][-1] for r in runs)
     grid = np.linspace(max(r[0][0] for r in runs), hi, 150)
@@ -80,25 +81,35 @@ def main():
                      color="#c44e52", alpha=0.18, lw=0)
     s, y = load(GS)
     ax1.plot(s, y, color="#555555", lw=1.5, ls="--", label="Gaussian over coordinates (N=1)")
-    ax1.set_ylabel("training-rollout clearing [%]")
+    ax1.set_ylabel("clearing at episode end [%]")
     ax1.set_xlabel("environment steps (grasp cycles)")
     ax1.legend(frameon=False, loc="lower right")
     ax1.grid(lw=0.4, alpha=0.4)
-    ax1.set_title("(a) from-scratch exploration", fontsize=9)
-
-    s0, y0 = load(SCC_BAND[0])
-    ax2.plot(s0, y0, color="#c44e52", lw=1.5, label="multiplicative, unnormalized (control)")
-    for name, d, c in REWARD_ARMS:
-        s, y = load(d)
-        ax2.plot(s, y, color=c, lw=1.3, label=name)
-    ax2.set_xlabel("environment steps (grasp cycles)")
-    ax2.legend(frameon=False, loc="lower right")
-    ax2.grid(lw=0.4, alpha=0.4)
-    ax2.set_title("(b) reward structure, from scratch", fontsize=9)
-
     fig.tight_layout()
-    fig.savefig(a.out, dpi=200, bbox_inches="tight")
-    print("wrote", a.out)
+    fig.savefig(a.out_a, dpi=200, bbox_inches="tight")
+    print("wrote", a.out_a)
+
+    # (B) reward structure: clearing plus each reward factor, one line per arm
+    PANELS = [
+        ("Episode/pile_clearing_pct_final", "clearing at episode end [%]"),
+        ("Episode/throughput",              "throughput $n$ [logs/grasp]"),
+        ("Episode/stability",               "stability $\\varsigma$"),
+        ("Episode/alignment",               "alignment $\\alpha$"),
+    ]
+    ARMS = [("multiplicative, unnormalized (ours)", SCC_BAND[0], "#c44e52")] + REWARD_ARMS
+    fig, axes = plt.subplots(2, 2, figsize=(7.0, 4.8), sharex=True)
+    for (tag, ylab), ax in zip(PANELS, axes.flat):
+        for name, d, c in ARMS:
+            s, y = load(d, tag)
+            ax.plot(s, y, lw=1.3, color=c, label=name)
+        ax.set_ylabel(ylab)
+        ax.grid(lw=0.4, alpha=0.4)
+    for ax in axes[1]:
+        ax.set_xlabel("environment steps (grasp cycles)")
+    axes.flat[0].legend(frameon=False, loc="lower right", fontsize=6.5)
+    fig.tight_layout()
+    fig.savefig(a.out_b, dpi=200, bbox_inches="tight")
+    print("wrote", a.out_b)
 
 
 if __name__ == "__main__":
