@@ -66,15 +66,18 @@ deep_row() {  # deep_row <arm> <iter>
 }
 
 best_iter() {  # best wave checkpoint of an arm: max full_clear_rate, then min cycles
-  python3 - "$OUT" "$1" <<'PY'
-import glob, json, sys
-rows = []
-for f in glob.glob(f"{sys.argv[1]}/wave_{sys.argv[2]}_*/eval_metrics_*.json"):
-    d = json.load(open(f)); s = d["summary"]
-    it = int(f.split(f"wave_{sys.argv[2]}_")[1].split("/")[0])
-    rows.append((s["full_clear_rate"], -s["cycles"]["mean"], it))
-if rows: print(max(rows)[2])
-PY
+  # pure shell: the pods carry only Isaac Sim's bundled python, no system python3
+  local arm=$1 d f it fc cy
+  for d in "$OUT"/wave_"${arm}"_*/; do
+    [ -d "$d" ] || continue
+    it=${d%/}; it=${it##*_}
+    f=$(ls "$d"/eval_metrics_*.json 2>/dev/null | head -1)
+    [ -z "$f" ] && continue
+    fc=$(grep -o '"full_clear_rate": [0-9.]*' "$f" | head -1 | grep -o '[0-9.]*$')
+    cy=$(grep -A1 '"cycles": {' "$f" | grep -o '"mean": [0-9.]*' | head -1 | grep -o '[0-9.]*$')
+    [ -z "$fc" ] && continue
+    echo "$fc ${cy:-999} $it"
+  done | sort -k1,1gr -k2,2g | head -1 | awk '{print $3}'
 }
 
 ARMS_DEFAULT="symcritic unfroz s44 scc44 mn an nq sig03fix"
@@ -100,15 +103,14 @@ case "$cmd" in
     done
     ;;
   rank)
-    python3 - "$OUT" <<'PY'
-import glob, json
-print(f"{'row':28s} {'full%':>6s} {'cycles':>7s} {'c95':>6s} {'succ%':>6s} {'stab':>6s}")
-for f in sorted(glob.glob(f"{__import__('sys').argv[1]}/*/eval_metrics_*.json")):
-    d = json.load(open(f)); s = d["summary"]; tag = f.split("/")[-2]
-    print(f"{tag:28s} {s['full_clear_rate']:6.1f} {s['cycles']['mean']:7.2f} "
-          f"{s.get('cycles_to_95pct',{}).get('mean',float('nan')):6.1f} "
-          f"{s['grasp_success_pct']['mean']:6.1f} {s['stability']['mean']:6.3f}")
-PY
+    printf "%-28s %6s %8s\n" row full% cycles
+    for f in "$OUT"/*/eval_metrics_*.json; do
+      [ -f "$f" ] || continue
+      d=$(basename "$(dirname "$f")")
+      fc=$(grep -o '"full_clear_rate": [0-9.]*' "$f" | head -1 | grep -o '[0-9.]*$')
+      cy=$(grep -A1 '"cycles": {' "$f" | grep -o '"mean": [0-9.]*' | head -1 | grep -o '[0-9.]*$')
+      printf "%-28s %6s %8s\n" "$d" "${fc:-?}" "${cy:-?}"
+    done
     ;;
   *) echo "usage: thesis_battery.sh waves|deep|rank [arms...]"; exit 1 ;;
 esac
