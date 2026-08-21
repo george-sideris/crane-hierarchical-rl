@@ -58,11 +58,19 @@ deep_row() {  # deep_row <arm> <iter>
   local bc; bc=$(convert logs/battery_ckpts/$arm/model_$it.pt) || { echo "[convert FAIL] $tag"; return; }
   echo "=== $(date -u +%H:%M:%S) $tag (deep, ~2h)"
   mkdir -p "$d"
-  $ISAACLAB/isaaclab.sh -p scripts/envs/play_bc_pointcloud.py \
-    --policy_type scoring --crop_margin 0.5 --checkpoint "$bc" \
-    --gaze --raw_pcd --crop_to_bounds --headless $PLATFORM_V2 \
-    --num_envs 20 --num_episodes 100 --seed 42 --save_metrics --save_decisions \
-    --output_dir "$d" > "$d.log" 2>&1 && touch "$d/.done" || echo "  FAILED -> $d.log"
+  # Isaac Sim occasionally dies mid-run on an internal assertion; a deep row is two
+  # hours of work, so it is worth one clean retry before giving up on it.
+  local try
+  for try in 1 2; do
+    $ISAACLAB/isaaclab.sh -p scripts/envs/play_bc_pointcloud.py \
+      --policy_type scoring --crop_margin 0.5 --checkpoint "$bc" \
+      --gaze --raw_pcd --crop_to_bounds --headless $PLATFORM_V2 \
+      --num_envs 20 --num_episodes 100 --seed 42 --save_metrics --save_decisions \
+      --output_dir "$d" > "$d.log" 2>&1 && { touch "$d/.done"; break; }
+    echo "  attempt $try failed -> $d.log"
+    sleep 60
+  done
+  [ -f "$d/.done" ] || echo "  FAILED after retries -> $d.log"
 }
 
 best_iter() {  # best wave checkpoint of an arm: max full_clear_rate, then min cycles
