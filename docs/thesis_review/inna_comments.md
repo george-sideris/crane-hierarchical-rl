@@ -300,3 +300,16 @@ scratchpad/inna/p-NN.png). Transcribed from the handwriting; page numbers are PD
 
 ### p1, p9, p10, p15, p16, p17
 - No margin annotations (ink-density check: <= 0.3%, consistent with scanner speckle).
+
+## Seed results that arrived during the review work (2026-08-20 night)
+
+BC scoring head, deep protocol, three training seeds: 98.0 / 98.0 / 99.0 full clear
+(mean 98.3, sd 0.6), cycles 18.93 +/- 0.02. The headline number is reproducible.
+
+BC regression head, same treatment: 84.1 / 33.3 / 41.1 % of the pile cleared, full clear
+33 / 0 / 0. Training converged normally in all three cases, so the head itself is
+seed-fragile.
+
+Both are relevant to how chapter 5 should be written: the architecture claim can be stated
+as reproducibility rather than as a single-seed win, and the regression row should carry
+its spread.
