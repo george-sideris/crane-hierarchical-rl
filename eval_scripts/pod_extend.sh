@@ -15,10 +15,14 @@ export PYTHONUNBUFFERED=1
 
 while pgrep -f "rsl_rl/train[.]py" >/dev/null; do sleep 120; done
 
-RUN=$(ls -dt logs/rsl_rl/*/20* 2>/dev/null | head -1)
-[ -z "$RUN" ] && { echo "no run dir to extend"; exit 1; }
-BASE=$(ls "$RUN"/model_*.pt 2>/dev/null | sed 's/.*model_//;s/\.pt//' | sort -n | tail -1)
-[ -z "$BASE" ] && { echo "no checkpoint in $RUN"; exit 1; }
+# global progress is the SUM of the highest checkpoint in each run directory:
+# every resume starts its own numbering at zero
+BASE=0
+for R in $(ls -dtr logs/rsl_rl/*/20* 2>/dev/null); do
+  hi=$(ls "$R"/model_*.pt 2>/dev/null | sed 's/.*model_//;s/\.pt//' | sort -n | tail -1)
+  BASE=$((BASE + ${hi:-0}))
+done
+[ "$BASE" -eq 0 ] && { echo "no checkpoints to extend from"; exit 1; }
 echo "$BASE" > /data/extend_progress
 
 for attempt in 1 2 3 4 5; do
