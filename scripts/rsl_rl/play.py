@@ -133,6 +133,15 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import crane_testbed.tasks  # noqa: F401
 
+# Register custom actor-critics with RSL-RL so OnPolicyRunner can find them (same as train.py;
+# without this, playing a checkpoint whose runner cfg names them dies with AttributeError).
+from crane_testbed.agents.cnn_actor_critic import CNNActorCritic
+rsl_rl.modules.CNNActorCritic = CNNActorCritic
+from crane_testbed.agents.pointnet_actor_critic import PointNetActorCritic
+rsl_rl.modules.PointNetActorCritic = PointNetActorCritic
+from crane_testbed.agents.scoring_actor_critic import ScoringActorCritic
+rsl_rl.modules.ScoringActorCritic = ScoringActorCritic
+
 
 def _write_video(frames: list, out_path: str, fps: int, label: str = "video"):
     """Write a list of (H, W, 3) uint8 numpy frames to an MP4 using imageio."""

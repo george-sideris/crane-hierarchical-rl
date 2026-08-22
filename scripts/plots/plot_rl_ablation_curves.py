@@ -19,6 +19,7 @@ Panels:
 """
 
 import argparse
+import os
 
 import numpy as np
 import matplotlib
@@ -35,14 +36,20 @@ plt.rcParams.update({
 })
 
 F = "logs/fleet_tb"
+LIVE = "logs/fleet_tb_live"
 TAG = "Episode/pile_clearing_pct_final"
 SMOOTH = 5
+XMAX = 49920   # common x limit across every RL curve figure
 
+# One continuous run per seed. The 2026-08-20/21 extension fragments are excluded: they
+# began from a random policy because the resume flag never reached the config (see
+# plot_rl_seed_curves.py), so they are separate runs, not continuations.
 SCC_BAND = [
-    f"{F}/SCC0/crane_pointcloud_gaze_scoring_scratch_cc0_v0/2026-08-12_03-18-17",
-    f"{F}/SCC43/crane_pointcloud_gaze_scoring_scratch_cc0_v0/2026-08-12_23-15-15",
-    f"{F}/SCC44/crane_pointcloud_gaze_scoring_scratch_cc0_v0/2026-08-12_23-15-14",
+    [f"{F}/SCC0/crane_pointcloud_gaze_scoring_scratch_cc0_v0/2026-08-12_03-18-17"],
+    [f"{F}/SCC43/crane_pointcloud_gaze_scoring_scratch_cc0_v0/2026-08-12_23-15-15"],
+    [f"{F}/SCC44/crane_pointcloud_gaze_scoring_scratch_cc0_v0/2026-08-12_23-15-14"],
 ]
+WARMUP = 5   # retained for the loader signature; no chain here has a resume boundary
 GS = f"{F}/GS/crane_pointcloud_gaze_cossin_scratch_v0/2026-08-13_02-25-59"
 REWARD_ARMS = [
     ("multiplicative, normalized", f"{F}/MN/crane_pointcloud_gaze_scoring_scratch_mn_v0/2026-08-12_03-18-20", "#dd8452"),
@@ -51,13 +58,36 @@ REWARD_ARMS = [
 ]
 
 
-def load(d, tag=TAG):
+def load(chain, tag=TAG):
+    """One arm as a cumulative curve over its resume chain (a bare path is a chain of one).
+
+    Fragments restart their step counter, so each is offset by the total steps of those
+    before it. The first WARMUP iterations after a resume are dropped: the logged means
+    are running averages over recently finished episodes, so straight after a restart
+    they average over episodes that have only just begun and read far too low.
+    """
     import glob as g
-    cands = g.glob(d + "*") if not g.os.path.isdir(d) else [d]
-    ea = EventAccumulator(cands[0]); ea.Reload()
-    v = ea.Scalars(tag)
-    s = np.array([x.step for x in v], float)
-    y = np.array([x.value for x in v], float)
+    if isinstance(chain, str):
+        chain = [chain]
+    S, Y, off = [], [], 0.0
+    for j, d in enumerate(chain):
+        cands = g.glob(d + "*") if not os.path.isdir(d) else [d]
+        if not cands:
+            continue
+        ea = EventAccumulator(cands[0]); ea.Reload()
+        if tag not in ea.Tags()["scalars"]:
+            continue
+        v = ea.Scalars(tag)
+        sx = np.array([x.step for x in v], float)
+        sy = np.array([x.value for x in v], float)
+        if j > 0:
+            sx, sy = sx[WARMUP:], sy[WARMUP:]
+            if sx.size == 0:
+                continue
+        S.append(sx + off); Y.append(sy)
+        off += float(sx[-1])
+    s = np.concatenate(S); y = np.concatenate(Y)
+    o = np.argsort(s); s, y = s[o], y[o]
     # expanding-window rolling mean: the first points average what exists so far,
     # so the curve starts at the first logged iteration instead of SMOOTH-1 in
     ys = np.array([y[max(0, i - SMOOTH + 1):i + 1].mean() for i in range(len(y))])
@@ -83,9 +113,11 @@ def main():
     common_a = min(hi, s[-1])
     m = s <= common_a
     ax1.plot(s[m], y[m], color="#555555", lw=1.5, ls="--", label="Gaussian over coordinates (N=1)")
-    ax1.set_xlim(0, common_a * 1.02)
+    ax1.set_xlim(0, XMAX)
     ax1.set_ylabel("clearing at episode end [%]")
     ax1.set_xlabel("environment steps (grasp cycles)")
+    ax1.xaxis.set_major_formatter(
+        matplotlib.ticker.FuncFormatter(lambda v, _: f"{v/1000:.0f}k" if v else "0"))
     ax1.legend(frameon=False, loc="lower right")
     ax1.grid(lw=0.4, alpha=0.4)
     fig.tight_layout()
@@ -110,6 +142,10 @@ def main():
             ax.plot(s[m], y[m], lw=1.3, color=c, label=name)
         ax.set_ylabel(ylab)
         ax.grid(lw=0.4, alpha=0.4)
+    for ax in axes.flat:
+        ax.set_xlim(0, XMAX)
+        ax.xaxis.set_major_formatter(
+            matplotlib.ticker.FuncFormatter(lambda v, _: f"{v/1000:.0f}k" if v else "0"))
     for ax in axes[1]:
         ax.set_xlabel("environment steps (grasp cycles)")
     axes.flat[0].legend(frameon=False, loc="lower right", fontsize=6.5)

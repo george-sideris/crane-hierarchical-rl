@@ -221,8 +221,9 @@ rsl_rl.modules.CNNActorCritic = CNNActorCritic
 # Register custom PointNet actor-critic with RSL-RL so OnPolicyRunner can find it
 from crane_testbed.agents.pointnet_actor_critic import PointNetActorCritic
 rsl_rl.modules.PointNetActorCritic = PointNetActorCritic
-from crane_testbed.agents.scoring_actor_critic import ScoringActorCritic
+from crane_testbed.agents.scoring_actor_critic import ScoringActorCritic, ScoringActorCriticSymCritic
 rsl_rl.modules.ScoringActorCritic = ScoringActorCritic
+rsl_rl.modules.ScoringActorCriticSym = ScoringActorCriticSymCritic
 
 from isaaclab.envs import (
     DirectMARLEnv,
@@ -292,6 +293,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # override configurations with non-hydra CLI arguments
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
+    # `--resume` is store_true with default False, and update_rsl_rl_cfg assigns it under
+    # `if args_cli.resume is not None`, which False satisfies. A Hydra-style
+    # `agent.resume=True` override is therefore silently overwritten back to False, and the
+    # run starts from a random policy while looking like a resume. Honor either spelling.
+    for _o in hydra_overrides:
+        _k, _, _v = _o.partition("=")
+        if _k.strip() == "agent.resume" and _v.strip().lower() in ("true", "1"):
+            agent_cfg.resume = True
+        elif _k.strip() == "agent.load_run" and _v.strip():
+            agent_cfg.load_run = _v.strip().strip('"\'')
+        elif _k.strip() == "agent.load_checkpoint" and _v.strip():
+            agent_cfg.load_checkpoint = _v.strip().strip('"\'')
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
     agent_cfg.max_iterations = (
         args_cli.max_iterations if args_cli.max_iterations is not None else agent_cfg.max_iterations
@@ -386,6 +399,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # save resume path before creating a new log_dir
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
         resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+        print(f"[INFO]: RESUME requested -> {resume_path}", flush=True)
+    elif args_cli.resume or any(o.partition("=")[0].strip() == "agent.resume" for o in hydra_overrides):
+        # Asked for a resume but it did not survive into the config. Training from a random
+        # policy here silently throws away the parent run, so stop instead: an entire
+        # extension campaign was lost this way before the override was honored above.
+        raise SystemExit(
+            "[FATAL]: a resume was requested but agent_cfg.resume is False. Refusing to "
+            "start from a random policy. Pass --resume --load_run <dir> --checkpoint <file>."
+        )
 
     # wrap for video recording
     if args_cli.video:
@@ -414,6 +436,36 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         param_groups = runner.alg.policy.get_param_groups(base_lr)
         runner.alg.optimizer = torch.optim.Adam(param_groups, lr=base_lr)
         print(f"[INFO]: Optimizer overridden with encoder_lr_scale param groups (base_lr={base_lr})")
+
+    def _freeze_encoder_if_requested(actor_critic):
+        """Freeze the PointNet encoder, if --freeze_encoder was given.
+
+        This must run on a RESUMED run too. The freeze used to live only in the
+        --bc_checkpoint branch, so relaunching a frozen-encoder fine-tune with --resume
+        silently unfroze the encoder and unlocked its BatchNorm statistics: the features
+        the actor was trained against started drifting on the first update, and clearing
+        collapsed from 100% to under 50% before slowly recovering.
+        """
+        if not args_cli.freeze_encoder:
+            return
+        if not hasattr(actor_critic, 'encoder'):
+            print("[WARN]: --freeze_encoder set but model has no 'encoder' attribute")
+            return
+        frozen_params = 0
+        for param in actor_critic.encoder.parameters():
+            param.requires_grad = False
+            frozen_params += param.numel()
+        # requires_grad=False only freezes learnable params (weight, bias); running_mean
+        # and running_var are buffers that keep updating in train mode, so pin eval mode
+        # and keep PPO's policy.train() from turning it back on.
+        actor_critic.encoder.eval()
+        _orig_train = actor_critic.train
+        def _patched_train(mode=True):
+            _orig_train(mode)
+            actor_critic.encoder.eval()
+            return actor_critic
+        actor_critic.train = _patched_train
+        print(f"[INFO]: Encoder frozen ({frozen_params} params, BatchNorm stats locked)")
 
     # load the checkpoint
     # --resume takes precedence over --bc_checkpoint: a resumed run must restore the FULL
@@ -469,30 +521,24 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             actor_critic.log_sigma_dz.data.fill_(_m.log(args_cli.sigma_init))
             actor_critic.log_sigma_yaw.data.fill_(_m.log(args_cli.sigma_init))
             print(f"[INFO]: dz/yaw sigmas set to {args_cli.sigma_init} (scoring AC)")
-        if args_cli.freeze_encoder:
-            if hasattr(actor_critic, 'encoder'):
-                frozen_params = 0
-                for param in actor_critic.encoder.parameters():
-                    param.requires_grad = False
-                    frozen_params += param.numel()
-                # CRITICAL: Freeze BatchNorm running statistics too.
-                # requires_grad=False only freezes learnable params (weight, bias)
-                # but running_mean/running_var are buffers that update in train mode.
-                actor_critic.encoder.eval()
-                # Monkey-patch train() so PPO's policy.train() doesn't re-enable encoder training mode
-                _orig_train = actor_critic.train
-                def _patched_train(mode=True):
-                    _orig_train(mode)
-                    actor_critic.encoder.eval()  # Always keep encoder in eval mode
-                    return actor_critic
-                actor_critic.train = _patched_train
-                print(f"[INFO]: Encoder frozen ({frozen_params} params, BatchNorm stats locked)")
-            else:
-                print("[WARN]: --freeze_encoder set but model has no 'encoder' attribute")
+        _freeze_encoder_if_requested(actor_critic)
     elif agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         runner.load(resume_path)
+        # rsl_rl restores current_learning_iteration but NOT tot_timesteps (the TensorBoard
+        # x-axis), so every resumed run's curves replot from x=0 and overlay the plot's left
+        # edge. Rebuild the counter so resumed curves continue where the parent run stopped.
+        try:
+            runner.tot_timesteps = int(runner.current_learning_iteration) * int(env.num_envs) * int(agent_cfg.num_steps_per_env)
+            print(f"[INFO]: tot_timesteps restored to {runner.tot_timesteps} for continuous TB x-axis")
+        except Exception as _e:
+            print(f"[WARN]: could not restore tot_timesteps ({_e}); TB x-axis will restart")
+        # Re-apply the encoder freeze AFTER the checkpoint is loaded. runner.load() rebuilds
+        # the module's trainability and puts the policy back in train mode, so a freeze
+        # applied earlier would not survive it.
+        _ac = runner.alg.policy if hasattr(runner.alg, "policy") else runner.alg.actor_critic
+        _freeze_encoder_if_requested(_ac)
 
     # ---- BC->RL guards (2026-08-08; see CranePPORunnerCfg_ScoringV2 for the post-mortem) ----
     _warm = int(getattr(args_cli, "critic_warmup_iters", 0) or 0)

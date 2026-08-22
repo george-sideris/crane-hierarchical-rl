@@ -2034,6 +2034,19 @@ class CraneDirectEnvFull(DirectRLEnv):
             # Update heuristic state machine (handles grasp evaluation and transition to HOVER_UP)
             self._heuristic_step()
 
+            # Optional task-space trace for the state-machine figure. One step() is one
+            # whole grasp cycle, so a caller stepping the env can only sample once per
+            # cycle; this samples the grapple inside the cycle. Inert unless a sink is
+            # attached, so training and evaluation paths are unchanged.
+            if getattr(self, "_trace_sink", None) is not None:
+                _bg = self.crane.data.body_pose_w[0, self._basegrapple_body_id]
+                _jp = self.crane.data.joint_pos[0, self._grip_joint_ids[0]]
+                self._trace_sink.append((
+                    step_count, int(self._phase[0].item()),
+                    float(_bg[0]), float(_bg[1]), float(_bg[2]),
+                    float(_bg[3]), float(_bg[4]), float(_bg[5]), float(_bg[6]),
+                    float(_jp)))
+
             # Capture video frames — stream directly to disk via imageio writers
             if _record and should_render:
                 # Policy view: tile all per-env camera frames into a grid
